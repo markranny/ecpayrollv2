@@ -24,6 +24,17 @@ const SLVLBankManager = ({ employees }) => {
     const [showAddDaysModal, setShowAddDaysModal] = useState(false);
     const [submitting, setSubmitting] = useState(false);
     
+    // Bulk add state
+    const [showBulkAddModal, setShowBulkAddModal] = useState(false);
+    const [bulkAddForm, setBulkAddForm] = useState({
+        employee_ids: [],
+        leave_type: 'sick',
+        days: '',
+        year: new Date().getFullYear(),
+        notes: ''
+    });
+    const [bulkSubmitting, setBulkSubmitting] = useState(false);
+    
     // Generate year options (current year ± 3 years)
     const currentYear = new Date().getFullYear();
     const yearOptions = [];
@@ -92,11 +103,50 @@ const SLVLBankManager = ({ employees }) => {
         setShowAddDaysModal(true);
     };
     
+    // Handle opening bulk add modal
+    const handleOpenBulkAddModal = (leaveType = 'sick') => {
+        setBulkAddForm({
+            employee_ids: [],
+            leave_type: leaveType,
+            days: '',
+            year: selectedYear,
+            notes: ''
+        });
+        setShowBulkAddModal(true);
+    };
+    
     // Handle add days form change
     const handleAddDaysFormChange = (field, value) => {
         setAddDaysForm(prev => ({
             ...prev,
             [field]: value
+        }));
+    };
+    
+    // Handle bulk add form change
+    const handleBulkAddFormChange = (field, value) => {
+        setBulkAddForm(prev => ({
+            ...prev,
+            [field]: value
+        }));
+    };
+    
+    // Handle employee selection for bulk add
+    const handleBulkEmployeeToggle = (employeeId) => {
+        setBulkAddForm(prev => ({
+            ...prev,
+            employee_ids: prev.employee_ids.includes(employeeId)
+                ? prev.employee_ids.filter(id => id !== employeeId)
+                : [...prev.employee_ids, employeeId]
+        }));
+    };
+    
+    // Handle select all employees for bulk add
+    const handleBulkSelectAll = () => {
+        const allEmployeeIds = filteredEmployees.map(emp => emp.id);
+        setBulkAddForm(prev => ({
+            ...prev,
+            employee_ids: prev.employee_ids.length === allEmployeeIds.length ? [] : allEmployeeIds
         }));
     };
     
@@ -168,6 +218,73 @@ const SLVLBankManager = ({ employees }) => {
         });
     };
     
+    // Handle bulk add days submission
+    const handleBulkAddDays = () => {
+        if (!bulkAddForm.days || bulkAddForm.days <= 0) {
+            alert('Please enter a valid number of days');
+            return;
+        }
+        
+        if (bulkAddForm.days > 100) {
+            alert('Maximum 100 days can be added at once');
+            return;
+        }
+        
+        if (bulkAddForm.employee_ids.length === 0) {
+            alert('Please select at least one employee');
+            return;
+        }
+        
+        setBulkSubmitting(true);
+        
+        // Create form data object for Inertia
+        const formData = {
+            employee_ids: bulkAddForm.employee_ids,
+            leave_type: bulkAddForm.leave_type,
+            days: parseFloat(bulkAddForm.days),
+            year: parseInt(bulkAddForm.year),
+            notes: bulkAddForm.notes || ''
+        };
+        
+        router.post(route('slvl.bulkAddDaysToBank'), formData, {
+            preserveScroll: true,
+            onSuccess: (page) => {
+                setBulkSubmitting(false);
+                setShowBulkAddModal(false);
+                
+                // Show success message from flash
+                if (page.props?.flash?.message) {
+                    alert(page.props.flash.message);
+                } else {
+                    alert(`Successfully added ${bulkAddForm.days} ${bulkAddForm.leave_type} leave days to ${bulkAddForm.employee_ids.length} employee(s)`);
+                }
+                
+                // Reset form
+                setBulkAddForm({
+                    employee_ids: [],
+                    leave_type: 'sick',
+                    days: '',
+                    year: selectedYear,
+                    notes: ''
+                });
+                
+                // Reload the page to get fresh data
+                window.location.reload();
+            },
+            onError: (errors) => {
+                setBulkSubmitting(false);
+                console.error('Error bulk adding days:', errors);
+                
+                if (errors && typeof errors === 'object') {
+                    const errorMessages = Object.values(errors).flat();
+                    alert('Error: ' + errorMessages.join(', '));
+                } else {
+                    alert('An error occurred while bulk adding days');
+                }
+            }
+        });
+    };
+    
     // Handle close modal
     const handleCloseModal = () => {
         if (submitting) return; // Prevent closing while submitting
@@ -176,6 +293,20 @@ const SLVLBankManager = ({ employees }) => {
         setAddDaysForm({
             employee_id: '',
             employee_name: '',
+            leave_type: 'sick',
+            days: '',
+            year: selectedYear,
+            notes: ''
+        });
+    };
+    
+    // Handle close bulk modal
+    const handleCloseBulkModal = () => {
+        if (bulkSubmitting) return;
+        
+        setShowBulkAddModal(false);
+        setBulkAddForm({
+            employee_ids: [],
             leave_type: 'sick',
             days: '',
             year: selectedYear,
@@ -203,6 +334,26 @@ const SLVLBankManager = ({ employees }) => {
                                 <option key={year} value={year}>{year}</option>
                             ))}
                         </select>
+                        
+                        {/* Bulk Add Buttons */}
+                        <div className="flex space-x-2 ml-4">
+                            <button
+                                onClick={() => handleOpenBulkAddModal('sick')}
+                                className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-sm flex items-center space-x-1 transition-colors"
+                                title="Bulk Add Sick Leave"
+                            >
+                                <Plus className="w-4 h-4" />
+                                <span>Bulk Add SL</span>
+                            </button>
+                            <button
+                                onClick={() => handleOpenBulkAddModal('vacation')}
+                                className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white rounded-md text-sm flex items-center space-x-1 transition-colors"
+                                title="Bulk Add Vacation Leave"
+                            >
+                                <Plus className="w-4 h-4" />
+                                <span>Bulk Add VL</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -615,6 +766,203 @@ const SLVLBankManager = ({ employees }) => {
                                     className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                                     onClick={handleCloseModal}
                                     disabled={submitting}
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+            
+            {/* Bulk Add Days Modal */}
+            {showBulkAddModal && (
+                <div className="fixed inset-0 z-50 overflow-y-auto">
+                    <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                        <div className="fixed inset-0 transition-opacity" aria-hidden="true">
+                            <div className="absolute inset-0 bg-gray-500 opacity-75"></div>
+                        </div>
+                        
+                        <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+                        
+                        <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full">
+                            <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                                <div className="sm:flex sm:items-start">
+                                    <div className="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-indigo-100 sm:mx-0 sm:h-10 sm:w-10">
+                                        <Calendar className="h-6 w-6 text-indigo-600" />
+                                    </div>
+                                    <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left w-full">
+                                        <h3 className="text-lg leading-6 font-medium text-gray-900">
+                                            Bulk Add {bulkAddForm.leave_type === 'sick' ? 'Sick Leave' : 'Vacation Leave'} Days
+                                        </h3>
+                                        <div className="mt-2">
+                                            <p className="text-sm text-gray-500">
+                                                Add {bulkAddForm.leave_type === 'sick' ? 'sick leave' : 'vacation leave'} days to multiple employees for year {bulkAddForm.year}.
+                                            </p>
+                                        </div>
+                                        
+                                        <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                            {/* Left side - Form */}
+                                            <div className="space-y-4">
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                        Leave Type <span className="text-red-500">*</span>
+                                                    </label>
+                                                    <select
+                                                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                                        value={bulkAddForm.leave_type}
+                                                        onChange={(e) => handleBulkAddFormChange('leave_type', e.target.value)}
+                                                        disabled={bulkSubmitting}
+                                                    >
+                                                        <option value="sick">Sick Leave</option>
+                                                        <option value="vacation">Vacation Leave</option>
+                                                    </select>
+                                                </div>
+                                                
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                        Days to Add <span className="text-red-500">*</span>
+                                                    </label>
+                                                    <input
+                                                        type="number"
+                                                        min="0.5"
+                                                        max="100"
+                                                        step="0.5"
+                                                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                                        value={bulkAddForm.days}
+                                                        onChange={(e) => handleBulkAddFormChange('days', e.target.value)}
+                                                        placeholder="Enter number of days"
+                                                        disabled={bulkSubmitting}
+                                                    />
+                                                    <p className="text-xs text-gray-500 mt-1">Maximum 100 days can be added at once</p>
+                                                </div>
+                                                
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                        Year <span className="text-red-500">*</span>
+                                                    </label>
+                                                    <select
+                                                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                                        value={bulkAddForm.year}
+                                                        onChange={(e) => handleBulkAddFormChange('year', parseInt(e.target.value))}
+                                                        disabled={bulkSubmitting}
+                                                    >
+                                                        {yearOptions.map(year => (
+                                                            <option key={year} value={year}>{year}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                                
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                                                        Notes (Optional)
+                                                    </label>
+                                                    <textarea
+                                                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                                        rows="3"
+                                                        value={bulkAddForm.notes}
+                                                        onChange={(e) => handleBulkAddFormChange('notes', e.target.value)}
+                                                        placeholder="Explain why these days are being added (e.g., Annual allocation, Adjustment, etc.)"
+                                                        disabled={bulkSubmitting}
+                                                    ></textarea>
+                                                </div>
+                                                
+                                                <div className="bg-blue-50 p-3 rounded-md">
+                                                    <div className="text-sm font-medium text-blue-800">
+                                                        Selected: {bulkAddForm.employee_ids.length} employee(s)
+                                                    </div>
+                                                    {bulkAddForm.days && bulkAddForm.employee_ids.length > 0 && (
+                                                        <div className="text-xs text-blue-700 mt-1">
+                                                            Total days to be added: {bulkAddForm.days * bulkAddForm.employee_ids.length} days across {bulkAddForm.employee_ids.length} employee(s)
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            
+                                            {/* Right side - Employee Selection */}
+                                            <div>
+                                                <div className="flex justify-between items-center mb-3">
+                                                    <label className="block text-sm font-medium text-gray-700">
+                                                        Select Employees <span className="text-red-500">*</span>
+                                                    </label>
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleBulkSelectAll}
+                                                        className="text-sm text-indigo-600 hover:text-indigo-800"
+                                                        disabled={bulkSubmitting}
+                                                    >
+                                                        {bulkAddForm.employee_ids.length === filteredEmployees.length ? 'Deselect All' : 'Select All'}
+                                                    </button>
+                                                </div>
+                                                
+                                                <div className="border rounded-md max-h-80 overflow-y-auto">
+                                                    {filteredEmployees.length === 0 ? (
+                                                        <div className="p-4 text-center text-gray-500">
+                                                            No employees found
+                                                        </div>
+                                                    ) : (
+                                                        <div className="divide-y divide-gray-200">
+                                                            {filteredEmployees.map(employee => (
+                                                                <div 
+                                                                    key={employee.id} 
+                                                                    className={`p-3 hover:bg-gray-50 cursor-pointer transition-colors ${
+                                                                        bulkAddForm.employee_ids.includes(employee.id) ? 'bg-indigo-50 border-l-2 border-indigo-500' : ''
+                                                                    }`}
+                                                                    onClick={() => handleBulkEmployeeToggle(employee.id)}
+                                                                >
+                                                                    <div className="flex items-center">
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={bulkAddForm.employee_ids.includes(employee.id)}
+                                                                            onChange={() => handleBulkEmployeeToggle(employee.id)}
+                                                                            className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                                                            disabled={bulkSubmitting}
+                                                                        />
+                                                                        <div className="ml-3 flex-1 min-w-0">
+                                                                            <div className="text-sm font-medium text-gray-900 truncate">
+                                                                                {employee.name}
+                                                                            </div>
+                                                                            <div className="text-xs text-gray-500 mt-1">
+                                                                                ID: {employee.idno} • {employee.department}
+                                                                            </div>
+                                                                            <div className="flex items-center space-x-4 mt-1">
+                                                                                <span className="text-xs text-gray-500">
+                                                                                    SL: <span className={`font-medium ${employee.sick_leave_days > 0 ? 'text-blue-600' : 'text-gray-600'}`}>
+                                                                                        {employee.sick_leave_days || 0}
+                                                                                    </span>
+                                                                                </span>
+                                                                                <span className="text-xs text-gray-500">
+                                                                                    VL: <span className={`font-medium ${employee.vacation_leave_days > 0 ? 'text-green-600' : 'text-gray-600'}`}>
+                                                                                        {employee.vacation_leave_days || 0}
+                                                                                    </span>
+                                                                                </span>
+                                                                            </div>
+                                                                        </div>
+                                                                    </div>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                                <button
+                                    type="button"
+                                    className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-indigo-600 text-base font-medium text-white hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                    onClick={handleBulkAddDays}
+                                    disabled={!bulkAddForm.days || bulkAddForm.days <= 0 || bulkAddForm.employee_ids.length === 0 || bulkSubmitting}
+                                >
+                                    {bulkSubmitting ? 'Adding Days...' : `Add Days to ${bulkAddForm.employee_ids.length} Employee(s)`}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                                    onClick={handleCloseBulkModal}
+                                    disabled={bulkSubmitting}
                                 >
                                     Cancel
                                 </button>

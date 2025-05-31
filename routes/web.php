@@ -407,6 +407,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->name('slvl.export');
     Route::get('/slvl/bank/{employeeId}', [SLVLController::class, 'getSLVLBank'])
     ->name('slvl.getSLVLBank');
+
+    Route::post('/slvl/add-days-to-bank', [SLVLController::class, 'addDaysToBank'])
+        ->name('slvl.addDaysToBank');
+        
+    // Add this new route for bulk adding days
+    Route::post('/slvl/bulk-add-days-to-bank', [SLVLController::class, 'bulkAddDaysToBank'])
+        ->name('slvl.bulkAddDaysToBank');
     
     // Bulk Actions for managers
     Route::middleware('role:department_manager,hrd_manager,superadmin')->group(function () {

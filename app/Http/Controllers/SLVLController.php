@@ -1057,6 +1057,94 @@ class SLVLController extends Controller
             ]
         ]);
     }
+
+    public function bulkAddDaysToBank(Request $request)
+    {
+        $user = Auth::user();
+        $userRoles = $this->getUserRoles($user);
+        
+        if (!$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+            return back()->with('error', 'You are not authorized to perform this action.');
+        }
+        
+        $validated = $request->validate([
+            'employee_ids' => 'required|array|min:1',
+            'employee_ids.*' => 'required|integer|exists:employees,id',
+            'leave_type' => 'required|string|in:sick,vacation',
+            'days' => 'required|numeric|min:0.5|max:365',
+            'year' => 'required|integer|min:2020|max:2030',
+            'notes' => 'nullable|string|max:500',
+        ]);
+        
+        DB::beginTransaction();
+        
+        $successCount = 0;
+        $errorCount = 0;
+        $errors = [];
+        
+        try {
+            foreach ($validated['employee_ids'] as $employeeId) {
+                try {
+                    $employee = Employee::find($employeeId);
+                    
+                    if (!$employee) {
+                        $errorCount++;
+                        $errors[] = "Employee with ID {$employeeId} not found";
+                        continue;
+                    }
+                    
+                    // Get or create SLVL bank
+                    $bank = SLVLBank::where('employee_id', $employeeId)
+                        ->where('leave_type', $validated['leave_type'])
+                        ->where('year', $validated['year'])
+                        ->first();
+                    
+                    if (!$bank) {
+                        $bank = SLVLBank::create([
+                            'employee_id' => $employeeId,
+                            'leave_type' => $validated['leave_type'],
+                            'total_days' => $validated['days'],
+                            'used_days' => 0,
+                            'year' => $validated['year'],
+                            'created_by' => $user->id,
+                            'notes' => $validated['notes'] ?? "Bulk addition by {$user->name} for {$employee->Fname} {$employee->Lname}"
+                        ]);
+                    } else {
+                        $bank->total_days += $validated['days'];
+                        $bank->notes = ($bank->notes ? $bank->notes . "\n" : '') . 
+                                      (now()->format('Y-m-d H:i') . " - Bulk added {$validated['days']} days by {$user->name}" . 
+                                      ($validated['notes'] ? ": {$validated['notes']}" : ''));
+                        $bank->save();
+                    }
+                    
+                    $successCount++;
+                    
+                } catch (\Exception $e) {
+                    $errorCount++;
+                    $errors[] = "Error for employee {$employee->Fname} {$employee->Lname}: " . $e->getMessage();
+                    \Log::error("Bulk add SLVL days error for employee {$employeeId}: " . $e->getMessage());
+                }
+            }
+            
+            DB::commit();
+            
+            // Prepare response message
+            $message = "Successfully added {$validated['days']} {$validated['leave_type']} leave days to {$successCount} employee(s)";
+            if ($errorCount > 0) {
+                $message .= ". {$errorCount} errors occurred.";
+            }
+            
+            return back()->with([
+                'message' => $message,
+                'errors' => $errors
+            ]);
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            \Log::error('Bulk add SLVL days failed: ' . $e->getMessage());
+            return back()->with('error', 'Failed to bulk add days to SLVL bank: ' . $e->getMessage());
+        }
+    }
     
     private function isSuperAdmin($user)
     {
