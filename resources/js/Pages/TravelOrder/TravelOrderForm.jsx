@@ -1,51 +1,115 @@
 // resources/js/Pages/TravelOrder/TravelOrderForm.jsx
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
+import { Loader2, MapPin, Clock, DollarSign } from 'lucide-react';
 
-const TravelOrderForm = ({ employees, departments, onSubmit }) => {
+const TravelOrderForm = ({ employees, departments, transportationTypes, onSubmit }) => {
     const today = format(new Date(), 'yyyy-MM-dd');
     
     // Form state
     const [formData, setFormData] = useState({
         employee_ids: [],
-        date: today,
-        destination: '',
-        purpose: '',
         start_date: today,
         end_date: today,
-        transportation_type: 'company_vehicle',
+        departure_time: '08:00',
+        return_time: '17:00',
+        destination: '',
+        transportation_type: transportationTypes[0] || '',
+        purpose: '',
         accommodation_required: false,
         meal_allowance: false,
         other_expenses: '',
-        estimated_cost: ''
+        estimated_cost: '',
+        return_to_office: false,
+        office_return_time: ''
     });
     
+    // Loading and processing states
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [loadingMessage, setLoadingMessage] = useState('');
+    
     // Filtered employees state
-    const [filteredEmployees, setFilteredEmployees] = useState(employees || []);
+    const [displayedEmployees, setDisplayedEmployees] = useState(employees || []);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedDepartment, setSelectedDepartment] = useState('');
     
-    // Update filtered employees when search or department selection changes
+    // Update displayed employees when search or department selection changes
     useEffect(() => {
-        let result = employees || [];
+        let exactSearchMatches = [];
+        let partialSearchMatches = [];
+        let selectedButNotMatched = [];
+        let otherEmployees = [];
         
-        // Filter by search term
-        if (searchTerm) {
-            const term = searchTerm.toLowerCase();
-            result = result.filter(employee => 
-                employee.Fname.toLowerCase().includes(term) || 
-                employee.Lname.toLowerCase().includes(term) || 
-                employee.idno?.toString().includes(term)
-            );
+        employees.forEach(employee => {
+            const isSelected = formData.employee_ids.includes(employee.id);
+            
+            // Check search match
+            let matchesSearch = true;
+            let exactMatch = false;
+            
+            if (searchTerm) {
+                const term = searchTerm.toLowerCase().trim();
+                const fullName = `${employee.Fname} ${employee.Lname}`.toLowerCase();
+                const reverseName = `${employee.Lname} ${employee.Fname}`.toLowerCase();
+                
+                if (
+                    employee.Lname.toLowerCase() === term || 
+                    employee.Fname.toLowerCase() === term ||
+                    fullName === term ||
+                    reverseName === term ||
+                    employee.idno?.toString() === term
+                ) {
+                    exactMatch = true;
+                    matchesSearch = true;
+                } else {
+                    matchesSearch = 
+                        employee.Fname.toLowerCase().includes(term) || 
+                        employee.Lname.toLowerCase().includes(term) || 
+                        employee.idno?.toString().includes(term);
+                }
+            }
+            
+            // Check department match
+            let matchesDepartment = true;
+            if (selectedDepartment) {
+                const employeeDepartment = employee.department?.name || employee.Department;
+                matchesDepartment = employeeDepartment === selectedDepartment;
+            }
+            
+            // Categorize based on matches and selection status
+            if (exactMatch && matchesDepartment) {
+                exactSearchMatches.push(employee);
+            } else if (matchesSearch && matchesDepartment) {
+                partialSearchMatches.push(employee);
+            } else if (isSelected) {
+                selectedButNotMatched.push(employee);
+            } else {
+                otherEmployees.push(employee);
+            }
+        });
+        
+        // Combine all categories in priority order
+        const result = [
+            ...exactSearchMatches,
+            ...partialSearchMatches,
+            ...selectedButNotMatched,
+            ...otherEmployees
+        ];
+        
+        // When no search/filter applied, move selected to top
+        if (!searchTerm && !selectedDepartment) {
+            result.sort((a, b) => {
+                const aSelected = formData.employee_ids.includes(a.id);
+                const bSelected = formData.employee_ids.includes(b.id);
+                
+                if (aSelected && !bSelected) return -1;
+                if (!aSelected && bSelected) return 1;
+                return 0;
+            });
         }
         
-        // Filter by department
-        if (selectedDepartment) {
-            result = result.filter(employee => employee.Department === selectedDepartment);
-        }
-        
-        setFilteredEmployees(result);
-    }, [searchTerm, selectedDepartment, employees]);
+        setDisplayedEmployees(result);
+    }, [searchTerm, selectedDepartment, employees, formData.employee_ids]);
     
     // Handle input changes
     const handleChange = (e) => {
@@ -60,15 +124,12 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
     const handleEmployeeSelection = (employeeId) => {
         const numericId = parseInt(employeeId, 10);
         setFormData(prevData => {
-            // Check if employee is already selected
             if (prevData.employee_ids.includes(numericId)) {
-                // Remove the employee
                 return {
                     ...prevData,
                     employee_ids: prevData.employee_ids.filter(id => id !== numericId)
                 };
             } else {
-                // Add the employee
                 return {
                     ...prevData,
                     employee_ids: [...prevData.employee_ids, numericId]
@@ -77,44 +138,50 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
         });
     };
     
-    // Handle select all employees (filtered ones only)
+    // Handle checkbox change
+    const handleCheckboxChange = (e, employeeId) => {
+        e.stopPropagation();
+        handleEmployeeSelection(employeeId);
+    };
+    
+    // Handle select all employees
     const handleSelectAll = () => {
         setFormData(prevData => {
-            // Get IDs of all filtered employees
-            const filteredIds = filteredEmployees.map(emp => emp.id);
-            
-            // Check if all filtered employees are already selected
-            const allSelected = filteredIds.every(id => prevData.employee_ids.includes(id));
+            const displayedIds = displayedEmployees.map(emp => emp.id);
+            const allSelected = displayedIds.every(id => prevData.employee_ids.includes(id));
             
             if (allSelected) {
-                // If all are selected, deselect them
                 return {
                     ...prevData,
-                    employee_ids: prevData.employee_ids.filter(id => !filteredIds.includes(id))
+                    employee_ids: prevData.employee_ids.filter(id => !displayedIds.includes(id))
                 };
             } else {
-                // If not all are selected, select all filtered employees
-                // First remove any existing filtered employees to avoid duplicates
-                const remainingSelectedIds = prevData.employee_ids.filter(id => !filteredIds.includes(id));
+                const remainingSelectedIds = prevData.employee_ids.filter(id => !displayedIds.includes(id));
                 return {
                     ...prevData,
-                    employee_ids: [...remainingSelectedIds, ...filteredIds]
+                    employee_ids: [...remainingSelectedIds, ...displayedIds]
                 };
             }
         });
     };
     
-    // Validate date range
-    const validateDateRange = () => {
-        if (new Date(formData.start_date) > new Date(formData.end_date)) {
-            return false;
-        }
-        return true;
+    // Calculate estimated travel days
+    const calculateTravelInfo = () => {
+        if (!formData.start_date || !formData.end_date) return { days: 0, isMultiDay: false };
+        
+        const startDate = new Date(formData.start_date);
+        const endDate = new Date(formData.end_date);
+        const days = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24)) + 1;
+        const isMultiDay = days > 1;
+        
+        return { days, isMultiDay };
     };
     
     // Handle form submission
-    const handleSubmit = (e) => {
+    const handleSubmit = async (e) => {
         e.preventDefault();
+        
+        if (isSubmitting) return;
         
         // Validate form
         if (formData.employee_ids.length === 0) {
@@ -122,54 +189,104 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
             return;
         }
         
-        if (!formData.date || !formData.destination || !formData.purpose) {
-            alert('Please fill in all required fields');
+        if (!formData.start_date || !formData.end_date) {
+            alert('Please fill in start and end dates');
             return;
         }
         
-        if (!validateDateRange()) {
-            alert('End date cannot be before start date');
+        if (new Date(formData.end_date) < new Date(formData.start_date)) {
+            alert('End date must be on or after start date');
             return;
         }
         
-        // Call the onSubmit prop with the form data
-        onSubmit(formData);
+        if (!formData.destination.trim()) {
+            alert('Please provide the destination');
+            return;
+        }
         
-        // Reset form after submission
-        setFormData({
-            employee_ids: [],
-            date: today,
-            destination: '',
-            purpose: '',
-            start_date: today,
-            end_date: today,
-            transportation_type: 'company_vehicle',
-            accommodation_required: false,
-            meal_allowance: false,
-            other_expenses: '',
-            estimated_cost: ''
-        });
+        if (!formData.purpose.trim()) {
+            alert('Please provide the purpose of travel');
+            return;
+        }
         
-        // Reset filters
-        setSearchTerm('');
-        setSelectedDepartment('');
+        // Validate return to office logic
+        if (formData.return_to_office && !formData.office_return_time) {
+            alert('Please specify office return time when "Return to Office" is checked');
+            return;
+        }
+        
+        setIsSubmitting(true);
+        setLoadingMessage(`Processing travel order for ${formData.employee_ids.length} employee${formData.employee_ids.length > 1 ? 's' : ''}...`);
+        
+        try {
+            await onSubmit(formData);
+            
+            // Reset form after successful submission 
+            setFormData({
+                employee_ids: [],
+                start_date: today,
+                end_date: today,
+                departure_time: '08:00',
+                return_time: '17:00',
+                destination: '',
+                transportation_type: transportationTypes[0] || '',
+                purpose: '',
+                accommodation_required: false,
+                meal_allowance: false,
+                other_expenses: '',
+                estimated_cost: '',
+                return_to_office: false,
+                office_return_time: ''
+            });
+            
+            // Reset filters
+            setSearchTerm('');
+            setSelectedDepartment('');
+            
+            setLoadingMessage('Travel orders submitted successfully!');
+            
+            setTimeout(() => {
+                setLoadingMessage('');
+            }, 2000);
+            
+        } catch (error) {
+            console.error('Error submitting travel order:', error);
+            setLoadingMessage('');
+        } finally {
+            setIsSubmitting(false);
+        }
     };
     
-    // Calculate if all filtered employees are selected
-    const allFilteredSelected = filteredEmployees.length > 0 && 
-        filteredEmployees.every(emp => formData.employee_ids.includes(emp.id));
+    // Calculate if all displayed employees are selected
+    const allDisplayedSelected = displayedEmployees.length > 0 && 
+        displayedEmployees.every(emp => formData.employee_ids.includes(emp.id));
     
     // Get selected employees details for display
     const selectedEmployees = employees.filter(emp => formData.employee_ids.includes(emp.id));
     
+    const travelInfo = calculateTravelInfo();
+
     return (
         <div className="bg-white shadow-md rounded-lg overflow-hidden">
             <div className="p-4 border-b">
-                <h3 className="text-lg font-semibold">File New Travel Order</h3>
-                <p className="text-sm text-gray-500">Create travel order request for one or multiple employees</p>
+                <h3 className="text-lg font-semibold flex items-center">
+                    <MapPin className="h-5 w-5 mr-2 text-indigo-600" />
+                    File New Travel Order
+                </h3>
+                <p className="text-sm text-gray-500">Create travel order for one or multiple employees</p>
             </div>
             
-            <form onSubmit={handleSubmit}>
+            {/* Loading Overlay */}
+            {isSubmitting && (
+                <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-50 rounded-lg">
+                    <div className="text-center">
+                        <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-indigo-600" />
+                        <p className="text-sm text-gray-600">{loadingMessage}</p>
+                    </div>
+                </div>
+            )}
+            
+            <form onSubmit={handleSubmit} className="relative">
                 <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* Employee Selection Section */}
                     <div className="md:col-span-2 bg-gray-50 p-4 rounded-lg">
@@ -183,6 +300,7 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={searchTerm}
                                     onChange={(e) => setSearchTerm(e.target.value)}
+                                    disabled={isSubmitting}
                                 />
                             </div>
                             
@@ -191,6 +309,7 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={selectedDepartment}
                                     onChange={(e) => setSelectedDepartment(e.target.value)}
+                                    disabled={isSubmitting}
                                 >
                                     <option value="">All Departments</option>
                                     {departments.map((department, index) => (
@@ -203,13 +322,14 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
                                 <button
                                     type="button"
                                     className={`w-full px-4 py-2 rounded-md ${
-                                        allFilteredSelected 
+                                        allDisplayedSelected 
                                             ? 'bg-indigo-700 hover:bg-indigo-800' 
                                             : 'bg-indigo-500 hover:bg-indigo-600'
-                                    } text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500`}
+                                    } text-white focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50`}
                                     onClick={handleSelectAll}
+                                    disabled={isSubmitting}
                                 >
-                                    {allFilteredSelected ? 'Deselect All' : 'Select All'}
+                                    {allDisplayedSelected ? 'Deselect All' : 'Select All'}
                                 </button>
                             </div>
                         </div>
@@ -237,28 +357,29 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
                                 </thead>
                                 
                                 <tbody className="bg-white divide-y divide-gray-200">
-                                    {filteredEmployees.length === 0 ? (
+                                    {displayedEmployees.length === 0 ? (
                                         <tr>
                                             <td colSpan="5" className="px-4 py-3 text-center text-sm text-gray-500">
                                                 No employees match your search criteria
                                             </td>
                                         </tr>
                                     ) : (
-                                        filteredEmployees.map(employee => (
+                                        displayedEmployees.map(employee => (
                                             <tr 
                                                 key={employee.id} 
                                                 className={`hover:bg-gray-50 cursor-pointer ${
                                                     formData.employee_ids.includes(employee.id) ? 'bg-indigo-50' : ''
-                                                }`}
-                                                onClick={() => handleEmployeeSelection(employee.id)}
+                                                } ${isSubmitting ? 'opacity-50' : ''}`}
+                                                onClick={() => !isSubmitting && handleEmployeeSelection(employee.id)}
                                             >
                                                 <td className="px-4 py-2 whitespace-nowrap">
                                                     <input
                                                         type="checkbox"
                                                         className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                                         checked={formData.employee_ids.includes(employee.id)}
-                                                        onChange={() => {}}
+                                                        onChange={(e) => handleCheckboxChange(e, employee.id)}
                                                         onClick={(e) => e.stopPropagation()}
+                                                        disabled={isSubmitting}
                                                     />
                                                 </td>
                                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
@@ -270,7 +391,7 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
                                                     </div>
                                                 </td>
                                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
-                                                    {employee.Department}
+                                                    {employee.department?.name || employee.Department || 'No Department'}
                                                 </td>
                                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
                                                     {employee.Jobtitle}
@@ -298,26 +419,14 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
                         </div>
                     </div>
                     
-                    {/* Travel Order Details Section */}
+                    {/* Travel Details Section */}
                     <div className="bg-gray-50 p-4 rounded-lg">
-                        <h4 className="font-medium mb-3">Travel Order Details</h4>
+                        <h4 className="font-medium mb-3 flex items-center">
+                            <Clock className="h-4 w-4 mr-2 text-indigo-600" />
+                            Travel Details
+                        </h4>
                         
                         <div className="space-y-4">
-                            <div>
-                                <label htmlFor="date" className="block text-sm font-medium text-gray-700 mb-1">
-                                    Filing Date <span className="text-red-600">*</span>
-                                </label>
-                                <input
-                                    type="date"
-                                    id="date"
-                                    name="date"
-                                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                    value={formData.date}
-                                    onChange={handleChange}
-                                    required
-                                />
-                            </div>
-                            
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label htmlFor="start_date" className="block text-sm font-medium text-gray-700 mb-1">
@@ -330,6 +439,7 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
                                         className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                         value={formData.start_date}
                                         onChange={handleChange}
+                                        disabled={isSubmitting}
                                         required
                                     />
                                 </div>
@@ -345,7 +455,48 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
                                         className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                         value={formData.end_date}
                                         onChange={handleChange}
+                                        disabled={isSubmitting}
+                                        min={formData.start_date}
                                         required
+                                    />
+                                </div>
+                            </div>
+                            
+                            {travelInfo.days > 0 && (
+                                <div className="text-sm text-gray-600 bg-blue-50 p-2 rounded">
+                                    <strong>Travel Duration:</strong> {travelInfo.days} day{travelInfo.days !== 1 ? 's' : ''}
+                                    {travelInfo.isMultiDay && <span className="text-blue-600 ml-2">(Multi-day travel)</span>}
+                                </div>
+                            )}
+                            
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label htmlFor="departure_time" className="block text-sm font-medium text-gray-700 mb-1">
+                                        Departure Time
+                                    </label>
+                                    <input
+                                        type="time"
+                                        id="departure_time"
+                                        name="departure_time"
+                                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                        value={formData.departure_time}
+                                        onChange={handleChange}
+                                        disabled={isSubmitting}
+                                    />
+                                </div>
+                                
+                                <div>
+                                    <label htmlFor="return_time" className="block text-sm font-medium text-gray-700 mb-1">
+                                        Return Time
+                                    </label>
+                                    <input
+                                        type="time"
+                                        id="return_time"
+                                        name="return_time"
+                                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                        value={formData.return_time}
+                                        onChange={handleChange}
+                                        disabled={isSubmitting}
                                     />
                                 </div>
                             </div>
@@ -359,16 +510,17 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
                                     id="destination"
                                     name="destination"
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                    placeholder="Enter destination of travel"
                                     value={formData.destination}
                                     onChange={handleChange}
+                                    disabled={isSubmitting}
+                                    placeholder="Enter travel destination"
                                     required
                                 />
                             </div>
                             
                             <div>
                                 <label htmlFor="transportation_type" className="block text-sm font-medium text-gray-700 mb-1">
-                                    Transportation Type <span className="text-red-600">*</span>
+                                    Transportation Type
                                 </label>
                                 <select
                                     id="transportation_type"
@@ -376,17 +528,89 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={formData.transportation_type}
                                     onChange={handleChange}
-                                    required
+                                    disabled={isSubmitting}
                                 >
-                                    <option value="company_vehicle">Company Vehicle</option>
-                                    <option value="personal_vehicle">Personal Vehicle</option>
-                                    <option value="public_transport">Public Transport</option>
-                                    <option value="plane">Plane</option>
-                                    <option value="other">Other</option>
+                                    {transportationTypes.map((type, index) => (
+                                        <option key={index} value={type}>{type}</option>
+                                    ))}
                                 </select>
                             </div>
+                        </div>
+                    </div>
+                    
+                    {/* Return to Office Section */}
+                    <div className="bg-gray-50 p-4 rounded-lg">
+                        <h4 className="font-medium mb-3">Return to Office</h4>
+                        
+                        <div className="space-y-4">
+                            <div className="flex items-center">
+                                <input
+                                    type="checkbox"
+                                    id="return_to_office"
+                                    name="return_to_office"
+                                    className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                    checked={formData.return_to_office}
+                                    onChange={handleChange}
+                                    disabled={isSubmitting}
+                                />
+                                <label htmlFor="return_to_office" className="ml-2 text-sm text-gray-700">
+                                    Employee will return to office after travel
+                                </label>
+                            </div>
                             
-                            <div className="space-y-2 mt-4">
+                            {formData.return_to_office && (
+                                <div>
+                                    <label htmlFor="office_return_time" className="block text-sm font-medium text-gray-700 mb-1">
+                                        Office Return Time <span className="text-red-600">*</span>
+                                    </label>
+                                    <input
+                                        type="time"
+                                        id="office_return_time"
+                                        name="office_return_time"
+                                        className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                        value={formData.office_return_time}
+                                        onChange={handleChange}
+                                        disabled={isSubmitting}
+                                        required={formData.return_to_office}
+                                    />
+                                    <p className="mt-1 text-xs text-gray-500">
+                                        This affects whether the travel is counted as full day or partial day
+                                    </p>
+                                </div>
+                            )}
+                            
+                            <div className="text-sm text-gray-600 bg-yellow-50 p-2 rounded">
+                                <strong>Day Counting Logic:</strong><br />
+                                • Travel of 5+ hours = Full day<br />
+                                • Return to office with 3+ hours work = Partial day<br />
+                                • Travel before 9 AM or after 3 PM = Full day
+                            </div>
+                        </div>
+                    </div>
+                    
+                    {/* Purpose and Expenses Section */}
+                    <div className="bg-gray-50 p-4 rounded-lg">
+                        <h4 className="font-medium mb-3">Purpose & Expenses</h4>
+                        
+                        <div className="space-y-4">
+                            <div>
+                                <label htmlFor="purpose" className="block text-sm font-medium text-gray-700 mb-1">
+                                    Purpose of Travel <span className="text-red-600">*</span>
+                                </label>
+                                <textarea
+                                    id="purpose"
+                                    name="purpose"
+                                    rows="3"
+                                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                    placeholder="Provide detailed purpose for the travel"
+                                    value={formData.purpose}
+                                    onChange={handleChange}
+                                    disabled={isSubmitting}
+                                    required
+                                ></textarea>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 gap-4">
                                 <div className="flex items-center">
                                     <input
                                         type="checkbox"
@@ -395,8 +619,9 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
                                         className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                         checked={formData.accommodation_required}
                                         onChange={handleChange}
+                                        disabled={isSubmitting}
                                     />
-                                    <label htmlFor="accommodation_required" className="ml-2 block text-sm text-gray-900">
+                                    <label htmlFor="accommodation_required" className="ml-2 text-sm text-gray-700">
                                         Accommodation Required
                                     </label>
                                 </div>
@@ -409,36 +634,31 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
                                         className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                         checked={formData.meal_allowance}
                                         onChange={handleChange}
+                                        disabled={isSubmitting}
                                     />
-                                    <label htmlFor="meal_allowance" className="ml-2 block text-sm text-gray-900">
+                                    <label htmlFor="meal_allowance" className="ml-2 text-sm text-gray-700">
                                         Meal Allowance
                                     </label>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-                    
-                    <div className="bg-gray-50 p-4 rounded-lg">
-                        <h4 className="font-medium mb-3">Purpose and Expenses</h4>
-                        
-                        <div className="space-y-4">
+                            
                             <div>
-                                <label htmlFor="purpose" className="block text-sm font-medium text-gray-700 mb-1">
-                                    Purpose <span className="text-red-600">*</span>
+                                <label htmlFor="estimated_cost" className="block text-sm font-medium text-gray-700 mb-1 flex items-center">
+                                    <DollarSign className="h-4 w-4 mr-1" />
+                                    Estimated Cost
                                 </label>
-                                <textarea
-                                    id="purpose"
-                                    name="purpose"
-                                    rows="3"
+                                <input
+                                    type="number"
+                                    id="estimated_cost"
+                                    name="estimated_cost"
+                                    step="0.01"
+                                    min="0"
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                    placeholder="Provide a detailed purpose for the travel"
-                                    value={formData.purpose}
+                                    value={formData.estimated_cost}
                                     onChange={handleChange}
-                                    required
-                                ></textarea>
-                                <p className="mt-1 text-xs text-gray-500">
-                                    Please provide a clear justification for the travel order.
-                                </p>
+                                    disabled={isSubmitting}
+                                    placeholder="0.00"
+                                />
                             </div>
                             
                             <div>
@@ -450,27 +670,11 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
                                     name="other_expenses"
                                     rows="2"
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                    placeholder="List any additional expenses"
+                                    placeholder="List any other anticipated expenses"
                                     value={formData.other_expenses}
                                     onChange={handleChange}
+                                    disabled={isSubmitting}
                                 ></textarea>
-                            </div>
-                            
-                            <div>
-                                <label htmlFor="estimated_cost" className="block text-sm font-medium text-gray-700 mb-1">
-                                    Estimated Cost
-                                </label>
-                                <input
-                                    type="number"
-                                    id="estimated_cost"
-                                    name="estimated_cost"
-                                    step="0.01"
-                                    min="0"
-                                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                    placeholder="Enter estimated cost for travel"
-                                    value={formData.estimated_cost}
-                                    onChange={handleChange}
-                                />
                             </div>
                         </div>
                     </div>
@@ -479,9 +683,17 @@ const TravelOrderForm = ({ employees, departments, onSubmit }) => {
                 <div className="px-4 py-3 bg-gray-50 text-right sm:px-6 border-t">
                     <button
                         type="submit"
-                        className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                        className="inline-flex justify-center items-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled={isSubmitting}
                     >
-                        Submit Travel Order Request
+                        {isSubmitting ? (
+                            <>
+                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                Processing...
+                            </>
+                        ) : (
+                            'Submit Travel Order'
+                        )}
                     </button>
                 </div>
             </form>

@@ -1,530 +1,624 @@
 <?php
-// app/Http/Controllers/TravelOrderController.php
+
 namespace App\Http\Controllers;
 
-use App\Models\Employee;
-use App\Models\TravelOrder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Illuminate\Support\Facades\Validator;
-use Illuminate\Support\Facades\Log;
-use Carbon\Carbon;
-use Inertia\Inertia;
-
+use App\Models\TravelOrder;
+use App\Models\Employee;
+use App\Models\Department;
+use App\Models\DepartmentManager;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Carbon;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-use PhpOffice\PhpSpreadsheet\Style\Fill;
-use PhpOffice\PhpSpreadsheet\Style\Border;
-use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use Inertia\Inertia;
 
 class TravelOrderController extends Controller
 {
     /**
-     * Display the travel order management page.
+     * Display a listing of travel orders.
      */
-    public function index()
+    public function index(Request $request)
     {
-        $travelOrders = TravelOrder::with('employee')->latest()->get();
-        $employees = Employee::select(['id', 'idno', 'Lname', 'Fname', 'MName', 'Department', 'Jobtitle'])->get();
-        $departments = Employee::distinct()->pluck('Department')->filter()->values();
+        $user = Auth::user();
+        $userRoles = $this->getUserRoles($user);
         
-        return Inertia::render('TravelOrder/TravelOrderPage', [
+        // Get all active departments
+        $departments = Department::where('is_active', true)
+            ->orderBy('name')
+            ->pluck('name')
+            ->toArray();
+            
+        // Get transportation types
+        $transportationTypes = [
+            'Company Vehicle',
+            'Public Transportation',
+            'Personal Vehicle',
+            'Airplane',
+            'Train',
+            'Bus',
+            'Others'
+        ];
+        
+        // Query travel orders based on user role
+        $travelOrdersQuery = TravelOrder::with(['employee', 'creator', 'approver']);
+        
+        // Filter based on user roles
+        if ($userRoles['isEmployee'] && !$userRoles['isDepartmentManager'] && !$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+            // Regular employees can only see their own travel orders
+            $employeeId = $user->employee ? $user->employee->id : null;
+            if ($employeeId) {
+                $travelOrdersQuery->where('employee_id', $employeeId);
+            } else {
+                // If no employee record linked, show travel orders created by this user
+                $travelOrdersQuery->where('created_by', $user->id);
+            }
+        } elseif ($userRoles['isDepartmentManager'] && !$userRoles['isSuperAdmin']) {
+            // Department managers can see travel orders for their department employees
+            $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
+                
+            $travelOrdersQuery->where(function($query) use ($user, $managedDepartments) {
+                $query->where('created_by', $user->id)
+                    ->orWhereHas('employee', function($q) use ($managedDepartments) {
+                        $q->whereIn('Department', $managedDepartments);
+                    });
+            });
+        } elseif ($userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+            // HRD managers can see all travel orders
+            // No additional filtering needed
+        }
+        
+        // Sort by latest first
+        $travelOrdersQuery->orderBy('created_at', 'desc');
+        
+        // Get active employees for the form
+        $employees = Employee::where('JobStatus', 'Active')
+            ->whereHas('department', function($query) {
+                $query->where('is_active', true);
+            })
+            ->orderBy('Lname')
+            ->get();
+            
+        // Check if a specific travel order is selected for viewing
+        $selectedId = $request->input('selected');
+        $selectedTravelOrder = null;
+        
+        if ($selectedId) {
+            $selectedTravelOrder = TravelOrder::with(['employee', 'creator', 'approver'])
+                ->find($selectedId);
+        }
+        
+        // Get the list of travel orders
+        $travelOrders = $travelOrdersQuery->get();
+        
+        return inertia('TravelOrder/TravelOrderPage', [
+            'auth' => [
+                'user' => $user,
+            ],
             'travelOrders' => $travelOrders,
             'employees' => $employees,
             'departments' => $departments,
-            'auth' => [
-                'user' => Auth::user(),
-            ],
+            'transportationTypes' => $transportationTypes,
+            'selectedTravelOrder' => $selectedTravelOrder,
+            'userRoles' => $userRoles
         ]);
     }
 
-    /**
-     * Store multiple new travel order records.
-     */
+    private function getUserRoles($user)
+    {
+        // Check department manager directly from database first
+        $isDepartmentManager = DepartmentManager::where('manager_id', $user->id)->exists();
+        
+        // Check if user is an HRD manager
+        $isHrdManager = $this->isHrdManager($user);
+        
+        $userRoles = [
+            'isSuperAdmin' => $user->hasRole('superadmin'),
+            'isHrdManager' => $isHrdManager,
+            'isDepartmentManager' => $isDepartmentManager || $user->hasRole('department_manager'),
+            'isEmployee' => $user->is_employee || ($user->employee && $user->employee->exists()),
+            'userId' => $user->id,
+            'employeeId' => $user->employee ? $user->employee->id : null,
+            'managedDepartments' => [],
+        ];
+        
+        // If user is a department manager, get their managed departments
+        if ($userRoles['isDepartmentManager']) {
+            $userRoles['managedDepartments'] = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
+        }
+        
+        return $userRoles;
+    }
+
+    private function isHrdManager($user)
+    {
+        // First try checking through the roles relationship
+        if (method_exists($user, 'roles') && $user->roles && $user->roles->count() > 0) {
+            if ($user->roles->contains('name', 'hrd_manager') || $user->roles->contains('slug', 'hrd')) {
+                return true;
+            }
+        }
+        
+        // Then try the hasRole method
+        if (method_exists($user, 'hasRole') && $user->hasRole('hrd_manager')) {
+            return true;
+        }
+        
+        // Fallback check by name or email
+        if (stripos($user->name, 'hrd manager') !== false || 
+            stripos($user->email, 'hrd@') !== false ||
+            stripos($user->email, 'hrdmanager') !== false) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    private function isSuperAdmin($user)
+    {
+        // First try checking through the roles relationship
+        if (method_exists($user, 'roles') && $user->roles && $user->roles->count() > 0) {
+            if ($user->roles->contains('name', 'superadmin') || $user->roles->contains('slug', 'superadmin')) {
+                return true;
+            }
+        }
+        
+        // Then try the hasRole method
+        if (method_exists($user, 'hasRole') && $user->hasRole('superadmin')) {
+            return true;
+        }
+        
+        // Fallback check by user ID or name
+        if ($user->id === 1 || stripos($user->name, 'admin') !== false) {
+            return true;
+        }
+        
+        return false;
+    }
+
     public function store(Request $request)
     {
-        Log::info('Travel Order store method called', [
-            'user_id' => Auth::id(),
-            'request_data' => $request->except(['_token'])
-        ]);
-        
-        $validator = Validator::make($request->all(), [
+        $validated = $request->validate([
             'employee_ids' => 'required|array',
-            'employee_ids.*' => 'exists:employees,id',
-            'date' => 'required|date',
+            'employee_ids.*' => 'required|integer|exists:employees,id',
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
+            'departure_time' => 'nullable|date_format:H:i',
+            'return_time' => 'nullable|date_format:H:i',
             'destination' => 'required|string|max:255',
-            'transportation_type' => 'required|string|max:50',
-            'purpose' => 'required|string|max:500',
+            'transportation_type' => 'required|string|max:100',
+            'purpose' => 'required|string|max:1000',
             'accommodation_required' => 'boolean',
             'meal_allowance' => 'boolean',
             'other_expenses' => 'nullable|string|max:500',
             'estimated_cost' => 'nullable|numeric|min:0',
+            'return_to_office' => 'boolean',
+            'office_return_time' => 'nullable|date_format:H:i|required_if:return_to_office,true',
         ]);
-
-        if ($validator->fails()) {
-            Log::warning('Travel Order validation failed', [
-                'user_id' => Auth::id(),
-                'errors' => $validator->errors()->toArray()
-            ]);
-            return back()->withErrors($validator)->withInput();
-        }
-
+        
+        $user = Auth::user();
+        $userRoles = $this->getUserRoles($user);
+        $isDepartmentManager = $userRoles['isDepartmentManager'];
+        
+        $successCount = 0;
+        $skippedCount = 0;
+        $errorMessages = [];
+        
+        DB::beginTransaction();
+        
         try {
-            // Calculate days between start and end date
-            $startDate = Carbon::parse($request->start_date);
-            $endDate = Carbon::parse($request->end_date);
-            $totalDays = $endDate->diffInDays($startDate) + 1; // Include both start and end dates
-            
-            // Check if current user is superadmin or hrd
-            $user = Auth::user();
-            $isAutoApproved = false;
-            $userRole = 'unknown';
-            
-            Log::info('Checking user for auto-approval', [
-                'user_id' => $user->id,
-                'user_name' => $user->name
-            ]);
-            
-            // Simple role detection based on username and user ID
-            if (stripos($user->name, 'admin') !== false || $user->id === 1) {
-                $userRole = 'superadmin';
-                $isAutoApproved = true;
+            foreach ($validated['employee_ids'] as $employeeId) {
+                $employee = Employee::with('department')->find($employeeId);
                 
-                Log::info('User identified as superadmin', [
-                    'user_id' => $user->id,
-                    'user_name' => $user->name,
-                    'detection_method' => stripos($user->name, 'admin') !== false ? 'name contains admin' : 'user has ID 1'
-                ]);
-            } elseif (stripos($user->name, 'hrd') !== false || stripos($user->email, 'hrd') !== false) {
-                $userRole = 'hrd';
-                $isAutoApproved = true;
-                
-                Log::info('User identified as HRD', [
-                    'user_id' => $user->id,
-                    'user_name' => $user->name,
-                    'user_email' => $user->email
-                ]);
-            } else {
-                // If we can't determine the role with certainty, try to use the route
-                $routeName = request()->route() ? request()->route()->getName() : null;
-                
-                if ($routeName) {
-                    if (strpos($routeName, 'superadmin.') === 0) {
-                        $userRole = 'superadmin';
-                        $isAutoApproved = true;
-                    } elseif (strpos($routeName, 'hrd.') === 0) {
-                        $userRole = 'hrd';
-                        $isAutoApproved = true;
-                    }
-                    
-                    if ($isAutoApproved) {
-                        Log::info('User role determined from route', [
-                            'user_id' => $user->id,
-                            'route_name' => $routeName,
-                            'determined_role' => $userRole
-                        ]);
-                    }
+                if (!$employee) {
+                    $errorMessages[] = "Employee ID $employeeId not found";
+                    continue;
                 }
-            }
-            
-            // Provide a default for messaging if no specific role is found
-            $roleForDisplay = $isAutoApproved ? ucfirst($userRole) : 'standard user';
-            
-            Log::info('Auto-approval determination', [
-                'user_id' => $user->id,
-                'is_auto_approved' => $isAutoApproved,
-                'role_for_display' => $roleForDisplay
-            ]);
-            
-            // Batch create travel order records for all selected employees
-            $travelOrders = [];
-            $employeeCount = count($request->employee_ids);
-            
-            Log::info('Starting batch creation of travel order records', [
-                'employee_count' => $employeeCount
-            ]);
-            
-            foreach ($request->employee_ids as $employeeId) {
-                $travelOrder = new TravelOrder([
-                    'employee_id' => $employeeId,
-                    'date' => $request->date,
-                    'start_date' => $request->start_date,
-                    'end_date' => $request->end_date,
-                    'destination' => $request->destination,
-                    'transportation_type' => $request->transportation_type,
-                    'purpose' => $request->purpose,
-                    'accommodation_required' => $request->accommodation_required ?? false,
-                    'meal_allowance' => $request->meal_allowance ?? false,
-                    'other_expenses' => $request->other_expenses,
-                    'estimated_cost' => $request->estimated_cost,
-                    'total_days' => $totalDays,
-                    'status' => $isAutoApproved ? 'approved' : 'pending'
-                ]);
                 
-                // If auto-approved, set approver info
-                if ($isAutoApproved) {
-                    $travelOrder->approved_by = Auth::id();
+                // Check if employee belongs to an active department
+                if (!$employee->department || !$employee->department->is_active) {
+                    $errorMessages[] = "Employee {$employee->Fname} {$employee->Lname} belongs to an inactive department";
+                    continue;
+                }
+                
+                // Check for overlapping travel orders
+                $overlappingTravel = TravelOrder::where('employee_id', $employeeId)
+                    ->where('status', '!=', 'rejected')
+                    ->where(function($query) use ($validated) {
+                        $query->whereBetween('start_date', [$validated['start_date'], $validated['end_date']])
+                              ->orWhereBetween('end_date', [$validated['start_date'], $validated['end_date']])
+                              ->orWhere(function($q) use ($validated) {
+                                  $q->where('start_date', '<=', $validated['start_date'])
+                                    ->where('end_date', '>=', $validated['end_date']);
+                              });
+                    })
+                    ->first();
+                
+                if ($overlappingTravel) {
+                    $skippedCount++;
+                    $errorMessages[] = "Travel order for {$employee->Fname} {$employee->Lname} overlaps with existing travel from {$overlappingTravel->start_date} to {$overlappingTravel->end_date}";
+                    continue;
+                }
+                
+                // Calculate total days and working days
+                $startDate = Carbon::parse($validated['start_date']);
+                $endDate = Carbon::parse($validated['end_date']);
+                $totalDays = $startDate->diffInDays($endDate) + 1;
+                $workingDays = $this->calculateWorkingDays($startDate, $endDate);
+                
+                // Determine if this is a full day travel or partial day
+                $isFullDay = $this->determineIfFullDay(
+                    $validated['departure_time'] ?? null,
+                    $validated['return_time'] ?? null,
+                    $validated['return_to_office'] ?? false,
+                    $validated['office_return_time'] ?? null
+                );
+                
+                $travelOrder = new TravelOrder();
+                $travelOrder->employee_id = $employeeId;
+                $travelOrder->start_date = $validated['start_date'];
+                $travelOrder->end_date = $validated['end_date'];
+                $travelOrder->departure_time = $validated['departure_time'];
+                $travelOrder->return_time = $validated['return_time'];
+                $travelOrder->destination = $validated['destination'];
+                $travelOrder->transportation_type = $validated['transportation_type'];
+                $travelOrder->purpose = $validated['purpose'];
+                $travelOrder->accommodation_required = $validated['accommodation_required'] ?? false;
+                $travelOrder->meal_allowance = $validated['meal_allowance'] ?? false;
+                $travelOrder->other_expenses = $validated['other_expenses'];
+                $travelOrder->estimated_cost = $validated['estimated_cost'];
+                $travelOrder->return_to_office = $validated['return_to_office'] ?? false;
+                $travelOrder->office_return_time = $validated['office_return_time'];
+                $travelOrder->total_days = $totalDays;
+                $travelOrder->working_days = $workingDays;
+                $travelOrder->is_full_day = $isFullDay;
+                $travelOrder->created_by = $user->id;
+                
+                // Set initial status
+                if ($isDepartmentManager && 
+                    ($employeeId == $user->employee_id || 
+                     ($employee->department && DepartmentManager::where('manager_id', $user->id)
+                                                        ->where('department', $employee->department->name)
+                                                        ->exists()))) {
+                    // Auto-approve for department manager's own travel or their department
+                    $travelOrder->status = 'approved';
+                    $travelOrder->approved_by = $user->id;
                     $travelOrder->approved_at = now();
-                    $travelOrder->remarks = "Auto-approved: Filed by {$roleForDisplay}";
-                    
-                    Log::info('Travel Order auto-approved', [
-                        'employee_id' => $employeeId,
-                        'approved_by' => Auth::id(),
-                        'status' => 'approved'
-                    ]);
+                    $travelOrder->remarks = 'Auto-approved (Department Manager)';
+                } else {
+                    $travelOrder->status = 'pending';
                 }
                 
                 $travelOrder->save();
-                $travelOrders[] = $travelOrder;
+                $successCount++;
             }
             
-            // Get updated list of all travel orders to return to the frontend
-            $allTravelOrders = TravelOrder::with('employee')->latest()->get();
+            DB::commit();
             
-            $successMessage = $isAutoApproved 
-                ? 'Travel Order requests created and auto-approved successfully' 
-                : 'Travel Order requests created successfully';
+            $message = "Successfully created {$successCount} travel order(s)";
+            if ($skippedCount > 0) {
+                $message .= ". Skipped {$skippedCount} overlapping entries.";
+            }
             
-            Log::info('Travel Order store method completed successfully', [
-                'user_id' => Auth::id(),
-                'records_created' => count($travelOrders),
-                'is_auto_approved' => $isAutoApproved,
-                'message' => $successMessage
-            ]);
+            if (!empty($errorMessages)) {
+                return redirect()->back()->with([
+                    'message' => $message,
+                    'errors' => $errorMessages
+                ]);
+            }
             
-            return redirect()->back()->with([
-                'message' => $successMessage,
-                'travelOrders' => $allTravelOrders
-            ]);
+            return redirect()->back()->with('message', $message);
         } catch (\Exception $e) {
-            Log::error('Failed to create travel order requests', [
-                'user_id' => Auth::id(),
-                'error_message' => $e->getMessage(),
-                'error_code' => $e->getCode(),
-                'error_file' => $e->getFile(),
-                'error_line' => $e->getLine(),
-                'error_trace' => $e->getTraceAsString(),
-                'request' => $request->all()
-            ]);
-            
-            return redirect()->back()
-                ->with('error', 'Failed to create travel order requests: ' . $e->getMessage())
-                ->withInput();
+            DB::rollBack();
+            return redirect()->back()->with('error', 'Error creating travel orders: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Calculate working days between two dates (excluding weekends)
+     */
+    private function calculateWorkingDays($startDate, $endDate)
+    {
+        $workingDays = 0;
+        $current = $startDate->copy();
+        
+        while ($current->lte($endDate)) {
+            // Skip weekends (Saturday = 6, Sunday = 0)
+            if (!in_array($current->dayOfWeek, [0, 6])) {
+                // Also check if it's not a holiday
+                if (!$this->isHoliday($current->toDateString())) {
+                    $workingDays++;
+                }
+            }
+            $current->addDay();
+        }
+        
+        return $workingDays;
+    }
+
+    /**
+     * Determine if this is a full day travel based on business rules
+     */
+    private function determineIfFullDay($departureTime, $returnTime, $returnToOffice, $officeReturnTime)
+    {
+        // If multiple days, it's always full day
+        if (!$departureTime || !$returnTime) {
+            return true;
+        }
+        
+        // Parse times
+        $departure = Carbon::createFromFormat('H:i', $departureTime);
+        $return = Carbon::createFromFormat('H:i', $returnTime);
+        
+        // If they return to office, check if they have significant office time
+        if ($returnToOffice && $officeReturnTime) {
+            $officeReturn = Carbon::createFromFormat('H:i', $officeReturnTime);
+            $officeHours = $return->diffInHours($officeReturn);
+            
+            // If they return to office for less than 3 hours, count as full day
+            if ($officeHours < 3) {
+                return true;
+            }
+            
+            // If travel + office time is more than 8 hours total, count as full day
+            $travelHours = $departure->diffInHours($return);
+            if (($travelHours + $officeHours) >= 8) {
+                return true;
+            }
+            
+            return false; // Partial day if significant office work
+        }
+        
+        // If travel duration is 5+ hours, count as full day
+        $travelHours = $departure->diffInHours($return);
+        if ($travelHours >= 5) {
+            return true;
+        }
+        
+        // If travel starts before 9 AM or ends after 3 PM, likely full day
+        if ($departure->hour < 9 || $return->hour >= 15) {
+            return true;
+        }
+        
+        return false; // Otherwise partial day
+    }
+
+    /**
+     * Check if the given date is a holiday
+     */
+    private function isHoliday($date)
+    {
+        $holidays = [
+            '2025-01-01', // New Year's Day
+            '2025-04-09', // Araw ng Kagitingan
+            '2025-04-18', // Good Friday
+            '2025-05-01', // Labor Day
+            '2025-06-12', // Independence Day
+            '2025-08-25', // National Heroes Day
+            '2025-11-30', // Bonifacio Day
+            '2025-12-25', // Christmas Day
+            '2025-12-30', // Rizal Day
+        ];
+        
+        return in_array($date, $holidays);
     }
 
     /**
      * Update the status of a travel order.
      */
-    public function updateStatus(Request $request, $id)
+    public function updateStatus(Request $request, TravelOrder $travelOrder)
     {
-        $validator = Validator::make($request->all(), [
+        $user = Auth::user();
+        
+        $validated = $request->validate([
             'status' => 'required|in:approved,rejected,completed,cancelled',
             'remarks' => 'nullable|string|max:500',
         ]);
 
-        if ($validator->fails()) {
-            return redirect()->back()
-                ->withErrors($validator)
-                ->withInput();
+        // Check permission
+        if (!$this->isHrdManager($user) && !$this->isSuperAdmin($user)) {
+            return response()->json([
+                'message' => 'You are not authorized to update this travel order status.'
+            ], 403);
         }
 
         try {
-            $travelOrder = TravelOrder::findOrFail($id);
+            $travelOrder->status = $validated['status'];
+            $travelOrder->remarks = $validated['remarks'];
             
-            // Only allow status updates if current status is pending
-            if ($travelOrder->status !== 'pending' && $request->status !== 'completed' && $request->status !== 'cancelled') {
-                return redirect()->back()
-                    ->with('error', 'Cannot update travel order that has already been ' . $travelOrder->status);
-            }
-            
-            // Only allow completed/cancelled if previously approved
-            if (($request->status === 'completed' || $request->status === 'cancelled') && $travelOrder->status !== 'approved') {
-                return redirect()->back()
-                    ->with('error', 'Travel order must be approved before it can be marked as completed or cancelled');
-            }
-            
-            $travelOrder->status = $request->status;
-            $travelOrder->remarks = $request->remarks;
-            
-            // Only set approved_by and approved_at if transitioning to approved/rejected
-            if (in_array($request->status, ['approved', 'rejected'])) {
-                $travelOrder->approved_by = Auth::id();
+            if (in_array($validated['status'], ['approved', 'rejected'])) {
+                $travelOrder->approved_by = $user->id;
                 $travelOrder->approved_at = now();
             }
             
             $travelOrder->save();
-            
-            // Get updated list of all travel orders to return to the frontend
-            $allTravelOrders = TravelOrder::with('employee')->latest()->get();
-            
-            $statusMessage = '';
-            switch($request->status) {
-                case 'approved':
-                    $statusMessage = 'approved';
-                    break;
-                case 'rejected':
-                    $statusMessage = 'rejected';
-                    break;
-                case 'completed':
-                    $statusMessage = 'marked as completed';
-                    break;
-                case 'cancelled':
-                    $statusMessage = 'cancelled';
-                    break;
-                default:
-                    $statusMessage = 'updated';
-            }
-            
-            return redirect()->back()->with([
-                'message' => "Travel Order {$statusMessage} successfully",
-                'travelOrders' => $allTravelOrders
+
+            $travelOrder = TravelOrder::with(['employee', 'creator', 'approver'])
+                ->find($travelOrder->id);
+
+            return response()->json([
+                'message' => 'Travel order status updated successfully.',
+                'travelOrder' => $travelOrder
             ]);
         } catch (\Exception $e) {
-            Log::error('Failed to update travel order status', [
-                'id' => $id,
-                'error' => $e->getMessage(),
-                'request' => $request->all()
-            ]);
-            
-            return redirect()->back()
-                ->with('error', 'Failed to update travel order status: ' . $e->getMessage())
-                ->withInput();
+            return response()->json([
+                'message' => 'Failed to update travel order status: ' . $e->getMessage()
+            ], 500);
         }
     }
 
     /**
      * Remove the specified travel order.
      */
-    public function destroy($id)
+    public function destroy(TravelOrder $travelOrder)
     {
+        $user = Auth::user();
+        
+        // Check authorization
+        if (!$this->isSuperAdmin($user) && 
+            $travelOrder->created_by !== $user->id && 
+            $travelOrder->status !== 'pending') {
+            
+            return back()->with('error', 'You are not authorized to delete this travel order');
+        }
+        
         try {
-            $travelOrder = TravelOrder::findOrFail($id);
-            
-            // Only allow deletion if status is pending
-            if ($travelOrder->status !== 'pending') {
-                return redirect()->back()
-                    ->with('error', 'Cannot delete travel order that has already been ' . $travelOrder->status);
-            }
-            
             $travelOrder->delete();
             
-            // Get updated list of all travel orders to return to the frontend
-            $allTravelOrders = TravelOrder::with('employee')->latest()->get();
+            return back()->with('message', 'Travel order deleted successfully');
             
-            return redirect()->back()->with([
-                'message' => 'Travel Order deleted successfully',
-                'travelOrders' => $allTravelOrders
-            ]);
         } catch (\Exception $e) {
-            Log::error('Failed to delete travel order', [
-                'id' => $id,
-                'error' => $e->getMessage()
-            ]);
-            
-            return redirect()->back()->with('error', 'Failed to delete travel order: ' . $e->getMessage());
+            return back()->with('error', 'Failed to delete travel order: ' . $e->getMessage());
         }
     }
 
-    /**
-     * Export travel orders to Excel.
-     */
     public function export(Request $request)
     {
-        try {
-            // Start with a base query
-            $query = TravelOrder::with('employee', 'approver');
-            
-            // Apply filters if provided
-            if ($request->has('status') && $request->status) {
-                $query->where('status', $request->status);
+        $user = Auth::user();
+        $userRoles = $this->getUserRoles($user);
+        
+        // Query travel orders based on user role (same logic as index)
+        $travelOrdersQuery = TravelOrder::with(['employee', 'creator', 'approver']);
+        
+        // Apply same role-based filtering as index method
+        if ($userRoles['isEmployee'] && !$userRoles['isDepartmentManager'] && !$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+            $employeeId = $user->employee ? $user->employee->id : null;
+            if ($employeeId) {
+                $travelOrdersQuery->where('employee_id', $employeeId);
+            } else {
+                $travelOrdersQuery->where('created_by', $user->id);
             }
-            
-            if ($request->has('search') && $request->search) {
-                $search = $request->search;
-                $query->where(function($q) use ($search) {
-                    $q->whereHas('employee', function($subQuery) use ($search) {
-                        $subQuery->where('Fname', 'like', "%{$search}%")
-                            ->orWhere('Lname', 'like', "%{$search}%")
-                            ->orWhere('idno', 'like', "%{$search}%")
-                            ->orWhere('Department', 'like', "%{$search}%");
-                    })
-                    ->orWhere('destination', 'like', "%{$search}%")
-                    ->orWhere('purpose', 'like', "%{$search}%");
-                });
-            }
-            
-            if ($request->has('from_date') && $request->from_date) {
-                $query->whereDate('start_date', '>=', $request->from_date);
-            }
-            
-            if ($request->has('to_date') && $request->to_date) {
-                $query->whereDate('start_date', '<=', $request->to_date);
-            }
-            
-            // Get the filtered travel orders
-            $travelOrders = $query->latest()->get();
-            
-            // Create a spreadsheet
-            $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
-            $sheet = $spreadsheet->getActiveSheet();
-            
-            // Set headers
-            $sheet->setCellValue('A1', 'ID');
-            $sheet->setCellValue('B1', 'Employee ID');
-            $sheet->setCellValue('C1', 'Employee Name');
-            $sheet->setCellValue('D1', 'Department');
-            $sheet->setCellValue('E1', 'Position');
-            $sheet->setCellValue('F1', 'Destination');
-            $sheet->setCellValue('G1', 'Start Date');
-            $sheet->setCellValue('H1', 'End Date');
-            $sheet->setCellValue('I1', 'Duration (Days)');
-            $sheet->setCellValue('J1', 'Transportation');
-            $sheet->setCellValue('K1', 'Accommodation');
-            $sheet->setCellValue('L1', 'Meal Allowance');
-            $sheet->setCellValue('M1', 'Estimated Cost');
-            $sheet->setCellValue('N1', 'Status');
-            $sheet->setCellValue('O1', 'Purpose');
-            $sheet->setCellValue('P1', 'Other Expenses');
-            $sheet->setCellValue('Q1', 'Remarks');
-            $sheet->setCellValue('R1', 'Filed Date');
-            $sheet->setCellValue('S1', 'Action Date');
-            $sheet->setCellValue('T1', 'Approved/Rejected By');
-            
-            // Style headers
-            $headerStyle = [
-                'font' => [
-                    'bold' => true,
-                    'color' => ['rgb' => 'FFFFFF'],
-                ],
-                'fill' => [
-                    'fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,
-                    'startColor' => ['rgb' => '4472C4'],
-                ],
-                'borders' => [
-                    'allBorders' => [
-                        'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
-                    ],
-                ],
-            ];
-            
-            $sheet->getStyle('A1:T1')->applyFromArray($headerStyle);
-            
-            // Auto-adjust column width
-            foreach(range('A', 'T') as $column) {
-                $sheet->getColumnDimension($column)->setAutoSize(true);
-            }
-            
-            // Get transportation type display text
-            $getTransportationTypeText = function($type) {
-                switch($type) {
-                    case 'company_vehicle':
-                        return 'Company Vehicle';
-                    case 'personal_vehicle':
-                        return 'Personal Vehicle';
-                    case 'public_transport':
-                        return 'Public Transport';
-                    case 'plane':
-                        return 'Plane';
-                    case 'other':
-                        return 'Other';
-                    default:
-                        return $type ?? 'N/A';
-                }
-            };
-            
-            // Format currency
-            $formatCurrency = function($amount) {
-                if (!$amount) return '₱0.00';
-                return '₱' . number_format($amount, 2);
-            };
-            
-            // Fill data
-            $row = 2;
-            foreach ($travelOrders as $to) {
-                $sheet->setCellValue('A' . $row, $to->id);
-                $sheet->setCellValue('B' . $row, $to->employee->idno ?? 'N/A');
-                $sheet->setCellValue('C' . $row, $to->employee ? "{$to->employee->Lname}, {$to->employee->Fname} {$to->employee->MName}" : 'Unknown');
-                $sheet->setCellValue('D' . $row, $to->employee->Department ?? 'N/A');
-                $sheet->setCellValue('E' . $row, $to->employee->Jobtitle ?? 'N/A');
-                $sheet->setCellValue('F' . $row, $to->destination ?? 'N/A');
-                $sheet->setCellValue('G' . $row, $to->start_date ? Carbon::parse($to->start_date)->format('Y-m-d') : 'N/A');
-                $sheet->setCellValue('H' . $row, $to->end_date ? Carbon::parse($to->end_date)->format('Y-m-d') : 'N/A');
-                $sheet->setCellValue('I' . $row, $to->total_days ?? 'N/A');
-                $sheet->setCellValue('J' . $row, $getTransportationTypeText($to->transportation_type));
-                $sheet->setCellValue('K' . $row, $to->accommodation_required ? 'Yes' : 'No');
-                $sheet->setCellValue('L' . $row, $to->meal_allowance ? 'Yes' : 'No');
-                $sheet->setCellValue('M' . $row, $to->estimated_cost ? $formatCurrency($to->estimated_cost) : 'N/A');
-                $sheet->setCellValue('N' . $row, ucfirst($to->status));
-                $sheet->setCellValue('O' . $row, $to->purpose ?? 'N/A');
-                $sheet->setCellValue('P' . $row, $to->other_expenses ?? 'N/A');
-                $sheet->setCellValue('Q' . $row, $to->remarks ?? 'N/A');
-                $sheet->setCellValue('R' . $row, $to->created_at ? Carbon::parse($to->created_at)->format('Y-m-d h:i A') : 'N/A');
-                $sheet->setCellValue('S' . $row, $to->approved_at ? Carbon::parse($to->approved_at)->format('Y-m-d h:i A') : 'N/A');
-                $sheet->setCellValue('T' . $row, $to->approver ? $to->approver->name : 'N/A');
+        } elseif ($userRoles['isDepartmentManager'] && !$userRoles['isSuperAdmin']) {
+            $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+                ->pluck('department')
+                ->toArray();
                 
-                // Apply status-based styling
-                if ($to->status === 'approved') {
-                    $sheet->getStyle('N' . $row)->applyFromArray([
-                        'font' => ['color' => ['rgb' => '008000']], // Green for approved
-                    ]);
-                } elseif ($to->status === 'rejected') {
-                    $sheet->getStyle('N' . $row)->applyFromArray([
-                        'font' => ['color' => ['rgb' => 'FF0000']], // Red for rejected
-                    ]);
-                } elseif ($to->status === 'pending') {
-                    $sheet->getStyle('N' . $row)->applyFromArray([
-                        'font' => ['color' => ['rgb' => 'FFA500']], // Orange for pending
-                    ]);
-                } elseif ($to->status === 'completed') {
-                    $sheet->getStyle('N' . $row)->applyFromArray([
-                        'font' => ['color' => ['rgb' => '0000FF']], // Blue for completed
-                    ]);
-                } elseif ($to->status === 'cancelled') {
-                    $sheet->getStyle('N' . $row)->applyFromArray([
-                        'font' => ['color' => ['rgb' => '808080']], // Gray for cancelled
-                    ]);
-                }
-                
-                $row++;
-            }
-            
-            // Add borders to all data cells
-            $lastRow = $row - 1;
-            if ($lastRow >= 2) {
-                $sheet->getStyle('A2:T' . $lastRow)->applyFromArray([
-                    'borders' => [
-                        'allBorders' => [
-                            'borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN,
-                        ],
-                    ],
-                ]);
-            }
-            
-            // Set the filename
-            $filename = 'Travel_Order_Report_' . Carbon::now()->format('Y-m-d_His') . '.xlsx';
-            
-            // Create the Excel file
-            $writer = new \PhpOffice\PhpSpreadsheet\Writer\Xlsx($spreadsheet);
-            
-            // Set header information for download
-            header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-            header('Content-Disposition: attachment;filename="' . $filename . '"');
-            header('Cache-Control: max-age=0');
-            
-            // Save file to php://output
-            $writer->save('php://output');
-            exit;
-            
-        } catch (\Exception $e) {
-            Log::error('Failed to export travel order data', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            return redirect()->back()->with('error', 'Failed to export travel order data: ' . $e->getMessage());
+            $travelOrdersQuery->where(function($query) use ($user, $managedDepartments) {
+                $query->where('created_by', $user->id)
+                    ->orWhereHas('employee', function($q) use ($managedDepartments) {
+                        $q->whereIn('Department', $managedDepartments);
+                    });
+            });
         }
+        
+        // Apply filters from request
+        $filterStatus = $request->input('status');
+        $searchTerm = $request->input('search');
+        $fromDate = $request->input('from_date');
+        $toDate = $request->input('to_date');
+        
+        if ($filterStatus) {
+            $travelOrdersQuery->where('status', $filterStatus);
+        }
+        
+        if ($searchTerm) {
+            $travelOrdersQuery->where(function($query) use ($searchTerm) {
+                $query->whereHas('employee', function($q) use ($searchTerm) {
+                    $q->where('Fname', 'like', "%{$searchTerm}%")
+                      ->orWhere('Lname', 'like', "%{$searchTerm}%")
+                      ->orWhere('idno', 'like', "%{$searchTerm}%")
+                      ->orWhere('Department', 'like', "%{$searchTerm}%");
+                })
+                ->orWhere('destination', 'like', "%{$searchTerm}%")
+                ->orWhere('purpose', 'like', "%{$searchTerm}%");
+            });
+        }
+        
+        if ($fromDate) {
+            $travelOrdersQuery->whereDate('start_date', '>=', $fromDate);
+        }
+        
+        if ($toDate) {
+            $travelOrdersQuery->whereDate('end_date', '<=', $toDate);
+        }
+        
+        $travelOrders = $travelOrdersQuery->orderBy('created_at', 'desc')->get();
+        
+        // Create spreadsheet
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        
+        // Set headers
+        $sheet->setCellValue('A1', 'ID');
+        $sheet->setCellValue('B1', 'Employee ID');
+        $sheet->setCellValue('C1', 'Employee Name');
+        $sheet->setCellValue('D1', 'Department');
+        $sheet->setCellValue('E1', 'Start Date');
+        $sheet->setCellValue('F1', 'End Date');
+        $sheet->setCellValue('G1', 'Destination');
+        $sheet->setCellValue('H1', 'Transportation');
+        $sheet->setCellValue('I1', 'Purpose');
+        $sheet->setCellValue('J1', 'Total Days');
+        $sheet->setCellValue('K1', 'Working Days');
+        $sheet->setCellValue('L1', 'Is Full Day');
+        $sheet->setCellValue('M1', 'Return to Office');
+        $sheet->setCellValue('N1', 'Accommodation');
+        $sheet->setCellValue('O1', 'Meal Allowance');
+        $sheet->setCellValue('P1', 'Estimated Cost');
+        $sheet->setCellValue('Q1', 'Status');
+        $sheet->setCellValue('R1', 'Filed By');
+        $sheet->setCellValue('S1', 'Filed Date');
+        $sheet->setCellValue('T1', 'Approved By');
+        $sheet->setCellValue('U1', 'Approved Date');
+        $sheet->setCellValue('V1', 'Remarks');
+        
+        // Style header
+        $headerStyle = [
+            'font' => ['bold' => true, 'color' => ['rgb' => 'FFFFFF']],
+            'fill' => ['fillType' => \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID, 'startColor' => ['rgb' => '4F81BD']],
+            'borders' => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN]],
+        ];
+        
+        $sheet->getStyle('A1:V1')->applyFromArray($headerStyle);
+        
+        // Add data
+        $row = 2;
+        foreach ($travelOrders as $travelOrder) {
+            $sheet->setCellValue('A' . $row, $travelOrder->id);
+            $sheet->setCellValue('B' . $row, $travelOrder->employee ? $travelOrder->employee->idno : '');
+            $sheet->setCellValue('C' . $row, $travelOrder->employee ? $travelOrder->employee->Lname . ', ' . $travelOrder->employee->Fname : '');
+            $sheet->setCellValue('D' . $row, $travelOrder->employee ? $travelOrder->employee->Department : '');
+            $sheet->setCellValue('E' . $row, $travelOrder->start_date ? Carbon::parse($travelOrder->start_date)->format('Y-m-d') : '');
+            $sheet->setCellValue('F' . $row, $travelOrder->end_date ? Carbon::parse($travelOrder->end_date)->format('Y-m-d') : '');
+            $sheet->setCellValue('G' . $row, $travelOrder->destination);
+            $sheet->setCellValue('H' . $row, $travelOrder->transportation_type);
+            $sheet->setCellValue('I' . $row, $travelOrder->purpose);
+            $sheet->setCellValue('J' . $row, $travelOrder->total_days);
+            $sheet->setCellValue('K' . $row, $travelOrder->working_days);
+            $sheet->setCellValue('L' . $row, $travelOrder->is_full_day ? 'Yes' : 'No');
+            $sheet->setCellValue('M' . $row, $travelOrder->return_to_office ? 'Yes' : 'No');
+            $sheet->setCellValue('N' . $row, $travelOrder->accommodation_required ? 'Yes' : 'No');
+            $sheet->setCellValue('O' . $row, $travelOrder->meal_allowance ? 'Yes' : 'No');
+            $sheet->setCellValue('P' . $row, $travelOrder->estimated_cost);
+            $sheet->setCellValue('Q' . $row, $travelOrder->status);
+            $sheet->setCellValue('R' . $row, $travelOrder->creator ? $travelOrder->creator->name : '');
+            $sheet->setCellValue('S' . $row, $travelOrder->created_at ? Carbon::parse($travelOrder->created_at)->format('Y-m-d h:i A') : '');
+            $sheet->setCellValue('T' . $row, $travelOrder->approver ? $travelOrder->approver->name : '');
+            $sheet->setCellValue('U' . $row, $travelOrder->approved_at ? Carbon::parse($travelOrder->approved_at)->format('Y-m-d h:i A') : '');
+            $sheet->setCellValue('V' . $row, $travelOrder->remarks);
+            
+            $row++;
+        }
+        
+        // Auto-size columns
+        foreach (range('A', 'V') as $column) {
+            $sheet->getColumnDimension($column)->setAutoSize(true);
+        }
+        
+        // Create writer and download
+        $writer = new Xlsx($spreadsheet);
+        $filename = 'Travel_Orders_' . date('Y-m-d_H-i-s') . '.xlsx';
+        
+        $tempFile = tempnam(sys_get_temp_dir(), 'travel_order_export_');
+        $writer->save($tempFile);
+        
+        return response()->download($tempFile, $filename, [
+            'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        ])->deleteFileAfterSend(true);
     }
 }

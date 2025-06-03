@@ -1,43 +1,50 @@
-// resources/js/Pages/TravelOrder/TravelOrderList.jsx
 import React, { useState, useEffect, useRef } from 'react';
-import { format, parseISO, differenceInDays, addDays } from 'date-fns';
-import { Download, Search, X } from 'lucide-react';
-import StatusBadge from './StatusBadge';
+import { format } from 'date-fns';
+import { Download, Search, X, Filter, Loader2, MapPin, Calendar, Clock } from 'lucide-react';
+import TravelOrderStatusBadge from './TravelOrderStatusBadge';
 import TravelOrderDetailModal from './TravelOrderDetailModal';
-import MultiBulkActionModal from './MultiBulkActionModal';
+import { router } from '@inertiajs/react';
+import { toast } from 'react-toastify';
 
-const TravelOrderList = ({ travelOrders, onStatusUpdate, onDelete, refreshInterval = 5000 }) => {
-    const [selectedTO, setSelectedTO] = useState(null);
+const TravelOrderList = ({ 
+    travelOrders, 
+    onStatusUpdate, 
+    onDelete, 
+    refreshInterval = 5000,
+    userRoles = {},
+    processing = false
+}) => {
+    const [selectedTravelOrder, setSelectedTravelOrder] = useState(null);
     const [showModal, setShowModal] = useState(false);
     const [filterStatus, setFilterStatus] = useState('');
-    const [filteredTOs, setFilteredTOs] = useState(travelOrders || []);
-    const [localTOs, setLocalTOs] = useState(travelOrders || []);
+    const [filteredTravelOrders, setFilteredTravelOrders] = useState(travelOrders || []);
+    const [localTravelOrders, setLocalTravelOrders] = useState(travelOrders || []);
     const timerRef = useRef(null);
+    
+    // Loading states for various operations
+    const [localProcessing, setLocalProcessing] = useState(false);
+    const [deletingId, setDeletingId] = useState(null);
+    const [updatingId, setUpdatingId] = useState(null);
+    const [exporting, setExporting] = useState(false);
     
     // Search functionality
     const [searchTerm, setSearchTerm] = useState('');
     const [dateRange, setDateRange] = useState({ from: '', to: '' });
     
-    // For multiple selection
-    const [selectedIds, setSelectedIds] = useState([]);
-    const [showBulkActionModal, setShowBulkActionModal] = useState(false);
-    const [selectAll, setSelectAll] = useState(false);
-    
     // Update local state when props change
     useEffect(() => {
-        setLocalTOs(travelOrders || []);
-        applyFilters(travelOrders || [], filterStatus, searchTerm, dateRange);
+        if (!travelOrders) return;
+        setLocalTravelOrders(travelOrders);
+        applyFilters(travelOrders, filterStatus, searchTerm, dateRange);
     }, [travelOrders]);
     
     // Set up auto-refresh timer
     useEffect(() => {
-        // Function to fetch fresh data
         const refreshData = async () => {
             try {
-                // Here you would typically fetch fresh data from your API
                 if (typeof window.refreshTravelOrders === 'function') {
                     const freshData = await window.refreshTravelOrders();
-                    setLocalTOs(freshData);
+                    setLocalTravelOrders(freshData);
                     applyFilters(freshData, filterStatus, searchTerm, dateRange);
                 }
             } catch (error) {
@@ -45,16 +52,16 @@ const TravelOrderList = ({ travelOrders, onStatusUpdate, onDelete, refreshInterv
             }
         };
         
-        // Set up interval
-        timerRef.current = setInterval(refreshData, refreshInterval);
+        if (!processing && !localProcessing) {
+            timerRef.current = setInterval(refreshData, refreshInterval);
+        }
         
-        // Clean up on component unmount
         return () => {
             if (timerRef.current) {
                 clearInterval(timerRef.current);
             }
         };
-    }, [refreshInterval, filterStatus, searchTerm, dateRange]);
+    }, [refreshInterval, filterStatus, searchTerm, dateRange, processing, localProcessing]);
     
     // Function to apply all filters
     const applyFilters = (data, status, search, dates) => {
@@ -91,7 +98,7 @@ const TravelOrderList = ({ travelOrders, onStatusUpdate, onDelete, refreshInterv
                 const startDate = new Date(to.start_date);
                 const fromDate = new Date(dates.from);
                 const toDate = new Date(dates.to);
-                toDate.setHours(23, 59, 59); // Include the entire "to" day
+                toDate.setHours(23, 59, 59);
                 
                 return startDate >= fromDate && startDate <= toDate;
             });
@@ -107,184 +114,190 @@ const TravelOrderList = ({ travelOrders, onStatusUpdate, onDelete, refreshInterv
                 if (!to.start_date) return false;
                 const startDate = new Date(to.start_date);
                 const toDate = new Date(dates.to);
-                toDate.setHours(23, 59, 59); // Include the entire "to" day
+                toDate.setHours(23, 59, 59);
                 return startDate <= toDate;
             });
         }
         
-        setFilteredTOs(result);
+        setFilteredTravelOrders(result);
+        return result;
     };
     
     // Handle status filter change
     const handleStatusFilterChange = (e) => {
+        if (processing || localProcessing) return;
         const status = e.target.value;
         setFilterStatus(status);
-        applyFilters(localTOs, status, searchTerm, dateRange);
+        applyFilters(localTravelOrders, status, searchTerm, dateRange);
     };
     
     // Handle search input change
     const handleSearchChange = (e) => {
+        if (processing || localProcessing) return;
         const value = e.target.value;
         setSearchTerm(value);
-        applyFilters(localTOs, filterStatus, value, dateRange);
+        applyFilters(localTravelOrders, filterStatus, value, dateRange);
     };
     
     // Handle date range changes
     const handleDateRangeChange = (field, value) => {
+        if (processing || localProcessing) return;
         const newDateRange = { ...dateRange, [field]: value };
         setDateRange(newDateRange);
-        applyFilters(localTOs, filterStatus, searchTerm, newDateRange);
+        applyFilters(localTravelOrders, filterStatus, searchTerm, newDateRange);
     };
     
     // Clear all filters
     const clearFilters = () => {
+        if (processing || localProcessing) return;
         setFilterStatus('');
         setSearchTerm('');
         setDateRange({ from: '', to: '' });
-        applyFilters(localTOs, '', '', { from: '', to: '' });
+        applyFilters(localTravelOrders, '', '', { from: '', to: '' });
     };
     
     // Open detail modal
-    const handleViewDetail = (to) => {
-        // Pause auto-refresh when modal is open
+    const handleViewDetail = (travelOrder) => {
+        if (processing || localProcessing) return;
+        
         if (timerRef.current) {
             clearInterval(timerRef.current);
         }
         
-        setSelectedTO(to);
+        setSelectedTravelOrder(travelOrder);
         setShowModal(true);
     };
     
     // Close detail modal
     const handleCloseModal = () => {
         setShowModal(false);
-        setSelectedTO(null);
+        setSelectedTravelOrder(null);
         
-        // Resume auto-refresh when modal is closed
-        const refreshData = async () => {
-            try {
-                if (typeof window.refreshTravelOrders === 'function') {
-                    const freshData = await window.refreshTravelOrders();
-                    setLocalTOs(freshData);
-                    applyFilters(freshData, filterStatus, searchTerm, dateRange);
+        if (!processing && !localProcessing) {
+            const refreshData = async () => {
+                try {
+                    if (typeof window.refreshTravelOrders === 'function') {
+                        const freshData = await window.refreshTravelOrders();
+                        setLocalTravelOrders(freshData);
+                        applyFilters(freshData, filterStatus, searchTerm, dateRange);
+                    }
+                } catch (error) {
+                    console.error('Error refreshing travel order data:', error);
                 }
-            } catch (error) {
-                console.error('Error refreshing travel order data:', error);
-            }
-        };
-        
-        timerRef.current = setInterval(refreshData, refreshInterval);
+            };
+            
+            timerRef.current = setInterval(refreshData, refreshInterval);
+        }
     };
     
     // Handle status update (from modal)
     const handleStatusUpdate = (id, data) => {
-        // Check if onStatusUpdate is a function before calling it
+        setUpdatingId(id);
+        setLocalProcessing(true);
+        
         if (typeof onStatusUpdate === 'function') {
-            // Pass the entire data object to the parent component
-            onStatusUpdate(id, data);
+            try {
+                const result = onStatusUpdate(id, data);
+                
+                if (result && typeof result.then === 'function') {
+                    result
+                        .then(() => {
+                            setUpdatingId(null);
+                            setLocalProcessing(false);
+                        })
+                        .catch((error) => {
+                            console.error('Error updating status:', error);
+                            alert('Error: Unable to update status. Please try again.');
+                            setUpdatingId(null);
+                            setLocalProcessing(false);
+                        });
+                } else {
+                    setUpdatingId(null);
+                    setLocalProcessing(false);
+                }
+            } catch (error) {
+                console.error('Error updating status:', error);
+                alert('Error: Unable to update status. Please try again.');
+                setUpdatingId(null);
+                setLocalProcessing(false);
+            }
         } else {
             console.error('onStatusUpdate prop is not a function');
             alert('Error: Unable to update status. Please refresh the page and try again.');
+            setUpdatingId(null);
+            setLocalProcessing(false);
         }
         handleCloseModal();
     };
     
-    // Handle travel order deletion
     const handleDelete = (id) => {
-        onDelete(id);
+        if (confirm('Are you sure you want to delete this travel order?')) {
+            setDeletingId(id);
+            setLocalProcessing(true);
+            
+            router.delete(route('travel-orders.destroy', id), {
+                preserveScroll: true,
+                onSuccess: (page) => {
+                    const updatedTravelOrders = localTravelOrders.filter(to => to.id !== id);
+                    setLocalTravelOrders(updatedTravelOrders);
+                    applyFilters(updatedTravelOrders, filterStatus, searchTerm, dateRange);
+                    
+                    toast.success('Travel order deleted successfully');
+                    setDeletingId(null);
+                    setLocalProcessing(false);
+                },
+                onError: (errors) => {
+                    console.error('Error deleting travel order:', errors);
+                    toast.error('Failed to delete travel order');
+                    setDeletingId(null);
+                    setLocalProcessing(false);
+                }
+            });
+        }
     };
     
     // Format date safely
     const formatDate = (dateString) => {
         try {
-            return format(parseISO(dateString), 'yyyy-MM-dd');
+            return format(new Date(dateString), 'yyyy-MM-dd');
         } catch (error) {
             console.error('Error formatting date:', error);
             return 'Invalid date';
         }
     };
     
-    // Calculate duration in days
-    const calculateDuration = (startDate, endDate) => {
-        if (!startDate || !endDate) return 'N/A';
+    const formatTime = (timeString) => {
+        if (!timeString) return '-';
+        
         try {
-            const start = parseISO(startDate);
-            const end = parseISO(endDate);
-            const diffDays = differenceInDays(addDays(end, 1), start); // Add 1 to include both start and end days
-            return diffDays === 1 ? '1 day' : `${diffDays} days`;
-        } catch (error) {
-            console.error('Error calculating duration:', error);
-            return 'N/A';
-        }
-    };
-
-    // Multiple selection handlers
-    const toggleSelectAll = () => {
-        setSelectAll(!selectAll);
-        if (!selectAll) {
-            // Only select pending travel orders
-            const pendingIds = filteredTOs
-                .filter(to => to.status === 'pending')
-                .map(to => to.id);
-            setSelectedIds(pendingIds);
-        } else {
-            setSelectedIds([]);
-        }
-    };
-
-    const toggleSelectItem = (id) => {
-        setSelectedIds(prevIds => {
-            if (prevIds.includes(id)) {
-                return prevIds.filter(itemId => itemId !== id);
+            let timeOnly;
+            if (timeString.includes('T')) {
+                const [, time] = timeString.split('T');
+                timeOnly = time.slice(0, 5);
             } else {
-                return [...prevIds, id];
+                const timeParts = timeString.split(' ');
+                timeOnly = timeParts[timeParts.length - 1].slice(0, 5);
             }
-        });
-    };
-
-    const handleOpenBulkActionModal = () => {
-        if (selectedIds.length === 0) {
-            alert('Please select at least one travel order');
-            return;
+            
+            const [hours, minutes] = timeOnly.split(':');
+            const hourNum = parseInt(hours, 10);
+            
+            const ampm = hourNum >= 12 ? 'PM' : 'AM';
+            const formattedHours = hourNum % 12 || 12;
+            
+            return `${formattedHours}:${minutes} ${ampm}`;
+        } catch (error) {
+            console.error('Time formatting error:', error);
+            return '-';
         }
-        setShowBulkActionModal(true);
     };
 
-    const handleCloseBulkActionModal = () => {
-        setShowBulkActionModal(false);
-    };
-
-    const handleBulkStatusUpdate = (status, remarks) => {
-        if (typeof onStatusUpdate === 'function') {
-            // Create a promise array for all updates
-            const updatePromises = selectedIds.map(id => {
-                return new Promise((resolve, reject) => {
-                    try {
-                        onStatusUpdate(id, { status, remarks });
-                        resolve();
-                    } catch (error) {
-                        reject(error);
-                    }
-                });
-            });
-
-            // Execute all updates
-            Promise.all(updatePromises)
-                .then(() => {
-                    // Clear selections after successful update
-                    setSelectedIds([]);
-                    setSelectAll(false);
-                })
-                .catch(error => {
-                    console.error('Error during bulk update:', error);
-                });
-        }
-        handleCloseBulkActionModal();
-    };
-    
-    // Export to Excel functionality - Server-side implementation
+    // Export to Excel functionality
     const exportToExcel = () => {
-        // Build query parameters from current filters
+        if (processing || localProcessing || exporting) return;
+        
+        setExporting(true);
+        
         const queryParams = new URLSearchParams();
         
         if (filterStatus) {
@@ -303,60 +316,61 @@ const TravelOrderList = ({ travelOrders, onStatusUpdate, onDelete, refreshInterv
             queryParams.append('to_date', dateRange.to);
         }
         
-        // Generate the export URL with the current filters
         const exportUrl = `/travel-orders/export?${queryParams.toString()}`;
         
-        // Open the URL in a new tab/window to download the file
-        window.open(exportUrl, '_blank');
-    };
-
-    // Get count of selectable (pending) items
-    const pendingItemsCount = filteredTOs.filter(to => to.status === 'pending').length;
-
-    // Get transportation type display text
-    const getTransportationTypeText = (type) => {
-        switch(type) {
-            case 'company_vehicle':
-                return 'Company Vehicle';
-            case 'personal_vehicle':
-                return 'Personal Vehicle';
-            case 'public_transport':
-                return 'Public Transport';
-            case 'plane':
-                return 'Plane';
-            case 'other':
-                return 'Other';
-            default:
-                return type || 'N/A';
-        }
+        const link = document.createElement('a');
+        link.href = exportUrl;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        setTimeout(() => {
+            setExporting(false);
+        }, 2000);
     };
 
     return (
-        <div className="bg-white shadow-md rounded-lg overflow-hidden flex flex-col h-[62vh]">
+        <div className="bg-white shadow-md rounded-lg overflow-hidden flex flex-col h-[62vh] relative">
+            {/* Global loading overlay for the entire list */}
+            {(processing || localProcessing) && (
+                <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-40">
+                    <div className="text-center">
+                        <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-indigo-600" />
+                        <p className="text-sm text-gray-600">
+                            {processing ? 'Processing travel orders...' : 'Updating data...'}
+                        </p>
+                    </div>
+                </div>
+            )}
+            
             <div className="p-4 border-b">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center space-y-4 md:space-y-0">
-                    <h3 className="text-lg font-semibold">Travel Order Requests</h3>
+                    <h3 className="text-lg font-semibold flex items-center">
+                        <MapPin className="h-5 w-5 mr-2 text-indigo-600" />
+                        Travel Orders
+                    </h3>
                     
                     <div className="flex flex-wrap gap-2 w-full md:w-auto">
                         {/* Export Button */}
                         <button
                             onClick={exportToExcel}
-                            className="px-3 py-1 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 flex items-center"
+                            className="px-3 py-1 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 flex items-center disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
                             title="Export to Excel"
+                            disabled={exporting || processing || localProcessing}
                         >
-                            <Download className="h-4 w-4 mr-1" />
-                            Export
+                            {exporting ? (
+                                <>
+                                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                    Exporting...
+                                </>
+                            ) : (
+                                <>
+                                    <Download className="h-4 w-4 mr-1" />
+                                    Export
+                                </>
+                            )}
                         </button>
-                        
-                        {/* Bulk Action Button */}
-                        {selectedIds.length > 0 && (
-                            <button
-                                onClick={handleOpenBulkActionModal}
-                                className="px-3 py-1 bg-indigo-600 text-white rounded-md text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            >
-                                Bulk Action ({selectedIds.length})
-                            </button>
-                        )}
                         
                         {/* Status Filter */}
                         <div className="flex items-center">
@@ -365,6 +379,7 @@ const TravelOrderList = ({ travelOrders, onStatusUpdate, onDelete, refreshInterv
                                 className="rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                 value={filterStatus}
                                 onChange={handleStatusFilterChange}
+                                disabled={processing || localProcessing}
                             >
                                 <option value="">All Statuses</option>
                                 <option value="pending">Pending</option>
@@ -389,6 +404,7 @@ const TravelOrderList = ({ travelOrders, onStatusUpdate, onDelete, refreshInterv
                             className="pl-10 w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                             value={searchTerm}
                             onChange={handleSearchChange}
+                            disabled={processing || localProcessing}
                         />
                     </div>
                     
@@ -403,6 +419,7 @@ const TravelOrderList = ({ travelOrders, onStatusUpdate, onDelete, refreshInterv
                                 className="rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                 value={dateRange.from}
                                 onChange={(e) => handleDateRangeChange('from', e.target.value)}
+                                disabled={processing || localProcessing}
                             />
                         </div>
                         
@@ -416,6 +433,7 @@ const TravelOrderList = ({ travelOrders, onStatusUpdate, onDelete, refreshInterv
                                 className="rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                 value={dateRange.to}
                                 onChange={(e) => handleDateRangeChange('to', e.target.value)}
+                                disabled={processing || localProcessing}
                             />
                         </div>
                         
@@ -423,8 +441,9 @@ const TravelOrderList = ({ travelOrders, onStatusUpdate, onDelete, refreshInterv
                         {(filterStatus || searchTerm || dateRange.from || dateRange.to) && (
                             <button
                                 onClick={clearFilters}
-                                className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md text-sm flex items-center"
+                                className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md text-sm flex items-center disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
                                 title="Clear all filters"
+                                disabled={processing || localProcessing}
                             >
                                 <X className="h-4 w-4 mr-1" />
                                 Clear
@@ -438,33 +457,26 @@ const TravelOrderList = ({ travelOrders, onStatusUpdate, onDelete, refreshInterv
                 <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50 sticky top-0 z-10">
                         <tr>
-                            {pendingItemsCount > 0 && (
-                                <th scope="col" className="px-4 py-3 w-10">
-                                    <input
-                                        type="checkbox"
-                                        className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                        checked={selectAll && selectedIds.length === pendingItemsCount}
-                                        onChange={toggleSelectAll}
-                                    />
-                                </th>
-                            )}
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Employee
+                            </th>
+                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Travel Period
                             </th>
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Destination
                             </th>
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Date Range
-                            </th>
-                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Duration
                             </th>
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Transport
+                                Type
                             </th>
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Status
+                            </th>
+                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Filed By
                             </th>
                             <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Actions
@@ -472,27 +484,17 @@ const TravelOrderList = ({ travelOrders, onStatusUpdate, onDelete, refreshInterv
                         </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
-                        {filteredTOs.length === 0 ? (
+                        {filteredTravelOrders.length === 0 ? (
                             <tr>
-                                <td colSpan={pendingItemsCount > 0 ? "8" : "7"} className="px-6 py-4 text-center text-sm text-gray-500">
-                                    No travel order records found
+                                <td colSpan="8" className="px-6 py-4 text-center text-sm text-gray-500">
+                                    {processing || localProcessing ? 'Loading travel orders...' : 'No travel orders found'}
                                 </td>
                             </tr>
                         ) : (
-                            filteredTOs.map(travelOrder => (
-                                <tr key={travelOrder.id} className="hover:bg-gray-50">
-                                    {pendingItemsCount > 0 && (
-                                        <td className="px-4 py-4">
-                                            {travelOrder.status === 'pending' && (
-                                                <input
-                                                    type="checkbox"
-                                                    className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                                    checked={selectedIds.includes(travelOrder.id)}
-                                                    onChange={() => toggleSelectItem(travelOrder.id)}
-                                                />
-                                            )}
-                                        </td>
-                                    )}
+                            filteredTravelOrders.map(travelOrder => (
+                                <tr key={travelOrder.id} className={`hover:bg-gray-50 transition-colors duration-200 ${
+                                    (deletingId === travelOrder.id || updatingId === travelOrder.id) ? 'opacity-50' : ''
+                                }`}>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <div className="text-sm font-medium text-gray-900">
                                             {travelOrder.employee ? 
@@ -502,42 +504,97 @@ const TravelOrderList = ({ travelOrders, onStatusUpdate, onDelete, refreshInterv
                                         <div className="text-sm text-gray-500">
                                             {travelOrder.employee?.idno || 'N/A'}
                                         </div>
+                                        <div className="text-xs text-gray-400">
+                                            {travelOrder.employee?.Department || 'No Dept'}
+                                        </div>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {travelOrder.destination || 'N/A'}
+                                    <td className="px-6 py-4 whitespace-nowrap">
+                                        <div className="text-sm text-gray-900 flex items-center">
+                                            <Calendar className="h-4 w-4 mr-1 text-gray-400" />
+                                            {travelOrder.start_date ? formatDate(travelOrder.start_date) : 'N/A'}
+                                            {travelOrder.end_date && travelOrder.start_date !== travelOrder.end_date && (
+                                                <span> - {formatDate(travelOrder.end_date)}</span>
+                                            )}
+                                        </div>
+                                        {travelOrder.departure_time && (
+                                            <div className="text-sm text-gray-500 flex items-center">
+                                                <Clock className="h-3 w-3 mr-1 text-gray-400" />
+                                                {formatTime(travelOrder.departure_time)}
+                                                {travelOrder.return_time && (
+                                                    <span> - {formatTime(travelOrder.return_time)}</span>
+                                                )}
+                                            </div>
+                                        )}
+                                    </td>
+                                    <td className="px-6 py-4">
+                                        <div className="text-sm text-gray-900 max-w-xs truncate" title={travelOrder.destination}>
+                                            {travelOrder.destination}
+                                        </div>
+                                        <div className="text-sm text-gray-500">
+                                            {travelOrder.transportation_type}
+                                        </div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <div className="text-sm text-gray-900">
-                                            {travelOrder.start_date ? formatDate(travelOrder.start_date) : 'N/A'}
-                                            {travelOrder.start_date !== travelOrder.end_date && travelOrder.end_date ? 
-                                                ` to ${formatDate(travelOrder.end_date)}` : ''}
+                                            {travelOrder.total_days} day{travelOrder.total_days !== 1 ? 's' : ''}
+                                        </div>
+                                        <div className="text-xs text-gray-500">
+                                            {travelOrder.working_days} working day{travelOrder.working_days !== 1 ? 's' : ''}
                                         </div>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {calculateDuration(travelOrder.start_date, travelOrder.end_date)}
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {getTransportationTypeText(travelOrder.transportation_type)}
+                                    <td className="px-6 py-4 whitespace-nowrap">
+                                        <div className="flex flex-col space-y-1">
+                                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                                                travelOrder.is_full_day 
+                                                    ? 'bg-blue-100 text-blue-800' 
+                                                    : 'bg-yellow-100 text-yellow-800'
+                                            }`}>
+                                                {travelOrder.is_full_day ? 'Full Day' : 'Partial Day'}
+                                            </span>
+                                            {travelOrder.return_to_office && (
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                    Return to Office
+                                                </span>
+                                            )}
+                                        </div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
-                                        <StatusBadge status={travelOrder.status} />
+                                        <TravelOrderStatusBadge status={travelOrder.status} />
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                        {travelOrder.creator ? travelOrder.creator.name : 'N/A'}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                        <button
-                                            onClick={() => handleViewDetail(travelOrder)}
-                                            className="text-indigo-600 hover:text-indigo-900 mr-3"
-                                        >
-                                            View
-                                        </button>
-                                        
-                                        {travelOrder.status === 'pending' && (
+                                        <div className="flex items-center justify-end space-x-2">
                                             <button
-                                                onClick={() => handleDelete(travelOrder.id)}
-                                                className="text-red-600 hover:text-red-900"
+                                                onClick={() => handleViewDetail(travelOrder)}
+                                                className="text-indigo-600 hover:text-indigo-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+                                                disabled={processing || localProcessing || updatingId === travelOrder.id}
                                             >
-                                                Delete
+                                                View
                                             </button>
-                                        )}
+                                            
+                                            {(travelOrder.status === 'pending' && 
+                                              (userRoles.isSuperAdmin || 
+                                               travelOrder.created_by === userRoles.userId || 
+                                               (userRoles.isDepartmentManager && 
+                                                userRoles.managedDepartments?.includes(travelOrder.employee?.Department)))) && (
+                                                <button
+                                                    onClick={() => handleDelete(travelOrder.id)}
+                                                    className="text-red-600 hover:text-red-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center transition-colors duration-200"
+                                                    disabled={processing || localProcessing || deletingId === travelOrder.id}
+                                                >
+                                                    {deletingId === travelOrder.id ? (
+                                                        <>
+                                                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                                            Deleting...
+                                                        </>
+                                                    ) : (
+                                                        'Delete'
+                                                    )}
+                                                </button>
+                                            )}
+                                        </div>
                                     </td>
                                 </tr>
                             ))
@@ -546,21 +603,34 @@ const TravelOrderList = ({ travelOrders, onStatusUpdate, onDelete, refreshInterv
                 </table>
             </div>
             
+            {/* Footer with summary information */}
+            <div className="px-4 py-3 bg-gray-50 border-t text-sm text-gray-600">
+                <div className="flex justify-between items-center">
+                    <div>
+                        Showing {filteredTravelOrders.length} of {localTravelOrders.length} travel orders
+                    </div>
+                    
+                    {/* Processing indicator */}
+                    {(processing || localProcessing) && (
+                        <div className="flex items-center text-indigo-600">
+                            <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                            <span className="text-xs">
+                                {processing ? 'Processing...' : 'Updating...'}
+                            </span>
+                        </div>
+                    )}
+                </div>
+            </div>
+            
             {/* Detail Modal */}
-            {showModal && selectedTO && (
+            {showModal && selectedTravelOrder && (
                 <TravelOrderDetailModal
-                    travelOrder={selectedTO}
+                    travelOrder={selectedTravelOrder}
                     onClose={handleCloseModal}
                     onStatusUpdate={handleStatusUpdate}
-                />
-            )}
-
-            {/* Bulk Action Modal */}
-            {showBulkActionModal && (
-                <MultiBulkActionModal
-                    selectedCount={selectedIds.length}
-                    onClose={handleCloseBulkActionModal}
-                    onSubmit={handleBulkStatusUpdate}
+                    userRoles={userRoles}
+                    viewOnly={processing || localProcessing}
+                    processing={updatingId === selectedTravelOrder.id}
                 />
             )}
         </div>
