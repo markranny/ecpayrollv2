@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { format } from 'date-fns';
 import { Download, Search, X, Filter, Loader2, MapPin, Calendar, Clock } from 'lucide-react';
-import TravelOrderStatusBadge from './TravelOrderStatusBadge';
+import TravelOrderStatusBadge from './StatusBadge';
 import TravelOrderDetailModal from './TravelOrderDetailModal';
 import { router } from '@inertiajs/react';
 import { toast } from 'react-toastify';
