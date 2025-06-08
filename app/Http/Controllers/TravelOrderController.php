@@ -14,6 +14,7 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Inertia\Inertia;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Log;
 
 class TravelOrderController extends Controller
 {
@@ -184,25 +185,36 @@ class TravelOrderController extends Controller
 
     public function store(Request $request)
     {
-        $validated = $request->validate([
-            'employee_ids' => 'required|array',
-            'employee_ids.*' => 'required|integer|exists:employees,id',
-            'start_date' => 'required|date',
-            'end_date' => 'required|date|after_or_equal:start_date',
-            'departure_time' => 'nullable|date_format:H:i',
-            'return_time' => 'nullable|date_format:H:i',
-            'destination' => 'required|string|max:255',
-            'transportation_type' => 'required|string|max:100',
-            'purpose' => 'required|string|max:1000',
-            'accommodation_required' => 'boolean',
-            'meal_allowance' => 'boolean',
-            'other_expenses' => 'nullable|string|max:500',
-            'estimated_cost' => 'nullable|numeric|min:0',
-            'return_to_office' => 'boolean',
-            'office_return_time' => 'nullable|date_format:H:i|required_if:return_to_office,true',
-            'documents' => 'nullable|array',
-            'documents.*' => 'file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120', // 5MB max per file
-        ]);
+        // Debug logging
+        Log::info('Travel Order Store Request Data:', $request->all());
+        
+        try {
+            $validated = $request->validate([
+                'employee_ids' => 'required|array|min:1',
+                'employee_ids.*' => 'required|integer|exists:employees,id',
+                'start_date' => 'required|date|after_or_equal:today',
+                'end_date' => 'required|date|after_or_equal:start_date',
+                'departure_time' => 'nullable|string', // Changed from date_format:H:i to string
+                'return_time' => 'nullable|string',    // Changed from date_format:H:i to string
+                'destination' => 'required|string|max:255',
+                'transportation_type' => 'required|string|max:100',
+                'purpose' => 'required|string|max:1000',
+                'accommodation_required' => 'boolean',
+                'meal_allowance' => 'boolean',
+                'other_expenses' => 'nullable|string|max:500',
+                'estimated_cost' => 'nullable|numeric|min:0',
+                'return_to_office' => 'boolean',
+                'office_return_time' => 'nullable|string|required_if:return_to_office,true',
+                'documents' => 'nullable|array',
+                'documents.*' => 'file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120', // 5MB max per file
+            ]);
+            
+            Log::info('Travel Order Validation Passed:', $validated);
+            
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            Log::error('Travel Order Validation Failed:', $e->errors());
+            return back()->withErrors($e->errors())->withInput();
+        }
         
         $user = Auth::user();
         $userRoles = $this->getUserRoles($user);
@@ -254,6 +266,36 @@ class TravelOrderController extends Controller
                 $totalDays = $startDate->diffInDays($endDate) + 1;
                 $workingDays = $this->calculateWorkingDays($startDate, $endDate);
                 
+                // Handle time conversion - ensure proper format
+                $departureTime = null;
+                $returnTime = null;
+                $officeReturnTime = null;
+                
+                if (!empty($validated['departure_time'])) {
+                    try {
+                        // Handle both "HH:MM" and "HH:MM:SS" formats
+                        $departureTime = $this->convertTimeToDateTime($validated['departure_time'], $validated['start_date']);
+                    } catch (\Exception $e) {
+                        Log::warning('Invalid departure time format: ' . $validated['departure_time']);
+                    }
+                }
+                
+                if (!empty($validated['return_time'])) {
+                    try {
+                        $returnTime = $this->convertTimeToDateTime($validated['return_time'], $validated['end_date']);
+                    } catch (\Exception $e) {
+                        Log::warning('Invalid return time format: ' . $validated['return_time']);
+                    }
+                }
+                
+                if (!empty($validated['office_return_time']) && $validated['return_to_office']) {
+                    try {
+                        $officeReturnTime = $this->convertTimeToDateTime($validated['office_return_time'], $validated['end_date']);
+                    } catch (\Exception $e) {
+                        Log::warning('Invalid office return time format: ' . $validated['office_return_time']);
+                    }
+                }
+                
                 // Determine if this is a full day travel or partial day
                 $isFullDay = $this->determineIfFullDay(
                     $validated['departure_time'] ?? null,
@@ -266,18 +308,24 @@ class TravelOrderController extends Controller
                 $documentPaths = [];
                 if ($request->hasFile('documents')) {
                     foreach ($request->file('documents') as $file) {
-                        $filename = time() . '_' . $file->getClientOriginalName();
-                        $path = $file->storeAs('travel_orders', $filename, 'public');
-                        $documentPaths[] = $path;
+                        try {
+                            $filename = time() . '_' . uniqid() . '_' . $file->getClientOriginalName();
+                            $path = $file->storeAs('travel_orders', $filename, 'public');
+                            $documentPaths[] = $path;
+                        } catch (\Exception $e) {
+                            Log::error('Error uploading document: ' . $e->getMessage());
+                            $errorMessages[] = "Failed to upload document: " . $file->getClientOriginalName();
+                        }
                     }
                 }
                 
+                // Create travel order
                 $travelOrder = new TravelOrder();
                 $travelOrder->employee_id = $employeeId;
                 $travelOrder->start_date = $validated['start_date'];
                 $travelOrder->end_date = $validated['end_date'];
-                $travelOrder->departure_time = $validated['departure_time'];
-                $travelOrder->return_time = $validated['return_time'];
+                $travelOrder->departure_time = $departureTime;
+                $travelOrder->return_time = $returnTime;
                 $travelOrder->destination = $validated['destination'];
                 $travelOrder->transportation_type = $validated['transportation_type'];
                 $travelOrder->purpose = $validated['purpose'];
@@ -286,19 +334,17 @@ class TravelOrderController extends Controller
                 $travelOrder->other_expenses = $validated['other_expenses'];
                 $travelOrder->estimated_cost = $validated['estimated_cost'];
                 $travelOrder->return_to_office = $validated['return_to_office'] ?? false;
-                $travelOrder->office_return_time = $validated['office_return_time'];
+                $travelOrder->office_return_time = $officeReturnTime;
                 $travelOrder->total_days = $totalDays;
                 $travelOrder->working_days = $workingDays;
                 $travelOrder->is_full_day = $isFullDay;
                 $travelOrder->created_by = $user->id;
                 $travelOrder->document_paths = !empty($documentPaths) ? json_encode($documentPaths) : null;
                 
-                // Set initial status
+                // Set initial status based on user role and permissions
                 if ($isDepartmentManager && 
-                    ($employeeId == $user->employee_id || 
-                     ($employee->department && DepartmentManager::where('manager_id', $user->id)
-                                                        ->where('department', $employee->department->name)
-                                                        ->exists()))) {
+                    ($employeeId == $userRoles['employeeId'] || 
+                     ($employee->Department && in_array($employee->Department, $userRoles['managedDepartments'])))) {
                     // Auto-approve for department manager's own travel or their department
                     $travelOrder->status = 'approved';
                     $travelOrder->approved_by = $user->id;
@@ -308,8 +354,12 @@ class TravelOrderController extends Controller
                     $travelOrder->status = 'pending';
                 }
                 
+                Log::info('Saving travel order for employee: ' . $employeeId, $travelOrder->toArray());
+                
                 $travelOrder->save();
                 $successCount++;
+                
+                Log::info('Travel order saved successfully with ID: ' . $travelOrder->id);
             }
             
             DB::commit();
@@ -320,16 +370,50 @@ class TravelOrderController extends Controller
             }
             
             if (!empty($errorMessages)) {
-                return redirect()->back()->with([
+                return back()->with([
                     'message' => $message,
                     'errors' => $errorMessages
-                ]);
+                ])->withInput();
             }
             
-            return redirect()->back()->with('message', $message);
+            return back()->with('message', $message);
+            
         } catch (\Exception $e) {
             DB::rollBack();
-            return redirect()->back()->with('error', 'Error creating travel orders: ' . $e->getMessage());
+            Log::error('Travel Order Creation Error: ' . $e->getMessage(), [
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return back()->with('error', 'Error creating travel orders: ' . $e->getMessage())->withInput();
+        }
+    }
+
+    private function convertTimeToDateTime($timeString, $date)
+    {
+        if (empty($timeString)) {
+            return null;
+        }
+        
+        // Remove any extra whitespace
+        $timeString = trim($timeString);
+        
+        // Handle different time formats
+        if (preg_match('/^\d{2}:\d{2}$/', $timeString)) {
+            // Format: HH:MM
+            return Carbon::createFromFormat('Y-m-d H:i', $date . ' ' . $timeString);
+        } elseif (preg_match('/^\d{2}:\d{2}:\d{2}$/', $timeString)) {
+            // Format: HH:MM:SS
+            return Carbon::createFromFormat('Y-m-d H:i:s', $date . ' ' . $timeString);
+        }
+        
+        // If format doesn't match, try to parse it anyway
+        try {
+            return Carbon::createFromFormat('Y-m-d H:i', $date . ' ' . $timeString);
+        } catch (\Exception $e) {
+            Log::warning('Could not parse time string: ' . $timeString);
+            return null;
         }
     }
 
@@ -360,46 +444,52 @@ class TravelOrderController extends Controller
      */
     private function determineIfFullDay($departureTime, $returnTime, $returnToOffice, $officeReturnTime)
     {
-        // If multiple days, it's always full day
+        // If no times specified, assume full day
         if (!$departureTime || !$returnTime) {
             return true;
         }
         
-        // Parse times
-        $departure = Carbon::createFromFormat('H:i', $departureTime);
-        $return = Carbon::createFromFormat('H:i', $returnTime);
-        
-        // If they return to office, check if they have significant office time
-        if ($returnToOffice && $officeReturnTime) {
-            $officeReturn = Carbon::createFromFormat('H:i', $officeReturnTime);
-            $officeHours = $return->diffInHours($officeReturn);
+        try {
+            // Parse times - handle string format
+            $departure = Carbon::createFromFormat('H:i', substr($departureTime, 0, 5));
+            $return = Carbon::createFromFormat('H:i', substr($returnTime, 0, 5));
             
-            // If they return to office for less than 3 hours, count as full day
-            if ($officeHours < 3) {
-                return true;
+            // If they return to office, check if they have significant office time
+            if ($returnToOffice && $officeReturnTime) {
+                $officeReturn = Carbon::createFromFormat('H:i', substr($officeReturnTime, 0, 5));
+                $officeHours = $return->diffInHours($officeReturn);
+                
+                // If they return to office for less than 3 hours, count as full day
+                if ($officeHours < 3) {
+                    return true;
+                }
+                
+                // If travel + office time is more than 8 hours total, count as full day
+                $travelHours = $departure->diffInHours($return);
+                if (($travelHours + $officeHours) >= 8) {
+                    return true;
+                }
+                
+                return false; // Partial day if significant office work
             }
             
-            // If travel + office time is more than 8 hours total, count as full day
+            // If travel duration is 5+ hours, count as full day
             $travelHours = $departure->diffInHours($return);
-            if (($travelHours + $officeHours) >= 8) {
+            if ($travelHours >= 5) {
                 return true;
             }
             
-            return false; // Partial day if significant office work
+            // If travel starts before 9 AM or ends after 3 PM, likely full day
+            if ($departure->hour < 9 || $return->hour >= 15) {
+                return true;
+            }
+            
+            return false; // Otherwise partial day
+            
+        } catch (\Exception $e) {
+            Log::warning('Error determining full day status: ' . $e->getMessage());
+            return true; // Default to full day if can't determine
         }
-        
-        // If travel duration is 5+ hours, count as full day
-        $travelHours = $departure->diffInHours($return);
-        if ($travelHours >= 5) {
-            return true;
-        }
-        
-        // If travel starts before 9 AM or ends after 3 PM, likely full day
-        if ($departure->hour < 9 || $return->hour >= 15) {
-            return true;
-        }
-        
-        return false; // Otherwise partial day
     }
 
     /**

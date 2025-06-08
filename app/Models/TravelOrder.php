@@ -29,12 +29,12 @@ class TravelOrder extends Model
         'total_days',
         'working_days',
         'is_full_day',
-        'status', // pending, approved, rejected, completed, cancelled
+        'status',
         'approved_by',
         'approved_at',
         'remarks',
         'created_by',
-        'document_paths', // JSON field for storing document file paths
+        'document_paths',
     ];
 
     protected $casts = [
