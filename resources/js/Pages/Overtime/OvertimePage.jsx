@@ -48,7 +48,7 @@ const OvertimePage = () => {
                     }
                     
                     toast.success('Overtime requests created successfully');
-                    setActiveTab('list'); // Switch to list view after successful submission
+                    /* setActiveTab('list');  */
                     setProcessing(false);
                     setGlobalLoading(false);
                     resolve(page);

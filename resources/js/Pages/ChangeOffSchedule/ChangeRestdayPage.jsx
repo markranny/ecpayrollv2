@@ -37,7 +37,7 @@ const ChangeRestdayPage = () => {
                     setChangeOffData(page.props.changeOffs);
                 }
                 toast.success('Change rest day requests created successfully');
-                setActiveTab('list'); // Switch to list view after successful submission
+                /* setActiveTab('list');  */
             },
             onError: (errors) => {
                 if (errors && typeof errors === 'object') {

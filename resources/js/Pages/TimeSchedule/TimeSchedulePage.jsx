@@ -37,7 +37,7 @@ const TimeSchedulePage = () => {
                     setTimeScheduleData(page.props.timeSchedules);
                 }
                 toast.success('Time schedule change requests created successfully');
-                setActiveTab('list'); // Switch to list view after successful submission
+                /* setActiveTab('list');  */
             },
             onError: (errors) => {
                 if (errors && typeof errors === 'object') {

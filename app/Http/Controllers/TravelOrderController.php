@@ -183,212 +183,245 @@ class TravelOrderController extends Controller
         return false;
     }
 
-    public function store(Request $request)
-    {
-        // Debug logging
-        Log::info('Travel Order Store Request Data:', $request->all());
+    // Updated TravelOrderController store method with proper validation
+public function store(Request $request)
+{
+    // Debug logging
+    Log::info('Travel Order Store Request Data:', $request->all());
+    
+    try {
+        $validated = $request->validate([
+            'employee_ids' => 'required|array|min:1',
+            'employee_ids.*' => 'required|integer|exists:employees,id',
+            'start_date' => 'required|date|after_or_equal:today',
+            'end_date' => 'required|date|after_or_equal:start_date',
+            'departure_time' => 'nullable|string',
+            'return_time' => 'nullable|string',
+            'destination' => 'required|string|max:255',
+            'transportation_type' => 'required|string|max:100',
+            'purpose' => 'required|string|max:1000',
+            // Fixed boolean validation - accept string values and convert them
+            'accommodation_required' => 'sometimes|in:0,1,true,false',
+            'meal_allowance' => 'sometimes|in:0,1,true,false',
+            'return_to_office' => 'sometimes|in:0,1,true,false',
+            'other_expenses' => 'nullable|string|max:500',
+            'estimated_cost' => 'nullable|numeric|min:0',
+            'office_return_time' => 'nullable|string',
+            'documents' => 'nullable|array',
+            'documents.*' => 'file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120', // 5MB max per file
+        ]);
         
-        try {
-            $validated = $request->validate([
-                'employee_ids' => 'required|array|min:1',
-                'employee_ids.*' => 'required|integer|exists:employees,id',
-                'start_date' => 'required|date|after_or_equal:today',
-                'end_date' => 'required|date|after_or_equal:start_date',
-                'departure_time' => 'nullable|string', // Changed from date_format:H:i to string
-                'return_time' => 'nullable|string',    // Changed from date_format:H:i to string
-                'destination' => 'required|string|max:255',
-                'transportation_type' => 'required|string|max:100',
-                'purpose' => 'required|string|max:1000',
-                'accommodation_required' => 'boolean',
-                'meal_allowance' => 'boolean',
-                'other_expenses' => 'nullable|string|max:500',
-                'estimated_cost' => 'nullable|numeric|min:0',
-                'return_to_office' => 'boolean',
-                'office_return_time' => 'nullable|string|required_if:return_to_office,true',
-                'documents' => 'nullable|array',
-                'documents.*' => 'file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120', // 5MB max per file
-            ]);
-            
-            Log::info('Travel Order Validation Passed:', $validated);
-            
-        } catch (\Illuminate\Validation\ValidationException $e) {
-            Log::error('Travel Order Validation Failed:', $e->errors());
-            return back()->withErrors($e->errors())->withInput();
+        Log::info('Travel Order Validation Passed:', $validated);
+        
+        // Convert string boolean values to actual booleans
+        $validated['accommodation_required'] = $this->convertToBoolean($validated['accommodation_required'] ?? false);
+        $validated['meal_allowance'] = $this->convertToBoolean($validated['meal_allowance'] ?? false);
+        $validated['return_to_office'] = $this->convertToBoolean($validated['return_to_office'] ?? false);
+        
+        // Additional validation for office return time
+        if ($validated['return_to_office'] && empty($validated['office_return_time'])) {
+            return back()->withErrors([
+                'office_return_time' => 'Office return time is required when "Return to Office" is checked.'
+            ])->withInput();
         }
         
-        $user = Auth::user();
-        $userRoles = $this->getUserRoles($user);
-        $isDepartmentManager = $userRoles['isDepartmentManager'];
+        Log::info('Travel Order After Boolean Conversion:', $validated);
         
-        $successCount = 0;
-        $skippedCount = 0;
-        $errorMessages = [];
-        
-        DB::beginTransaction();
-        
-        try {
-            foreach ($validated['employee_ids'] as $employeeId) {
-                $employee = Employee::with('department')->find($employeeId);
-                
-                if (!$employee) {
-                    $errorMessages[] = "Employee ID $employeeId not found";
-                    continue;
-                }
-                
-                // Check if employee belongs to an active department
-                if (!$employee->department || !$employee->department->is_active) {
-                    $errorMessages[] = "Employee {$employee->Fname} {$employee->Lname} belongs to an inactive department";
-                    continue;
-                }
-                
-                // Check for overlapping travel orders
-                $overlappingTravel = TravelOrder::where('employee_id', $employeeId)
-                    ->where('status', '!=', 'rejected')
-                    ->where(function($query) use ($validated) {
-                        $query->whereBetween('start_date', [$validated['start_date'], $validated['end_date']])
-                              ->orWhereBetween('end_date', [$validated['start_date'], $validated['end_date']])
-                              ->orWhere(function($q) use ($validated) {
-                                  $q->where('start_date', '<=', $validated['start_date'])
-                                    ->where('end_date', '>=', $validated['end_date']);
-                              });
-                    })
-                    ->first();
-                
-                if ($overlappingTravel) {
-                    $skippedCount++;
-                    $errorMessages[] = "Travel order for {$employee->Fname} {$employee->Lname} overlaps with existing travel from {$overlappingTravel->start_date} to {$overlappingTravel->end_date}";
-                    continue;
-                }
-                
-                // Calculate total days and working days
-                $startDate = Carbon::parse($validated['start_date']);
-                $endDate = Carbon::parse($validated['end_date']);
-                $totalDays = $startDate->diffInDays($endDate) + 1;
-                $workingDays = $this->calculateWorkingDays($startDate, $endDate);
-                
-                // Handle time conversion - ensure proper format
-                $departureTime = null;
-                $returnTime = null;
-                $officeReturnTime = null;
-                
-                if (!empty($validated['departure_time'])) {
-                    try {
-                        // Handle both "HH:MM" and "HH:MM:SS" formats
-                        $departureTime = $this->convertTimeToDateTime($validated['departure_time'], $validated['start_date']);
-                    } catch (\Exception $e) {
-                        Log::warning('Invalid departure time format: ' . $validated['departure_time']);
-                    }
-                }
-                
-                if (!empty($validated['return_time'])) {
-                    try {
-                        $returnTime = $this->convertTimeToDateTime($validated['return_time'], $validated['end_date']);
-                    } catch (\Exception $e) {
-                        Log::warning('Invalid return time format: ' . $validated['return_time']);
-                    }
-                }
-                
-                if (!empty($validated['office_return_time']) && $validated['return_to_office']) {
-                    try {
-                        $officeReturnTime = $this->convertTimeToDateTime($validated['office_return_time'], $validated['end_date']);
-                    } catch (\Exception $e) {
-                        Log::warning('Invalid office return time format: ' . $validated['office_return_time']);
-                    }
-                }
-                
-                // Determine if this is a full day travel or partial day
-                $isFullDay = $this->determineIfFullDay(
-                    $validated['departure_time'] ?? null,
-                    $validated['return_time'] ?? null,
-                    $validated['return_to_office'] ?? false,
-                    $validated['office_return_time'] ?? null
-                );
-                
-                // Handle document uploads
-                $documentPaths = [];
-                if ($request->hasFile('documents')) {
-                    foreach ($request->file('documents') as $file) {
-                        try {
-                            $filename = time() . '_' . uniqid() . '_' . $file->getClientOriginalName();
-                            $path = $file->storeAs('travel_orders', $filename, 'public');
-                            $documentPaths[] = $path;
-                        } catch (\Exception $e) {
-                            Log::error('Error uploading document: ' . $e->getMessage());
-                            $errorMessages[] = "Failed to upload document: " . $file->getClientOriginalName();
-                        }
-                    }
-                }
-                
-                // Create travel order
-                $travelOrder = new TravelOrder();
-                $travelOrder->employee_id = $employeeId;
-                $travelOrder->start_date = $validated['start_date'];
-                $travelOrder->end_date = $validated['end_date'];
-                $travelOrder->departure_time = $departureTime;
-                $travelOrder->return_time = $returnTime;
-                $travelOrder->destination = $validated['destination'];
-                $travelOrder->transportation_type = $validated['transportation_type'];
-                $travelOrder->purpose = $validated['purpose'];
-                $travelOrder->accommodation_required = $validated['accommodation_required'] ?? false;
-                $travelOrder->meal_allowance = $validated['meal_allowance'] ?? false;
-                $travelOrder->other_expenses = $validated['other_expenses'];
-                $travelOrder->estimated_cost = $validated['estimated_cost'];
-                $travelOrder->return_to_office = $validated['return_to_office'] ?? false;
-                $travelOrder->office_return_time = $officeReturnTime;
-                $travelOrder->total_days = $totalDays;
-                $travelOrder->working_days = $workingDays;
-                $travelOrder->is_full_day = $isFullDay;
-                $travelOrder->created_by = $user->id;
-                $travelOrder->document_paths = !empty($documentPaths) ? json_encode($documentPaths) : null;
-                
-                // Set initial status based on user role and permissions
-                if ($isDepartmentManager && 
-                    ($employeeId == $userRoles['employeeId'] || 
-                     ($employee->Department && in_array($employee->Department, $userRoles['managedDepartments'])))) {
-                    // Auto-approve for department manager's own travel or their department
-                    $travelOrder->status = 'approved';
-                    $travelOrder->approved_by = $user->id;
-                    $travelOrder->approved_at = now();
-                    $travelOrder->remarks = 'Auto-approved (Department Manager)';
-                } else {
-                    $travelOrder->status = 'pending';
-                }
-                
-                Log::info('Saving travel order for employee: ' . $employeeId, $travelOrder->toArray());
-                
-                $travelOrder->save();
-                $successCount++;
-                
-                Log::info('Travel order saved successfully with ID: ' . $travelOrder->id);
-            }
-            
-            DB::commit();
-            
-            $message = "Successfully created {$successCount} travel order(s)";
-            if ($skippedCount > 0) {
-                $message .= ". Skipped {$skippedCount} overlapping entries.";
-            }
-            
-            if (!empty($errorMessages)) {
-                return back()->with([
-                    'message' => $message,
-                    'errors' => $errorMessages
-                ])->withInput();
-            }
-            
-            return back()->with('message', $message);
-            
-        } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('Travel Order Creation Error: ' . $e->getMessage(), [
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            return back()->with('error', 'Error creating travel orders: ' . $e->getMessage())->withInput();
-        }
+    } catch (\Illuminate\Validation\ValidationException $e) {
+        Log::error('Travel Order Validation Failed:', $e->errors());
+        return back()->withErrors($e->errors())->withInput();
     }
+    
+    $user = Auth::user();
+    $userRoles = $this->getUserRoles($user);
+    $isDepartmentManager = $userRoles['isDepartmentManager'];
+    
+    $successCount = 0;
+    $skippedCount = 0;
+    $errorMessages = [];
+    
+    DB::beginTransaction();
+    
+    try {
+        foreach ($validated['employee_ids'] as $employeeId) {
+            $employee = Employee::with('department')->find($employeeId);
+            
+            if (!$employee) {
+                $errorMessages[] = "Employee ID $employeeId not found";
+                continue;
+            }
+            
+            // Check if employee belongs to an active department
+            if (!$employee->department || !$employee->department->is_active) {
+                $errorMessages[] = "Employee {$employee->Fname} {$employee->Lname} belongs to an inactive department";
+                continue;
+            }
+            
+            // Check for overlapping travel orders
+            $overlappingTravel = TravelOrder::where('employee_id', $employeeId)
+                ->where('status', '!=', 'rejected')
+                ->where(function($query) use ($validated) {
+                    $query->whereBetween('start_date', [$validated['start_date'], $validated['end_date']])
+                          ->orWhereBetween('end_date', [$validated['start_date'], $validated['end_date']])
+                          ->orWhere(function($q) use ($validated) {
+                              $q->where('start_date', '<=', $validated['start_date'])
+                                ->where('end_date', '>=', $validated['end_date']);
+                          });
+                })
+                ->first();
+            
+            if ($overlappingTravel) {
+                $skippedCount++;
+                $errorMessages[] = "Travel order for {$employee->Fname} {$employee->Lname} overlaps with existing travel from {$overlappingTravel->start_date} to {$overlappingTravel->end_date}";
+                continue;
+            }
+            
+            // Calculate total days and working days
+            $startDate = Carbon::parse($validated['start_date']);
+            $endDate = Carbon::parse($validated['end_date']);
+            $totalDays = $startDate->diffInDays($endDate) + 1;
+            $workingDays = $this->calculateWorkingDays($startDate, $endDate);
+            
+            // Handle time conversion - ensure proper format
+            $departureTime = null;
+            $returnTime = null;
+            $officeReturnTime = null;
+            
+            if (!empty($validated['departure_time'])) {
+                try {
+                    $departureTime = $this->convertTimeToDateTime($validated['departure_time'], $validated['start_date']);
+                } catch (\Exception $e) {
+                    Log::warning('Invalid departure time format: ' . $validated['departure_time']);
+                }
+            }
+            
+            if (!empty($validated['return_time'])) {
+                try {
+                    $returnTime = $this->convertTimeToDateTime($validated['return_time'], $validated['end_date']);
+                } catch (\Exception $e) {
+                    Log::warning('Invalid return time format: ' . $validated['return_time']);
+                }
+            }
+            
+            if (!empty($validated['office_return_time']) && $validated['return_to_office']) {
+                try {
+                    $officeReturnTime = $this->convertTimeToDateTime($validated['office_return_time'], $validated['end_date']);
+                } catch (\Exception $e) {
+                    Log::warning('Invalid office return time format: ' . $validated['office_return_time']);
+                }
+            }
+            
+            // Determine if this is a full day travel or partial day
+            $isFullDay = $this->determineIfFullDay(
+                $validated['departure_time'] ?? null,
+                $validated['return_time'] ?? null,
+                $validated['return_to_office'] ?? false,
+                $validated['office_return_time'] ?? null
+            );
+            
+            // Handle document uploads
+            $documentPaths = [];
+            if ($request->hasFile('documents')) {
+                foreach ($request->file('documents') as $file) {
+                    try {
+                        $filename = time() . '_' . uniqid() . '_' . $file->getClientOriginalName();
+                        $path = $file->storeAs('travel_orders', $filename, 'public');
+                        $documentPaths[] = $path;
+                    } catch (\Exception $e) {
+                        Log::error('Error uploading document: ' . $e->getMessage());
+                        $errorMessages[] = "Failed to upload document: " . $file->getClientOriginalName();
+                    }
+                }
+            }
+            
+            // Create travel order
+            $travelOrder = new TravelOrder();
+            $travelOrder->employee_id = $employeeId;
+            $travelOrder->start_date = $validated['start_date'];
+            $travelOrder->end_date = $validated['end_date'];
+            $travelOrder->departure_time = $departureTime;
+            $travelOrder->return_time = $returnTime;
+            $travelOrder->destination = $validated['destination'];
+            $travelOrder->transportation_type = $validated['transportation_type'];
+            $travelOrder->purpose = $validated['purpose'];
+            $travelOrder->accommodation_required = $validated['accommodation_required'];
+            $travelOrder->meal_allowance = $validated['meal_allowance'];
+            $travelOrder->other_expenses = $validated['other_expenses'];
+            $travelOrder->estimated_cost = $validated['estimated_cost'];
+            $travelOrder->return_to_office = $validated['return_to_office'];
+            $travelOrder->office_return_time = $officeReturnTime;
+            $travelOrder->total_days = $totalDays;
+            $travelOrder->working_days = $workingDays;
+            $travelOrder->is_full_day = $isFullDay;
+            $travelOrder->created_by = $user->id;
+            $travelOrder->document_paths = !empty($documentPaths) ? json_encode($documentPaths) : null;
+            
+            // Set initial status based on user role and permissions
+            if ($isDepartmentManager && 
+                ($employeeId == $userRoles['employeeId'] || 
+                 ($employee->Department && in_array($employee->Department, $userRoles['managedDepartments'])))) {
+                // Auto-approve for department manager's own travel or their department
+                $travelOrder->status = 'approved';
+                $travelOrder->approved_by = $user->id;
+                $travelOrder->approved_at = now();
+                $travelOrder->remarks = 'Auto-approved (Department Manager)';
+            } else {
+                $travelOrder->status = 'pending';
+            }
+            
+            Log::info('Saving travel order for employee: ' . $employeeId, $travelOrder->toArray());
+            
+            $travelOrder->save();
+            $successCount++;
+            
+            Log::info('Travel order saved successfully with ID: ' . $travelOrder->id);
+        }
+        
+        DB::commit();
+        
+        $message = "Successfully created {$successCount} travel order(s)";
+        if ($skippedCount > 0) {
+            $message .= ". Skipped {$skippedCount} overlapping entries.";
+        }
+        
+        if (!empty($errorMessages)) {
+            return back()->with([
+                'message' => $message,
+                'errors' => $errorMessages
+            ])->withInput();
+        }
+        
+        return back()->with('message', $message);
+        
+    } catch (\Exception $e) {
+        DB::rollBack();
+        Log::error('Travel Order Creation Error: ' . $e->getMessage(), [
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+            'trace' => $e->getTraceAsString()
+        ]);
+        
+        return back()->with('error', 'Error creating travel orders: ' . $e->getMessage())->withInput();
+    }
+}
+
+
+private function convertToBoolean($value)
+{
+    if (is_bool($value)) {
+        return $value;
+    }
+    
+    if (is_string($value)) {
+        return in_array(strtolower($value), ['true', '1', 'yes', 'on']);
+    }
+    
+    if (is_numeric($value)) {
+        return (bool) $value;
+    }
+    
+    return (bool) $value;
+}
 
     private function convertTimeToDateTime($timeString, $date)
     {

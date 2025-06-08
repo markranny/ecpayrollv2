@@ -42,7 +42,7 @@ const OffsetPage = () => {
                         setOffsetData(page.props.offsets);
                     }
                     toast.success('Offset request created successfully');
-                    setActiveTab('list'); // Switch to list view after successful submission
+                    /* setActiveTab('list');  */
                     resolve(page);
                 },
                 onError: (errors) => {
