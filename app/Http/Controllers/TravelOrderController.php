@@ -13,6 +13,7 @@ use Illuminate\Support\Carbon;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Inertia\Inertia;
+use Illuminate\Support\Facades\Storage;
 
 class TravelOrderController extends Controller
 {
@@ -199,6 +200,8 @@ class TravelOrderController extends Controller
             'estimated_cost' => 'nullable|numeric|min:0',
             'return_to_office' => 'boolean',
             'office_return_time' => 'nullable|date_format:H:i|required_if:return_to_office,true',
+            'documents' => 'nullable|array',
+            'documents.*' => 'file|mimes:pdf,doc,docx,jpg,jpeg,png|max:5120', // 5MB max per file
         ]);
         
         $user = Auth::user();
@@ -259,6 +262,16 @@ class TravelOrderController extends Controller
                     $validated['office_return_time'] ?? null
                 );
                 
+                // Handle document uploads
+                $documentPaths = [];
+                if ($request->hasFile('documents')) {
+                    foreach ($request->file('documents') as $file) {
+                        $filename = time() . '_' . $file->getClientOriginalName();
+                        $path = $file->storeAs('travel_orders', $filename, 'public');
+                        $documentPaths[] = $path;
+                    }
+                }
+                
                 $travelOrder = new TravelOrder();
                 $travelOrder->employee_id = $employeeId;
                 $travelOrder->start_date = $validated['start_date'];
@@ -278,6 +291,7 @@ class TravelOrderController extends Controller
                 $travelOrder->working_days = $workingDays;
                 $travelOrder->is_full_day = $isFullDay;
                 $travelOrder->created_by = $user->id;
+                $travelOrder->document_paths = !empty($documentPaths) ? json_encode($documentPaths) : null;
                 
                 // Set initial status
                 if ($isDepartmentManager && 
@@ -453,6 +467,61 @@ class TravelOrderController extends Controller
     }
 
     /**
+     * Bulk update status for multiple travel orders
+     */
+    public function bulkUpdateStatus(Request $request)
+    {
+        $user = Auth::user();
+        
+        $validated = $request->validate([
+            'travel_order_ids' => 'required|array',
+            'travel_order_ids.*' => 'required|integer|exists:travel_orders,id',
+            'status' => 'required|in:approved,rejected,completed,cancelled,force_approved',
+            'remarks' => 'nullable|string|max:500',
+        ]);
+
+        // Check permission
+        if (!$this->isHrdManager($user) && !$this->isSuperAdmin($user)) {
+            return response()->json([
+                'message' => 'You are not authorized to update travel order status.'
+            ], 403);
+        }
+
+        // Check if force_approved is only used by superadmin
+        if ($validated['status'] === 'force_approved' && !$this->isSuperAdmin($user)) {
+            return response()->json([
+                'message' => 'Only superadmin can force approve travel orders.'
+            ], 403);
+        }
+
+        DB::beginTransaction();
+        
+        try {
+            $actualStatus = $validated['status'] === 'force_approved' ? 'approved' : $validated['status'];
+            
+            $updated = TravelOrder::whereIn('id', $validated['travel_order_ids'])
+                ->update([
+                    'status' => $actualStatus,
+                    'remarks' => $validated['remarks'],
+                    'approved_by' => $user->id,
+                    'approved_at' => now(),
+                ]);
+
+            DB::commit();
+
+            return response()->json([
+                'message' => "Successfully updated {$updated} travel order(s).",
+                'updated_count' => $updated
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Failed to update travel orders: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
      * Remove the specified travel order.
      */
     public function destroy(TravelOrder $travelOrder)
@@ -468,6 +537,14 @@ class TravelOrderController extends Controller
         }
         
         try {
+            // Delete associated documents
+            if ($travelOrder->document_paths) {
+                $documentPaths = json_decode($travelOrder->document_paths, true);
+                foreach ($documentPaths as $path) {
+                    Storage::disk('public')->delete($path);
+                }
+            }
+            
             $travelOrder->delete();
             
             return back()->with('message', 'Travel order deleted successfully');
@@ -566,6 +643,7 @@ class TravelOrderController extends Controller
         $sheet->setCellValue('T1', 'Approved By');
         $sheet->setCellValue('U1', 'Approved Date');
         $sheet->setCellValue('V1', 'Remarks');
+        $sheet->setCellValue('W1', 'Has Documents');
         
         // Style header
         $headerStyle = [
@@ -574,7 +652,7 @@ class TravelOrderController extends Controller
             'borders' => ['allBorders' => ['borderStyle' => \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN]],
         ];
         
-        $sheet->getStyle('A1:V1')->applyFromArray($headerStyle);
+        $sheet->getStyle('A1:W1')->applyFromArray($headerStyle);
         
         // Add data
         $row = 2;
@@ -601,12 +679,13 @@ class TravelOrderController extends Controller
             $sheet->setCellValue('T' . $row, $travelOrder->approver ? $travelOrder->approver->name : '');
             $sheet->setCellValue('U' . $row, $travelOrder->approved_at ? Carbon::parse($travelOrder->approved_at)->format('Y-m-d h:i A') : '');
             $sheet->setCellValue('V' . $row, $travelOrder->remarks);
+            $sheet->setCellValue('W' . $row, $travelOrder->document_paths ? 'Yes' : 'No');
             
             $row++;
         }
         
         // Auto-size columns
-        foreach (range('A', 'V') as $column) {
+        foreach (range('A', 'W') as $column) {
             $sheet->getColumnDimension($column)->setAutoSize(true);
         }
         
@@ -620,5 +699,41 @@ class TravelOrderController extends Controller
         return response()->download($tempFile, $filename, [
             'Content-Type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         ])->deleteFileAfterSend(true);
+    }
+
+    /**
+     * Download document attachment
+     */
+    public function downloadDocument($id, $index)
+    {
+        $travelOrder = TravelOrder::findOrFail($id);
+        $user = Auth::user();
+        
+        // Check if user can access this travel order
+        $userRoles = $this->getUserRoles($user);
+        if (!$userRoles['isSuperAdmin'] && !$userRoles['isHrdManager'] && 
+            $travelOrder->created_by !== $user->id && 
+            $travelOrder->employee_id !== ($user->employee ? $user->employee->id : null)) {
+            abort(403, 'Unauthorized access to document');
+        }
+        
+        if (!$travelOrder->document_paths) {
+            abort(404, 'No documents found');
+        }
+        
+        $documentPaths = json_decode($travelOrder->document_paths, true);
+        
+        if (!isset($documentPaths[$index])) {
+            abort(404, 'Document not found');
+        }
+        
+        $path = $documentPaths[$index];
+        $fullPath = storage_path('app/public/' . $path);
+        
+        if (!file_exists($fullPath)) {
+            abort(404, 'Document file not found');
+        }
+        
+        return response()->download($fullPath);
     }
 }

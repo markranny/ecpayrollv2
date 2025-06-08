@@ -28,16 +28,23 @@ const TravelOrderPage = () => {
         if (flash && flash.error) {
             toast.error(flash.error);
         }
+        if (flash && flash.errors && Array.isArray(flash.errors)) {
+            flash.errors.forEach(error => {
+                toast.error(error);
+            });
+        }
     }, [flash]);
     
-    // Handle form submission with proper async handling
+    // Handle form submission with proper async handling for FormData
     const handleSubmitTravelOrder = (formData) => {
         return new Promise((resolve, reject) => {
             setProcessing(true);
             setGlobalLoading(true);
             
+            // Use the post method with FormData directly
             router.post(route('travel-orders.store'), formData, {
                 preserveScroll: true,
+                forceFormData: true, // Force Inertia to treat this as FormData
                 onStart: () => {
                     // Optional: Additional loading state management
                 },
@@ -59,7 +66,11 @@ const TravelOrderPage = () => {
                     
                     if (errors && typeof errors === 'object') {
                         Object.keys(errors).forEach(key => {
-                            toast.error(errors[key]);
+                            if (Array.isArray(errors[key])) {
+                                errors[key].forEach(error => toast.error(error));
+                            } else {
+                                toast.error(errors[key]);
+                            }
                         });
                     } else {
                         toast.error('An error occurred while submitting form');
@@ -111,6 +122,56 @@ const TravelOrderPage = () => {
         });
     };
     
+    // Handle bulk status updates
+    const handleBulkStatusUpdate = (travelOrderIds, status, remarks) => {
+        if (processing) return Promise.reject('Already processing');
+        
+        setProcessing(true);
+        
+        return new Promise((resolve, reject) => {
+            router.post(route('travel-orders.bulkUpdateStatus'), {
+                travel_order_ids: travelOrderIds,
+                status: status,
+                remarks: remarks
+            }, {
+                preserveScroll: true,
+                onSuccess: (page) => {
+                    // Update travel orders list with the new data
+                    if (page.props.travelOrders) {
+                        setTravelOrderData(page.props.travelOrders);
+                    }
+                    resolve(page);
+                },
+                onError: (errors) => {
+                    let errorMessage = 'An error occurred while updating status';
+                    if (errors && typeof errors === 'object') {
+                        errorMessage = Object.values(errors).join(', ');
+                    }
+                    reject(errorMessage);
+                }
+            });
+        })
+        .then(() => {
+            const actionText = status === 'rejected' 
+                ? 'rejected' 
+                : status === 'force_approved' 
+                    ? 'force approved' 
+                    : status === 'completed'
+                        ? 'marked as completed'
+                        : status === 'cancelled'
+                            ? 'cancelled'
+                            : 'approved';
+            
+            toast.success(`Successfully ${actionText} ${Array.isArray(travelOrderIds) ? travelOrderIds.length : 1} travel order${Array.isArray(travelOrderIds) && travelOrderIds.length !== 1 ? 's' : ''}`);
+            setProcessing(false);
+        })
+        .catch(error => {
+            toast.error(error);
+            setProcessing(false);
+            throw error;
+        });
+    };
+    
     // Handle travel order deletion with loading state
     const handleDeleteTravelOrder = (id) => {
         if (confirm('Are you sure you want to delete this travel order?')) {
@@ -145,6 +206,24 @@ const TravelOrderPage = () => {
         if (processing) return; // Prevent tab switching during operations
         setActiveTab(tab);
     };
+    
+    // Make refresh function available globally for the list component
+    useEffect(() => {
+        window.refreshTravelOrders = async () => {
+            try {
+                // You can implement this to fetch fresh data if needed
+                // For now, we'll return the current data
+                return travelOrderData;
+            } catch (error) {
+                console.error('Error refreshing travel orders:', error);
+                return travelOrderData;
+            }
+        };
+        
+        return () => {
+            delete window.refreshTravelOrders;
+        };
+    }, [travelOrderData]);
     
     return (
         <AuthenticatedLayout user={auth.user}>
@@ -234,6 +313,7 @@ const TravelOrderPage = () => {
                                         <TravelOrderList 
                                             travelOrders={travelOrderData} 
                                             onStatusUpdate={handleStatusUpdate}
+                                            onBulkStatusUpdate={handleBulkStatusUpdate}
                                             onDelete={handleDeleteTravelOrder}
                                             userRoles={userRoles}
                                             processing={processing}

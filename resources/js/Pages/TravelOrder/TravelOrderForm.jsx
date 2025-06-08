@@ -1,7 +1,7 @@
 // resources/js/Pages/TravelOrder/TravelOrderForm.jsx
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
-import { Loader2, MapPin, Clock, DollarSign } from 'lucide-react';
+import { Loader2, MapPin, Clock, DollarSign, Upload, X, FileText } from 'lucide-react';
 
 const TravelOrderForm = ({ employees, departments, transportationTypes, onSubmit }) => {
     const today = format(new Date(), 'yyyy-MM-dd');
@@ -23,6 +23,10 @@ const TravelOrderForm = ({ employees, departments, transportationTypes, onSubmit
         return_to_office: false,
         office_return_time: ''
     });
+    
+    // Document state
+    const [documents, setDocuments] = useState([]);
+    const [dragActive, setDragActive] = useState(false);
     
     // Loading and processing states
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -165,6 +169,66 @@ const TravelOrderForm = ({ employees, departments, transportationTypes, onSubmit
         });
     };
     
+    // Document handling functions
+    const handleFileSelect = (e) => {
+        const files = Array.from(e.target.files);
+        addFiles(files);
+    };
+    
+    const addFiles = (files) => {
+        const validFiles = files.filter(file => {
+            // Check file type
+            const validTypes = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'image/jpeg', 'image/jpg', 'image/png'];
+            if (!validTypes.includes(file.type)) {
+                alert(`File ${file.name} is not a valid type. Please upload PDF, DOC, DOCX, JPG, JPEG, or PNG files only.`);
+                return false;
+            }
+            
+            // Check file size (5MB max)
+            if (file.size > 5 * 1024 * 1024) {
+                alert(`File ${file.name} is too large. Maximum size is 5MB.`);
+                return false;
+            }
+            
+            return true;
+        });
+        
+        setDocuments(prev => [...prev, ...validFiles]);
+    };
+    
+    const removeDocument = (index) => {
+        setDocuments(prev => prev.filter((_, i) => i !== index));
+    };
+    
+    const handleDrag = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.type === "dragenter" || e.type === "dragover") {
+            setDragActive(true);
+        } else if (e.type === "dragleave") {
+            setDragActive(false);
+        }
+    };
+    
+    const handleDrop = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragActive(false);
+        
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+            const files = Array.from(e.dataTransfer.files);
+            addFiles(files);
+        }
+    };
+    
+    const formatFileSize = (bytes) => {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    };
+    
     // Calculate estimated travel days
     const calculateTravelInfo = () => {
         if (!formData.start_date || !formData.end_date) return { days: 0, isMultiDay: false };
@@ -219,7 +283,26 @@ const TravelOrderForm = ({ employees, departments, transportationTypes, onSubmit
         setLoadingMessage(`Processing travel order for ${formData.employee_ids.length} employee${formData.employee_ids.length > 1 ? 's' : ''}...`);
         
         try {
-            await onSubmit(formData);
+            // Create FormData for file upload
+            const submitData = new FormData();
+            
+            // Add form fields
+            Object.keys(formData).forEach(key => {
+                if (key === 'employee_ids') {
+                    formData[key].forEach(id => {
+                        submitData.append('employee_ids[]', id);
+                    });
+                } else {
+                    submitData.append(key, formData[key]);
+                }
+            });
+            
+            // Add documents
+            documents.forEach((file, index) => {
+                submitData.append(`documents[${index}]`, file);
+            });
+            
+            await onSubmit(submitData);
             
             // Reset form after successful submission 
             setFormData({
@@ -238,6 +321,9 @@ const TravelOrderForm = ({ employees, departments, transportationTypes, onSubmit
                 return_to_office: false,
                 office_return_time: ''
             });
+            
+            // Reset documents
+            setDocuments([]);
             
             // Reset filters
             setSearchTerm('');
@@ -677,6 +763,80 @@ const TravelOrderForm = ({ employees, departments, transportationTypes, onSubmit
                                 ></textarea>
                             </div>
                         </div>
+                    </div>
+                    
+                    {/* Document Upload Section */}
+                    <div className="md:col-span-2 bg-gray-50 p-4 rounded-lg">
+                        <h4 className="font-medium mb-3 flex items-center">
+                            <Upload className="h-4 w-4 mr-2 text-indigo-600" />
+                            Supporting Documents
+                        </h4>
+                        <p className="text-sm text-gray-500 mb-4">
+                            Upload supporting documents (PDF, DOC, DOCX, JPG, PNG - Max 5MB each)
+                        </p>
+                        
+                        {/* File Upload Area */}
+                        <div
+                            className={`border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
+                                dragActive 
+                                    ? 'border-indigo-400 bg-indigo-50' 
+                                    : 'border-gray-300 hover:border-gray-400'
+                            } ${isSubmitting ? 'opacity-50 pointer-events-none' : ''}`}
+                            onDragEnter={handleDrag}
+                            onDragLeave={handleDrag}
+                            onDragOver={handleDrag}
+                            onDrop={handleDrop}
+                        >
+                            <Upload className="mx-auto h-12 w-12 text-gray-400" />
+                            <div className="mt-4">
+                                <label htmlFor="file-upload" className="cursor-pointer">
+                                    <span className="mt-2 block text-sm font-medium text-gray-900">
+                                        Drop files here or click to browse
+                                    </span>
+                                    <input
+                                        id="file-upload"
+                                        name="file-upload"
+                                        type="file"
+                                        className="sr-only"
+                                        multiple
+                                        accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                                        onChange={handleFileSelect}
+                                        disabled={isSubmitting}
+                                    />
+                                </label>
+                                <p className="mt-1 text-xs text-gray-500">
+                                    PDF, DOC, DOCX, JPG, PNG up to 5MB each
+                                </p>
+                            </div>
+                        </div>
+                        
+                        {/* Document List */}
+                        {documents.length > 0 && (
+                            <div className="mt-4">
+                                <h5 className="text-sm font-medium text-gray-700 mb-2">Selected Documents:</h5>
+                                <div className="space-y-2">
+                                    {documents.map((file, index) => (
+                                        <div key={index} className="flex items-center justify-between bg-white p-3 rounded border">
+                                            <div className="flex items-center">
+                                                <FileText className="h-5 w-5 text-gray-400 mr-2" />
+                                                <div>
+                                                    <p className="text-sm font-medium text-gray-900">{file.name}</p>
+                                                    <p className="text-xs text-gray-500">{formatFileSize(file.size)}</p>
+                                                </div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => removeDocument(index)}
+                                                className="text-red-500 hover:text-red-700 disabled:opacity-50"
+                                                disabled={isSubmitting}
+                                            >
+                                                <X className="h-4 w-4" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 </div>
                 

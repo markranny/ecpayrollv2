@@ -15,7 +15,9 @@ import {
     XCircle, 
     Loader2,
     AlertTriangle,
-    Info
+    Info,
+    Download,
+    Paperclip
 } from 'lucide-react';
 import TravelOrderStatusBadge from './StatusBadge';
 
@@ -176,6 +178,68 @@ const TravelOrderDetailModal = ({
         }).format(amount);
     };
     
+    // Format file size
+    const formatFileSize = (bytes) => {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    };
+    
+    // Get file extension from filename
+    const getFileExtension = (filename) => {
+        return filename.split('.').pop().toLowerCase();
+    };
+    
+    // Get file icon based on extension
+    const getFileIcon = (filename) => {
+        const ext = getFileExtension(filename);
+        const iconClass = "h-5 w-5";
+        
+        switch (ext) {
+            case 'pdf':
+                return <FileText className={`${iconClass} text-red-500`} />;
+            case 'doc':
+            case 'docx':
+                return <FileText className={`${iconClass} text-blue-500`} />;
+            case 'jpg':
+            case 'jpeg':
+            case 'png':
+                return <FileText className={`${iconClass} text-green-500`} />;
+            default:
+                return <FileText className={`${iconClass} text-gray-500`} />;
+        }
+    };
+    
+    // Parse document paths
+    const getDocuments = () => {
+        if (!travelOrder.document_paths) return [];
+        
+        try {
+            // If it's already an array, return it
+            if (Array.isArray(travelOrder.document_paths)) {
+                return travelOrder.document_paths;
+            }
+            
+            // If it's a JSON string, parse it
+            if (typeof travelOrder.document_paths === 'string') {
+                return JSON.parse(travelOrder.document_paths);
+            }
+            
+            return [];
+        } catch (error) {
+            console.error('Error parsing document paths:', error);
+            return [];
+        }
+    };
+    
+    // Handle document download
+    const handleDocumentDownload = (index) => {
+        const downloadUrl = `/travel-orders/${travelOrder.id}/documents/${index}/download`;
+        window.open(downloadUrl, '_blank');
+    };
+    
     // Get action button properties
     const getActionButtonProps = (status) => {
         switch (status) {
@@ -230,6 +294,8 @@ const TravelOrderDetailModal = ({
                 return 'Are you sure you want to proceed with this action?';
         }
     };
+
+    const documents = getDocuments();
 
     return (
         <>
@@ -507,6 +573,48 @@ const TravelOrderDetailModal = ({
                                 </div>
                             </div>
                             
+                            {/* Supporting Documents Section */}
+                            {documents.length > 0 && (
+                                <div className="mt-6">
+                                    <h4 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
+                                        <Paperclip className="h-5 w-5 mr-2 text-gray-600" />
+                                        Supporting Documents ({documents.length})
+                                    </h4>
+                                    <div className="bg-gray-50 border rounded-lg p-4">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                            {documents.map((document, index) => {
+                                                const filename = typeof document === 'string' ? 
+                                                    document.split('/').pop() : 
+                                                    `Document ${index + 1}`;
+                                                
+                                                return (
+                                                    <div key={index} className="flex items-center justify-between bg-white p-3 rounded border hover:shadow-sm transition-shadow">
+                                                        <div className="flex items-center flex-1 min-w-0">
+                                                            {getFileIcon(filename)}
+                                                            <div className="ml-3 flex-1 min-w-0">
+                                                                <p className="text-sm font-medium text-gray-900 truncate" title={filename}>
+                                                                    {filename}
+                                                                </p>
+                                                                <p className="text-xs text-gray-500">
+                                                                    {getFileExtension(filename).toUpperCase()} Document
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                        <button
+                                                            onClick={() => handleDocumentDownload(index)}
+                                                            className="ml-3 flex-shrink-0 text-indigo-600 hover:text-indigo-800 focus:outline-none"
+                                                            title="Download document"
+                                                        >
+                                                            <Download className="h-4 w-4" />
+                                                        </button>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                            
                             {/* Approval Information */}
                             {(travelOrder.approved_at || travelOrder.remarks) && (
                                 <div className="mt-6">
@@ -582,7 +690,16 @@ const TravelOrderDetailModal = ({
                                                 disabled={localProcessing || processing}
                                             >
                                                 <CheckCircle className="h-4 w-4 mr-2" />
-                                                {localProcessing ? 'Processing...' : 'Cancel'}
+                                                {localProcessing ? 'Processing...' : 'Approve'}
+                                            </button>
+                                            
+                                            <button
+                                                className="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                                                onClick={() => handleStatusChange('rejected')}
+                                                disabled={localProcessing || processing}
+                                            >
+                                                <XCircle className="h-4 w-4 mr-2" />
+                                                {localProcessing ? 'Processing...' : 'Reject'}
                                             </button>
                                             
                                             {/* Force Approve option for superadmins only */}
