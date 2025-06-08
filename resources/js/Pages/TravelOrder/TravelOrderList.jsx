@@ -3,6 +3,8 @@ import { format } from 'date-fns';
 import { Download, Search, X, Filter, Loader2, MapPin, Calendar, Clock } from 'lucide-react';
 import TravelOrderStatusBadge from './StatusBadge';
 import TravelOrderDetailModal from './TravelOrderDetailModal';
+import TravelOrderBulkActionModal from './MultiBulkActionModal';
+import TravelOrderForceApproveButton from './TravelOrderForceApproveButton';
 import { router } from '@inertiajs/react';
 import { toast } from 'react-toastify';
 
@@ -30,6 +32,11 @@ const TravelOrderList = ({
     // Search functionality
     const [searchTerm, setSearchTerm] = useState('');
     const [dateRange, setDateRange] = useState({ from: '', to: '' });
+    
+    // For multiple selection
+    const [selectedIds, setSelectedIds] = useState([]);
+    const [showBulkActionModal, setShowBulkActionModal] = useState(false);
+    const [selectAll, setSelectAll] = useState(false);
     
     // Update local state when props change
     useEffect(() => {
@@ -292,6 +299,91 @@ const TravelOrderList = ({
         }
     };
 
+    // Multiple selection handlers
+    const toggleSelectAll = () => {
+        if (processing || localProcessing) return;
+        
+        setSelectAll(!selectAll);
+        if (!selectAll) {
+            // Only select appropriate travel orders based on user role
+            let selectableIds = [];
+            
+            if (userRoles.isHrdManager || userRoles.isSuperAdmin) {
+                // HRD managers and superadmins can select pending travel orders
+                selectableIds = filteredTravelOrders
+                    .filter(to => to.status === 'pending')
+                    .map(to => to.id);
+            }
+            
+            setSelectedIds(selectableIds);
+        } else {
+            setSelectedIds([]);
+        }
+    };
+
+    const toggleSelectItem = (id) => {
+        if (processing || localProcessing) return;
+        
+        setSelectedIds(prevIds => {
+            if (prevIds.includes(id)) {
+                return prevIds.filter(itemId => itemId !== id);
+            } else {
+                return [...prevIds, id];
+            }
+        });
+    };
+
+    const handleOpenBulkActionModal = () => {
+        if (selectedIds.length === 0) {
+            alert('Please select at least one travel order');
+            return;
+        }
+        if (processing || localProcessing) return;
+        setShowBulkActionModal(true);
+    };
+
+    const handleCloseBulkActionModal = () => {
+        setShowBulkActionModal(false);
+    };
+
+    const handleBulkStatusUpdate = (status, remarks) => {
+        setLocalProcessing(true);
+        
+        // Create data for bulk update
+        const data = {
+            travel_order_ids: selectedIds,
+            status: status,
+            remarks: remarks
+        };
+        
+        // Make direct API call using router.post
+        router.post(route('travel-orders.bulkUpdateStatus'), data, {
+            preserveScroll: true,
+            onSuccess: (response) => {
+                // Clear selections after successful update
+                setSelectedIds([]);
+                setSelectAll(false);
+                
+                // Refresh the data
+                router.reload({
+                    only: ['travelOrders'],
+                    preserveScroll: true,
+                    onFinish: () => {
+                        setLocalProcessing(false);
+                    }
+                });
+            },
+            onError: (errors) => {
+                console.error('Error during bulk update:', errors);
+                toast.error('Failed to update travel orders: ' + 
+                    (errors?.message || 'Unknown error'));
+                setLocalProcessing(false);
+            }
+        });
+        
+        handleCloseBulkActionModal();
+    };
+
     // Export to Excel functionality
     const exportToExcel = () => {
         if (processing || localProcessing || exporting) return;
@@ -328,6 +420,33 @@ const TravelOrderList = ({
         setTimeout(() => {
             setExporting(false);
         }, 2000);
+    };
+
+    const canSelectTravelOrder = (travelOrder) => {
+        if (userRoles.isSuperAdmin) {
+            // Superadmin can select any pending travel order
+            return travelOrder.status === 'pending';
+        } else if (userRoles.isHrdManager) {
+            // HRD managers can select pending travel orders
+            return travelOrder.status === 'pending';
+        }
+        return false;
+    };
+
+    // Get selectable items count
+    const selectableItemsCount = filteredTravelOrders.filter(to => canSelectTravelOrder(to)).length;
+
+    // Helper function for bulk action button content
+    const bulkActionButtonContent = () => {
+        if (localProcessing || processing) {
+            return (
+                <>
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    Processing...
+                </>
+            );
+        }
+        return `Bulk Action (${selectedIds.length})`;
     };
 
     return (
@@ -371,6 +490,25 @@ const TravelOrderList = ({
                                 </>
                             )}
                         </button>
+
+                        {/* Force Approve Button - Only visible for SuperAdmin */}
+                        {userRoles.isSuperAdmin && (
+                            <TravelOrderForceApproveButton 
+                                selectedIds={selectedIds} 
+                                disabled={processing || localProcessing}
+                            />
+                        )}
+                        
+                        {/* Bulk Action Button */}
+                        {selectedIds.length > 0 && (
+                            <button
+                                onClick={handleOpenBulkActionModal}
+                                className="px-3 py-1 bg-indigo-600 text-white rounded-md text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 flex items-center disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+                                disabled={processing || localProcessing}
+                            >
+                                {bulkActionButtonContent()}
+                            </button>
+                        )}
                         
                         {/* Status Filter */}
                         <div className="flex items-center">
@@ -457,6 +595,17 @@ const TravelOrderList = ({
                 <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50 sticky top-0 z-10">
                         <tr>
+                            {selectableItemsCount > 0 && (
+                                <th scope="col" className="px-4 py-3 w-10">
+                                    <input
+                                        type="checkbox"
+                                        className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                        checked={selectAll && selectedIds.length === selectableItemsCount}
+                                        onChange={toggleSelectAll}
+                                        disabled={processing || localProcessing}
+                                    />
+                                </th>
+                            )}
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Employee
                             </th>
@@ -486,7 +635,7 @@ const TravelOrderList = ({
                     <tbody className="bg-white divide-y divide-gray-200">
                         {filteredTravelOrders.length === 0 ? (
                             <tr>
-                                <td colSpan="8" className="px-6 py-4 text-center text-sm text-gray-500">
+                                <td colSpan={selectableItemsCount > 0 ? "9" : "8"} className="px-6 py-4 text-center text-sm text-gray-500">
                                     {processing || localProcessing ? 'Loading travel orders...' : 'No travel orders found'}
                                 </td>
                             </tr>
@@ -495,6 +644,19 @@ const TravelOrderList = ({
                                 <tr key={travelOrder.id} className={`hover:bg-gray-50 transition-colors duration-200 ${
                                     (deletingId === travelOrder.id || updatingId === travelOrder.id) ? 'opacity-50' : ''
                                 }`}>
+                                    {selectableItemsCount > 0 && (
+                                        <td className="px-4 py-4">
+                                            {canSelectTravelOrder(travelOrder) && (
+                                                <input
+                                                    type="checkbox"
+                                                    className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                                    checked={selectedIds.includes(travelOrder.id)}
+                                                    onChange={() => toggleSelectItem(travelOrder.id)}
+                                                    disabled={processing || localProcessing || deletingId === travelOrder.id || updatingId === travelOrder.id}
+                                                />
+                                            )}
+                                        </td>
+                                    )}
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <div className="text-sm font-medium text-gray-900">
                                             {travelOrder.employee ? 
@@ -556,6 +718,11 @@ const TravelOrderList = ({
                                                     Return to Office
                                                 </span>
                                             )}
+                                            {travelOrder.force_approved && (
+                                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                                                    Force Approved
+                                                </span>
+                                            )}
                                         </div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
@@ -608,6 +775,11 @@ const TravelOrderList = ({
                 <div className="flex justify-between items-center">
                     <div>
                         Showing {filteredTravelOrders.length} of {localTravelOrders.length} travel orders
+                        {selectedIds.length > 0 && (
+                            <span className="ml-4 text-indigo-600 font-medium">
+                                {selectedIds.length} selected
+                            </span>
+                        )}
                     </div>
                     
                     {/* Processing indicator */}
@@ -631,6 +803,16 @@ const TravelOrderList = ({
                     userRoles={userRoles}
                     viewOnly={processing || localProcessing}
                     processing={updatingId === selectedTravelOrder.id}
+                />
+            )}
+
+            {/* Bulk Action Modal */}
+            {showBulkActionModal && (
+                <TravelOrderBulkActionModal
+                    selectedCount={selectedIds} 
+                    onClose={handleCloseBulkActionModal}
+                    onSubmit={handleBulkStatusUpdate}
+                    userRoles={userRoles}
                 />
             )}
         </div>

@@ -35,6 +35,11 @@ class TravelOrder extends Model
         'remarks',
         'created_by',
         'document_paths',
+        // Force approval fields
+        'force_approved',
+        'force_approved_by',
+        'force_approved_at',
+        'force_approve_remarks',
     ];
 
     protected $casts = [
@@ -51,7 +56,9 @@ class TravelOrder extends Model
         'meal_allowance' => 'boolean',
         'estimated_cost' => 'decimal:2',
         'approved_at' => 'datetime',
-        'document_paths' => 'array', // Automatically cast JSON to array
+        'document_paths' => 'array',
+        'force_approved' => 'boolean',
+        'force_approved_at' => 'datetime',
     ];
 
     public function employee()
@@ -67,6 +74,11 @@ class TravelOrder extends Model
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function forceApprover()
+    {
+        return $this->belongsTo(User::class, 'force_approved_by');
     }
 
     /**
@@ -114,5 +126,41 @@ class TravelOrder extends Model
         }
         
         return $details;
+    }
+
+    /**
+     * Check if this travel order was force approved
+     */
+    public function isForceApproved()
+    {
+        return $this->force_approved === true;
+    }
+
+    /**
+     * Helper methods for status checks
+     */
+    public function isPending()
+    {
+        return $this->status === 'pending';
+    }
+
+    public function isApproved()
+    {
+        return $this->status === 'approved';
+    }
+
+    public function isRejected()
+    {
+        return $this->status === 'rejected';
+    }
+
+    public function isCompleted()
+    {
+        return $this->status === 'completed';
+    }
+
+    public function isCancelled()
+    {
+        return $this->status === 'cancelled';
     }
 }
