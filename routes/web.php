@@ -376,6 +376,12 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->name('travel-orders.bulkUpdateStatus');
     Route::get('/travel-orders/{id}/documents/{index}/download', [TravelOrderController::class, 'downloadDocument'])
         ->name('travel-orders.download-document');
+    
+    // Force approve route (superadmin only)
+    Route::middleware('role:superadmin')->group(function () {
+        Route::post('/travel-orders/force-approve', [TravelOrderController::class, 'forceApprove'])
+            ->name('travel-orders.force-approve');
+    });
 
         // Retro Routes
         Route::get('/retro', [RetroController::class, 'index'])
