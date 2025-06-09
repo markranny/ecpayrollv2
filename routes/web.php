@@ -360,20 +360,18 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('official-business.export');
 
         // Travel Order Routes
-        Route::get('/travel-orders', [TravelOrderController::class, 'index'])
+Route::get('/travel-orders', [TravelOrderController::class, 'index'])
     ->name('travel-orders.index');
-Route::post('/travel-orders', [TravelOrderController::class, 'store'])
-    ->name('travel-orders.store');
-Route::post('/travel-orders/{travelOrder}/status', [TravelOrderController::class, 'updateStatus'])
-    ->name('travel-orders.updateStatus');
-Route::delete('/travel-orders/{travelOrder}', [TravelOrderController::class, 'destroy'])
-    ->name('travel-orders.destroy');
 Route::get('/travel-orders/export', [TravelOrderController::class, 'export'])
     ->name('travel-orders.export');
-
-// New routes for bulk operations and document downloads
+Route::post('/travel-orders', [TravelOrderController::class, 'store'])
+    ->name('travel-orders.store');
 Route::post('/travel-orders/bulk-update', [TravelOrderController::class, 'bulkUpdateStatus'])
     ->name('travel-orders.bulkUpdateStatus');
+Route::delete('/travel-orders/{travelOrder}', [TravelOrderController::class, 'destroy'])
+    ->name('travel-orders.destroy');
+Route::post('/travel-orders/{travelOrder}/status', [TravelOrderController::class, 'updateStatus'])
+    ->name('travel-orders.updateStatus');
 Route::get('/travel-orders/{id}/documents/{index}/download', [TravelOrderController::class, 'downloadDocument'])
     ->name('travel-orders.download-document');
 
