@@ -234,11 +234,18 @@ const TravelOrderDetailModal = ({
         }
     };
     
-    // Handle document download
-    const handleDocumentDownload = (index) => {
-        const downloadUrl = `/travel-orders/${travelOrder.id}/documents/${index}/download`;
-        window.open(downloadUrl, '_blank');
-    };
+    
+// Handle document download
+const handleDocumentDownload = (index) => {
+    // Use the route helper to generate the correct URL
+    const downloadUrl = route('travel-orders.download-document', {
+        id: travelOrder.id,
+        index: index
+    });
+    
+    // Open in new window to trigger download
+    window.open(downloadUrl, '_blank');
+};
     
     // Get action button properties
     const getActionButtonProps = (status) => {

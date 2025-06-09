@@ -403,21 +403,40 @@ class TravelOrderController extends Controller
     }
 
     private function convertToBoolean($value)
-    {
-        if (is_bool($value)) {
-            return $value;
-        }
-        
-        if (is_string($value)) {
-            return in_array(strtolower($value), ['true', '1', 'yes', 'on']);
-        }
-        
-        if (is_numeric($value)) {
-            return (bool) $value;
-        }
-        
-        return (bool) $value;
+{
+    // If already boolean, return as is
+    if (is_bool($value)) {
+        return $value;
     }
+    
+    // Handle null/empty values
+    if (is_null($value) || $value === '') {
+        return false;
+    }
+    
+    // Handle string values
+    if (is_string($value)) {
+        $value = strtolower(trim($value));
+        
+        // True values
+        if (in_array($value, ['true', '1', 'yes', 'on', 'checked'], true)) {
+            return true;
+        }
+        
+        // False values
+        if (in_array($value, ['false', '0', 'no', 'off', 'unchecked', ''], true)) {
+            return false;
+        }
+    }
+    
+    // Handle numeric values
+    if (is_numeric($value)) {
+        return (bool) intval($value);
+    }
+    
+    // Default fallback - convert to boolean
+    return (bool) $value;
+}
 
     private function convertTimeToDateTime($timeString, $date)
     {
@@ -723,130 +742,193 @@ class TravelOrderController extends Controller
     /**
      * Force approve travel orders (Superadmin only)
      */
-    public function forceApprove(Request $request)
-    {
-        $user = Auth::user();
-        
-        // Check if user is superadmin
-        if (!$this->isSuperAdmin($user)) {
-            return redirect()->back()->with('error', 'Only superadmin can force approve travel orders.');
-        }
-        
-        $validated = $request->validate([
-            'travel_order_ids' => 'required|array',
-            'travel_order_ids.*' => 'required|integer|exists:travel_orders,id',
-            'remarks' => 'required|string|max:500',
-        ]);
-
-        // Log the force approval action
-        \Log::info('Force approval of travel orders initiated', [
-            'admin_id' => $user->id,
-            'admin_name' => $user->name,
-            'count' => count($validated['travel_order_ids'])
-        ]);
-
-        $successCount = 0;
-        $failCount = 0;
-        $errors = [];
-
-        DB::beginTransaction();
-        
-        try {
-            foreach ($validated['travel_order_ids'] as $travelOrderId) {
-                try {
-                    $travelOrder = TravelOrder::findOrFail($travelOrderId);
-                    
-                    // Skip already approved travel orders
-                    if ($travelOrder->status === 'approved') {
-                        $errors[] = "Travel order #{$travelOrderId} is already approved";
-                        $failCount++;
-                        continue;
-                    }
-                    
-                    // Force approve - set all necessary approval information
-                    $travelOrder->update([
-                        'status' => 'approved',
-                        'approved_by' => $user->id,
-                        'approved_at' => now(),
-                        'force_approved' => true,
-                        'force_approved_by' => $user->id,
-                        'force_approved_at' => now(),
-                        'force_approve_remarks' => $validated['remarks'],
-                        'remarks' => $validated['remarks'],
-                    ]);
-                    
-                    $successCount++;
-                    
-                    // Log individual approvals
-                    \Log::info("Force approved travel order #{$travelOrderId}", [
-                        'admin_id' => $user->id,
-                        'travel_order_id' => $travelOrderId,
-                        'previous_status' => $travelOrder->getOriginal('status')
-                    ]);
-                } catch (\Exception $e) {
-                    \Log::error("Error force approving travel order #{$travelOrderId}: " . $e->getMessage());
-                    $failCount++;
-                    $errors[] = "Error force approving travel order #{$travelOrderId}: " . $e->getMessage();
-                }
-            }
-            
-            DB::commit();
-            
-            // Create appropriate flash message
-            $message = "{$successCount} travel orders force approved successfully.";
-            if ($failCount > 0) {
-                $message .= " {$failCount} force approvals failed.";
-            }
-            
-            return redirect()->back()->with([
-                'message' => $message,
-                'errors' => $errors
-            ]);
-            
-        } catch (\Exception $e) {
-            DB::rollBack();
-            
-            \Log::error('Error during force approval', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
-            return redirect()->back()->with('error', 'Error force approving travel orders: ' . $e->getMessage());
-        }
+    /**
+ * Force approve travel orders (Superadmin only)
+ */
+public function forceApprove(Request $request)
+{
+    $user = Auth::user();
+    
+    // Check if user is superadmin
+    if (!$this->isSuperAdmin($user)) {
+        return redirect()->back()->with('error', 'Only superadmin can force approve travel orders.');
     }
+    
+    $validated = $request->validate([
+        'travel_order_ids' => 'required|array',
+        'travel_order_ids.*' => 'required|integer|exists:travel_orders,id',
+        'remarks' => 'required|string|max:500',
+    ]);
+
+    // Log the force approval action
+    \Log::info('Force approval of travel orders initiated', [
+        'admin_id' => $user->id,
+        'admin_name' => $user->name,
+        'count' => count($validated['travel_order_ids'])
+    ]);
+
+    $successCount = 0;
+    $failCount = 0;
+    $errors = [];
+
+    DB::beginTransaction();
+    
+    try {
+        foreach ($validated['travel_order_ids'] as $travelOrderId) {
+            try {
+                $travelOrder = TravelOrder::findOrFail($travelOrderId);
+                
+                // Skip already approved travel orders
+                if ($travelOrder->status === 'approved') {
+                    $errors[] = "Travel order #{$travelOrderId} is already approved";
+                    $failCount++;
+                    continue;
+                }
+                
+                // Force approve - set all necessary approval information
+                $travelOrder->update([
+                    'status' => 'approved',
+                    'approved_by' => $user->id,
+                    'approved_at' => now(),
+                    'force_approved' => true,
+                    'force_approved_by' => $user->id,
+                    'force_approved_at' => now(),
+                    'force_approve_remarks' => $validated['remarks'],
+                    'remarks' => $validated['remarks'],
+                ]);
+                
+                $successCount++;
+                
+                // Log individual approvals
+                \Log::info("Force approved travel order #{$travelOrderId}", [
+                    'admin_id' => $user->id,
+                    'travel_order_id' => $travelOrderId,
+                    'previous_status' => $travelOrder->getOriginal('status')
+                ]);
+            } catch (\Exception $e) {
+                \Log::error("Error force approving travel order #{$travelOrderId}: " . $e->getMessage());
+                $failCount++;
+                $errors[] = "Error force approving travel order #{$travelOrderId}: " . $e->getMessage();
+            }
+        }
+        
+        DB::commit();
+        
+        // Create appropriate flash message
+        $message = "{$successCount} travel orders force approved successfully.";
+        if ($failCount > 0) {
+            $message .= " {$failCount} force approvals failed.";
+        }
+        
+        // Return JSON response for AJAX requests
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => $message,
+                'errors' => $errors,
+                'success' => true
+            ]);
+        }
+        
+        return redirect()->back()->with([
+            'message' => $message,
+            'errors' => $errors
+        ]);
+        
+    } catch (\Exception $e) {
+        DB::rollBack();
+        
+        \Log::error('Error during force approval', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => 'Error force approving travel orders: ' . $e->getMessage(),
+                'success' => false
+            ], 500);
+        }
+
+        return redirect()->back()->with('error', 'Error force approving travel orders: ' . $e->getMessage());
+    }
+}
 
     /**
-     * Remove the specified travel order.
-     */
-    public function destroy(TravelOrder $travelOrder)
-    {
-        $user = Auth::user();
-        
-        // Check authorization
-        if (!$this->isSuperAdmin($user) && 
-            $travelOrder->created_by !== $user->id && 
-            $travelOrder->status !== 'pending') {
-            
-            return back()->with('error', 'You are not authorized to delete this travel order');
+ * Remove the specified travel order.
+ */
+public function destroy(TravelOrder $travelOrder)
+{
+    $user = Auth::user();
+    
+    // Check authorization
+    $canDelete = false;
+    $userRoles = $this->getUserRoles($user);
+    
+    // Allow deletion if:
+    // 1. User is superadmin
+    // 2. User created the travel order and it's still pending
+    // 3. User is department manager and manages the employee's department (and order is pending)
+    if ($userRoles['isSuperAdmin']) {
+        $canDelete = true;
+    } elseif ($travelOrder->created_by === $user->id && $travelOrder->status === 'pending') {
+        $canDelete = true;
+    } elseif ($userRoles['isDepartmentManager'] && $travelOrder->status === 'pending') {
+        $employeeDepartment = $travelOrder->employee ? $travelOrder->employee->Department : null;
+        if ($employeeDepartment && in_array($employeeDepartment, $userRoles['managedDepartments'])) {
+            $canDelete = true;
         }
-        
-        try {
-            // Delete associated documents
-            if ($travelOrder->document_paths) {
-                $documentPaths = json_decode($travelOrder->document_paths, true);
+    }
+    
+    if (!$canDelete) {
+        if (request()->expectsJson()) {
+            return response()->json([
+                'message' => 'You are not authorized to delete this travel order'
+            ], 403);
+        }
+        return back()->with('error', 'You are not authorized to delete this travel order');
+    }
+    
+    try {
+        // Delete associated documents
+        if ($travelOrder->document_paths) {
+            $documentPaths = json_decode($travelOrder->document_paths, true);
+            if (is_array($documentPaths)) {
                 foreach ($documentPaths as $path) {
                     Storage::disk('public')->delete($path);
                 }
             }
-            
-            $travelOrder->delete();
-            
-            return back()->with('message', 'Travel order deleted successfully');
-            
-        } catch (\Exception $e) {
-            return back()->with('error', 'Failed to delete travel order: ' . $e->getMessage());
         }
+        
+        $travelOrder->delete();
+        
+        \Log::info('Travel order deleted successfully', [
+            'travel_order_id' => $travelOrder->id,
+            'deleted_by' => $user->id
+        ]);
+        
+        if (request()->expectsJson()) {
+            return response()->json([
+                'message' => 'Travel order deleted successfully'
+            ]);
+        }
+        
+        return back()->with('message', 'Travel order deleted successfully');
+        
+    } catch (\Exception $e) {
+        \Log::error('Failed to delete travel order', [
+            'travel_order_id' => $travelOrder->id,
+            'error' => $e->getMessage()
+        ]);
+        
+        if (request()->expectsJson()) {
+            return response()->json([
+                'message' => 'Failed to delete travel order: ' . $e->getMessage()
+            ], 500);
+        }
+        
+        return back()->with('error', 'Failed to delete travel order: ' . $e->getMessage());
     }
+}
 
     public function export(Request $request)
     {
@@ -1004,36 +1086,85 @@ class TravelOrderController extends Controller
     /**
      * Download document attachment
      */
-    public function downloadDocument($id, $index)
-    {
-        $travelOrder = TravelOrder::findOrFail($id);
-        $user = Auth::user();
-        
-        // Check if user can access this travel order
-        $userRoles = $this->getUserRoles($user);
-        if (!$userRoles['isSuperAdmin'] && !$userRoles['isHrdManager'] && 
-            $travelOrder->created_by !== $user->id && 
-            $travelOrder->employee_id !== ($user->employee ? $user->employee->id : null)) {
-            abort(403, 'Unauthorized access to document');
+    /**
+ * Download document attachment
+ */
+public function downloadDocument($id, $index)
+{
+    $travelOrder = TravelOrder::findOrFail($id);
+    $user = Auth::user();
+    
+    // Check if user can access this travel order
+    $userRoles = $this->getUserRoles($user);
+    $canAccess = false;
+    
+    // Allow access if:
+    // 1. User is superadmin or HRD manager
+    // 2. User created the travel order
+    // 3. User is the employee on the travel order
+    // 4. User is a department manager who manages the employee's department
+    if ($userRoles['isSuperAdmin'] || $userRoles['isHrdManager']) {
+        $canAccess = true;
+    } elseif ($travelOrder->created_by === $user->id) {
+        $canAccess = true;
+    } elseif ($travelOrder->employee_id === ($user->employee ? $user->employee->id : null)) {
+        $canAccess = true;
+    } elseif ($userRoles['isDepartmentManager']) {
+        $employeeDepartment = $travelOrder->employee ? $travelOrder->employee->Department : null;
+        if ($employeeDepartment && in_array($employeeDepartment, $userRoles['managedDepartments'])) {
+            $canAccess = true;
         }
-        
-        if (!$travelOrder->document_paths) {
-            abort(404, 'No documents found');
-        }
-        
-        $documentPaths = json_decode($travelOrder->document_paths, true);
-        
-        if (!isset($documentPaths[$index])) {
-            abort(404, 'Document not found');
-        }
-        
-        $path = $documentPaths[$index];
-        $fullPath = storage_path('app/public/' . $path);
-        
-        if (!file_exists($fullPath)) {
-            abort(404, 'Document file not found');
-        }
-        
-        return response()->download($fullPath);
     }
+    
+    if (!$canAccess) {
+        abort(403, 'Unauthorized access to document');
+    }
+    
+    if (!$travelOrder->document_paths) {
+        abort(404, 'No documents found');
+    }
+    
+    // Parse the JSON document paths
+    $documentPaths = json_decode($travelOrder->document_paths, true);
+    
+    // Check if parsing was successful
+    if (!is_array($documentPaths)) {
+        \Log::error('Failed to parse document paths', [
+            'travel_order_id' => $id,
+            'document_paths' => $travelOrder->document_paths
+        ]);
+        abort(404, 'Invalid document data');
+    }
+    
+    // Check if the requested index exists
+    if (!isset($documentPaths[$index])) {
+        abort(404, 'Document not found at index ' . $index);
+    }
+    
+    $path = $documentPaths[$index];
+    $fullPath = storage_path('app/public/' . $path);
+    
+    if (!file_exists($fullPath)) {
+        \Log::error('Document file not found', [
+            'travel_order_id' => $id,
+            'path' => $path,
+            'full_path' => $fullPath
+        ]);
+        abort(404, 'Document file not found on server');
+    }
+    
+    // Get the original filename from the path
+    $filename = basename($path);
+    
+    // If the filename contains timestamp prefix, try to extract original name
+    if (preg_match('/^\d+_[a-f0-9]+_(.+)$/', $filename, $matches)) {
+        $filename = $matches[1];
+    }
+    
+    // Return the file download response
+    return response()->download($fullPath, $filename, [
+        'Content-Type' => mime_content_type($fullPath),
+        'Content-Disposition' => 'attachment; filename="' . $filename . '"'
+    ]);
+}
 }

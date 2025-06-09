@@ -28,39 +28,59 @@ const TravelOrderForceApproveButton = ({ selectedIds, disabled }) => {
     };
 
     // Handle force approve
-    const handleForceApprove = () => {
-        if (processing) return;
-        
-        setProcessing(true);
-        
-        router.post(route('travel-orders.force-approve'), {
-            travel_order_ids: selectedIds,
-            remarks: remarks
-        }, {
-            preserveScroll: true,
-            onSuccess: () => {
-                // Show success image before closing modal
-                setShowSuccessImage(true);
-                
-                // Close the modal and reload after a delay
-                setTimeout(() => {
-                    closeModal();
-                    window.location.href = route('travel-orders.index');
-                }, 2000); // 2 second delay to show success image
-            },
-            onError: (errors) => {
-                console.error('Error force approving:', errors);
-                alert('Failed to force approve. Please try again.');
-                setProcessing(false);
-            },
-            onFinish: () => {
-                // Only reset processing if we're not showing success
-                if (!showSuccessImage) {
-                    setProcessing(false);
-                }
+const handleForceApprove = () => {
+    if (processing) return;
+    
+    setProcessing(true);
+    
+    router.post(route('travel-orders.force-approve'), {
+        travel_order_ids: selectedIds,
+        remarks: remarks
+    }, {
+        preserveScroll: true,
+        onSuccess: (page) => {
+            // Show success image before closing modal
+            setShowSuccessImage(true);
+            
+            // Check for flash messages
+            const flash = page.props.flash;
+            if (flash && flash.message) {
+                console.log('Force approval successful:', flash.message);
             }
-        });
-    };
+            
+            // Close the modal and reload after a delay
+            setTimeout(() => {
+                closeModal();
+                // Use router.visit instead of window.location.href for better navigation
+                router.visit(route('travel-orders.index'), {
+                    preserveScroll: true,
+                    preserveState: false
+                });
+            }, 2000); // 2 second delay to show success image
+        },
+        onError: (errors) => {
+            console.error('Error force approving:', errors);
+            
+            // Handle validation errors
+            if (errors.travel_order_ids) {
+                alert(errors.travel_order_ids);
+            } else if (errors.remarks) {
+                alert(errors.remarks);
+            } else {
+                alert('Failed to force approve. Please try again.');
+            }
+            
+            setProcessing(false);
+            setShowSuccessImage(false);
+        },
+        onFinish: () => {
+            // Only reset processing if we're not showing success
+            if (!showSuccessImage) {
+                setProcessing(false);
+            }
+        }
+    });
+};
 
     return (
         <>
