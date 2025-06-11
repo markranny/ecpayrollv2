@@ -853,57 +853,67 @@ public function forceApprove(Request $request)
     }
 }
 
-    /**
+/**
  * Remove the specified travel order.
  */
-public function destroy(TravelOrder $travelOrder)
+public function destroy($id)
 {
-    $user = Auth::user();
-    
-    // Check authorization
-    $canDelete = false;
-    $userRoles = $this->getUserRoles($user);
-    
-    // Allow deletion if:
-    // 1. User is superadmin
-    // 2. User created the travel order and it's still pending
-    // 3. User is department manager and manages the employee's department (and order is pending)
-    if ($userRoles['isSuperAdmin']) {
-        $canDelete = true;
-    } elseif ($travelOrder->created_by === $user->id && $travelOrder->status === 'pending') {
-        $canDelete = true;
-    } elseif ($userRoles['isDepartmentManager'] && $travelOrder->status === 'pending') {
-        $employeeDepartment = $travelOrder->employee ? $travelOrder->employee->Department : null;
-        if ($employeeDepartment && in_array($employeeDepartment, $userRoles['managedDepartments'])) {
-            $canDelete = true;
-        }
-    }
-    
-    if (!$canDelete) {
-        if (request()->expectsJson()) {
-            return response()->json([
-                'message' => 'You are not authorized to delete this travel order'
-            ], 403);
-        }
-        return back()->with('error', 'You are not authorized to delete this travel order');
-    }
-    
     try {
+        $user = Auth::user();
+        
+        // Find the travel order
+        $travelOrder = TravelOrder::findOrFail($id);
+        
+        // Check authorization
+        $canDelete = false;
+        $userRoles = $this->getUserRoles($user);
+        
+        // Allow deletion if:
+        // 1. User is superadmin
+        // 2. User is HRD manager
+        // 3. User created the travel order and it's still pending
+        // 4. User is department manager and manages the employee's department (and order is pending)
+        if ($userRoles['isSuperAdmin'] || $userRoles['isHrdManager']) {
+            $canDelete = true;
+        } elseif ($travelOrder->created_by === $user->id && $travelOrder->status === 'pending') {
+            $canDelete = true;
+        } elseif ($userRoles['isDepartmentManager'] && $travelOrder->status === 'pending') {
+            $employeeDepartment = $travelOrder->employee ? $travelOrder->employee->Department : null;
+            if ($employeeDepartment && in_array($employeeDepartment, $userRoles['managedDepartments'])) {
+                $canDelete = true;
+            }
+        }
+        
+        if (!$canDelete) {
+            if (request()->expectsJson()) {
+                return response()->json([
+                    'message' => 'You are not authorized to delete this travel order'
+                ], 403);
+            }
+            return back()->with('error', 'You are not authorized to delete this travel order');
+        }
+        
         // Delete associated documents
         if ($travelOrder->document_paths) {
             $documentPaths = json_decode($travelOrder->document_paths, true);
             if (is_array($documentPaths)) {
                 foreach ($documentPaths as $path) {
-                    Storage::disk('public')->delete($path);
+                    try {
+                        Storage::disk('public')->delete($path);
+                    } catch (\Exception $e) {
+                        \Log::warning('Failed to delete document file: ' . $path);
+                    }
                 }
             }
         }
         
+        // Delete the travel order
         $travelOrder->delete();
         
         \Log::info('Travel order deleted successfully', [
             'travel_order_id' => $travelOrder->id,
-            'deleted_by' => $user->id
+            'deleted_by' => $user->id,
+            'deleted_by_name' => $user->name
         ]);
         
         if (request()->expectsJson()) {
@@ -914,10 +924,25 @@ public function destroy(TravelOrder $travelOrder)
         
         return back()->with('message', 'Travel order deleted successfully');
         
+    } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+        \Log::error('Travel order not found for deletion', [
+            'travel_order_id' => $id,
+            'user_id' => Auth::id()
+        ]);
+        
+        if (request()->expectsJson()) {
+            return response()->json([
+                'message' => 'Travel order not found'
+            ], 404);
+        }
+        
+        return back()->with('error', 'Travel order not found');
+        
     } catch (\Exception $e) {
         \Log::error('Failed to delete travel order', [
-            'travel_order_id' => $travelOrder->id,
-            'error' => $e->getMessage()
+            'travel_order_id' => $id,
+            'error' => $e->getMessage(),
+            'user_id' => Auth::id()
         ]);
         
         if (request()->expectsJson()) {

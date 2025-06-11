@@ -65,7 +65,8 @@ Route::get('cls', function(){
     echo "config:cache: complete<br>";
     Artisan::call('view:cache');
     echo "view:cache: complete<br>";
-});
+  
+  });
 
 // Guest Routes (Authentication & Registration)
 Route::middleware('guest')->group(function () {
@@ -152,6 +153,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/{id}/mark-blocked', [EmployeeController::class, 'markBlocked'])->name('employees.markBlocked');
         Route::post('/{id}/mark-active', [EmployeeController::class, 'markActive'])->name('employees.markActive');
     });
+    
 
     // Attendance Routes
     Route::middleware('role:hrd_manager,superadmin')->group(function () {
@@ -222,46 +224,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('attendance.export');
     });
 
-    // Travel Order Routes - REORGANIZED FOR PROPER ORDERING
-Route::middleware(['auth'])->group(function () {
-    // Document download route (must be before parameterized routes)
-    Route::get('/travel-orders/{id}/documents/{index}/download', [TravelOrderController::class, 'downloadDocument'])
-        ->name('travel-orders.download-document');
-    
-    // DELETE route - make sure it's accessible to appropriate users
-    Route::delete('/travel-orders/{id}', [TravelOrderController::class, 'destroy'])
-        ->name('travel-orders.destroy');
-    
-    // Alternative POST delete route for browsers that don't support DELETE
-    Route::post('/travel-orders/{id}/delete', [TravelOrderController::class, 'destroy'])
-        ->name('travel-orders.destroy.post');
-});
-
-// Travel Order Routes - HRD/Admin restricted (should come AFTER the general routes)
-Route::middleware('role:hrd_manager,superadmin')->group(function () {
-    // Index route - this should come AFTER the DELETE routes above
-    Route::get('/travel-orders', [TravelOrderController::class, 'index'])
-        ->name('travel-orders.index');
-    
-    Route::get('/travel-orders/export', [TravelOrderController::class, 'export'])
-        ->name('travel-orders.export');
-    
-    Route::post('/travel-orders', [TravelOrderController::class, 'store'])
-        ->name('travel-orders.store');
-    
-    Route::post('/travel-orders/bulk-update', [TravelOrderController::class, 'bulkUpdateStatus'])
-        ->name('travel-orders.bulkUpdateStatus');
-    
-    Route::post('/travel-orders/{travelOrder}/status', [TravelOrderController::class, 'updateStatus'])
-        ->name('travel-orders.updateStatus');
-    
-    // Force approve route (superadmin only)
-    Route::middleware('role:superadmin')->group(function () {
-        Route::post('/travel-orders/force-approve', [TravelOrderController::class, 'forceApprove'])
-            ->name('travel-orders.force-approve');
-    });
-});
-
     // Overtime Routes - Available to both employees and managers
     Route::middleware(['auth'])->group(function () {
         Route::get('/overtimes', [OvertimeController::class, 'index'])
@@ -270,6 +232,8 @@ Route::middleware('role:hrd_manager,superadmin')->group(function () {
             ->name('overtimes.store');
         Route::post('/overtimes/{overtime}/status', [OvertimeController::class, 'updateStatus'])
             ->name('overtimes.updateStatus');
+        /* Route::delete('/overtimes/{overtime}', [OvertimeController::class, 'destroy'])
+            ->name('overtimes.destroy'); */
         Route::post('/overtimes/{overtime}/delete', [OvertimeController::class, 'destroy'])
             ->name('overtimes.destroy.post');
         Route::get('/overtimes/export', [OvertimeController::class, 'export'])
@@ -293,37 +257,49 @@ Route::middleware('role:hrd_manager,superadmin')->group(function () {
 
     // HR-Related Routes
     Route::middleware('role:hrd_manager,superadmin')->group(function () {
-        // Offsets Routes
         Route::get('/offsets', [OffsetController::class, 'index'])
-            ->name('offsets.index');
-        Route::post('/offsets', [OffsetController::class, 'store'])
-            ->name('offsets.store');
-        Route::post('/offsets/{id}/status', [OffsetController::class, 'updateStatus'])
-            ->name('offsets.updateStatus');
-        Route::delete('/offsets/{id}', [OffsetController::class, 'destroy'])
-            ->name('offsets.destroy');
-        Route::get('/offsets/export', [OffsetController::class, 'export'])
-            ->name('offsets.export');
-        Route::get('/offsets/bank/{employeeId}', [OffsetController::class, 'getOffsetBank'])
-            ->name('offsets.getOffsetBank');
+        ->name('offsets.index');
+    Route::post('/offsets', [OffsetController::class, 'store'])
+        ->name('offsets.store');
+    Route::post('/offsets/{id}/status', [OffsetController::class, 'updateStatus'])
+        ->name('offsets.updateStatus');
+    Route::delete('/offsets/{id}', [OffsetController::class, 'destroy'])
+        ->name('offsets.destroy');
+    Route::get('/offsets/export', [OffsetController::class, 'export'])
+        ->name('offsets.export');
+    Route::get('/offsets/bank/{employeeId}', [OffsetController::class, 'getOffsetBank'])
+        ->name('offsets.getOffsetBank');
+    
+    // Bulk Actions for managers
+    Route::middleware('role:department_manager,hrd_manager,superadmin')->group(function () {
+        Route::post('/offsets/bulk-update', [OffsetController::class, 'bulkUpdateStatus'])
+            ->name('offsets.bulkUpdateStatus');
         
-        // Bulk Actions for managers
-        Route::middleware('role:department_manager,hrd_manager,superadmin')->group(function () {
-            Route::post('/offsets/bulk-update', [OffsetController::class, 'bulkUpdateStatus'])
-                ->name('offsets.bulkUpdateStatus');
-            
-            // Force approve route (superadmin only)
-            Route::middleware('role:superadmin')->group(function () {
-                Route::post('/offsets/force-approve', [OffsetController::class, 'forceApprove'])
-                    ->name('offsets.force-approve');
-            });
+        // Force approve route (superadmin only)
+        Route::middleware('role:superadmin')->group(function () {
+            Route::post('/offsets/force-approve', [OffsetController::class, 'forceApprove'])
+                ->name('offsets.force-approve');
         });
-        
-        // Add hours to bank (HRD manager and superadmin only)
+    });
+    
+    // Add hours to bank (HRD manager and superadmin only)
+    Route::middleware('role:hrd_manager,superadmin')->group(function () {
         Route::post('/offsets/add-hours-to-bank', [OffsetController::class, 'addHoursToBank'])
             ->name('offsets.addHoursToBank');
+    });
 
         // Change Off Schedule Routes
+        /* Route::get('/change-off-schedules', [ChangeOffScheduleController::class, 'index'])
+            ->name('change-off-schedules.index');
+        Route::post('/change-off-schedules', [ChangeOffScheduleController::class, 'store'])
+            ->name('change-off-schedules.store');
+        Route::post('/change-off-schedules/{id}/status', [ChangeOffScheduleController::class, 'updateStatus'])
+            ->name('change-off-schedules.updateStatus');
+        Route::delete('/change-off-schedules/{id}', [ChangeOffScheduleController::class, 'destroy'])
+            ->name('change-off-schedules.destroy');
+        Route::get('/change-off-schedules/export', [ChangeOffScheduleController::class, 'export'])
+            ->name('change-off-schedules.export'); */
+
         Route::get('/change-off-schedules', [ChangeOffScheduleController::class, 'index'])
             ->name('change-off-schedules.index');
         Route::post('/change-off-schedules', [ChangeOffScheduleController::class, 'store'])
@@ -349,7 +325,7 @@ Route::middleware('role:hrd_manager,superadmin')->group(function () {
 
         // Time Schedule Routes
         Route::get('/time-schedules', [TimeScheduleController::class, 'index'])
-            ->name('time-schedules.index');
+        ->name('time-schedules.index');
         Route::post('/time-schedules', [TimeScheduleController::class, 'store'])
             ->name('time-schedules.store');
         Route::post('/time-schedules/{id}/status', [TimeScheduleController::class, 'updateStatus'])
@@ -383,6 +359,31 @@ Route::middleware('role:hrd_manager,superadmin')->group(function () {
         Route::get('/official-business/export', [OfficialBusinessController::class, 'export'])
             ->name('official-business.export');
 
+            Route::delete('/travel-orders/{id}', [TravelOrderController::class, 'destroy'])
+        ->name('travel-orders.destroy');
+    Route::get('/travel-orders/{id}/documents/{index}/download', [TravelOrderController::class, 'downloadDocument'])
+        ->name('travel-orders.download-document');
+    
+    // HRD/Admin restricted routes
+    Route::middleware('role:hrd_manager,superadmin')->group(function () {
+        Route::get('/travel-orders', [TravelOrderController::class, 'index'])
+            ->name('travel-orders.index');
+        Route::get('/travel-orders/export', [TravelOrderController::class, 'export'])
+            ->name('travel-orders.export');
+        Route::post('/travel-orders', [TravelOrderController::class, 'store'])
+            ->name('travel-orders.store');
+        Route::post('/travel-orders/bulk-update', [TravelOrderController::class, 'bulkUpdateStatus'])
+            ->name('travel-orders.bulkUpdateStatus');
+        Route::post('/travel-orders/{travelOrder}/status', [TravelOrderController::class, 'updateStatus'])
+            ->name('travel-orders.updateStatus');
+        
+        // Force approve route (superadmin only)
+        Route::middleware('role:superadmin')->group(function () {
+            Route::post('/travel-orders/force-approve', [TravelOrderController::class, 'forceApprove'])
+                ->name('travel-orders.force-approve');
+        });
+    });
+
         // Retro Routes
         Route::get('/retro', [RetroController::class, 'index'])
             ->name('retro.index');
@@ -396,7 +397,7 @@ Route::middleware('role:hrd_manager,superadmin')->group(function () {
             ->name('retro.export');
 
         // SLVL (Sick Leave/Vacation Leave) Routes
-        Route::get('/slvl', [SLVLController::class, 'index'])
+        /* Route::get('/slvl', [SLVLController::class, 'index'])
             ->name('slvl.index');
         Route::post('/slvl', [SLVLController::class, 'store'])
             ->name('slvl.store');
@@ -405,28 +406,45 @@ Route::middleware('role:hrd_manager,superadmin')->group(function () {
         Route::delete('/slvl/{id}', [SLVLController::class, 'destroy'])
             ->name('slvl.destroy');
         Route::get('/slvl/export', [SLVLController::class, 'export'])
-            ->name('slvl.export');
-        Route::get('/slvl/bank/{employeeId}', [SLVLController::class, 'getSLVLBank'])
-            ->name('slvl.getSLVLBank');
+            ->name('slvl.export'); */
 
+        Route::get('/slvl', [SLVLController::class, 'index'])
+        ->name('slvl.index');
+    Route::post('/slvl', [SLVLController::class, 'store'])
+        ->name('slvl.store');
+    Route::post('/slvl/{id}/status', [SLVLController::class, 'updateStatus'])
+        ->name('slvl.updateStatus');
+    Route::delete('/slvl/{id}', [SLVLController::class, 'destroy'])
+        ->name('slvl.destroy');
+    Route::get('/slvl/export', [SLVLController::class, 'export'])
+        ->name('slvl.export');
+    Route::get('/slvl/bank/{employeeId}', [SLVLController::class, 'getSLVLBank'])
+    ->name('slvl.getSLVLBank');
+
+    Route::post('/slvl/add-days-to-bank', [SLVLController::class, 'addDaysToBank'])
+        ->name('slvl.addDaysToBank');
+        
+    // Add this new route for bulk adding days
+    Route::post('/slvl/bulk-add-days-to-bank', [SLVLController::class, 'bulkAddDaysToBank'])
+        ->name('slvl.bulkAddDaysToBank');
+    
+    // Bulk Actions for managers
+    Route::middleware('role:department_manager,hrd_manager,superadmin')->group(function () {
+        Route::post('/slvl/bulk-update', [SLVLController::class, 'bulkUpdateStatus'])
+            ->name('slvl.bulkUpdateStatus');
+        
+        // Force approve route (superadmin only)
+        Route::middleware('role:superadmin')->group(function () {
+            Route::post('/slvl/force-approve', [SLVLController::class, 'forceApprove'])
+                ->name('slvl.force-approve');
+        });
+    });
+    
+    // Add days to bank (HRD manager and superadmin only)
+    Route::middleware('role:hrd_manager,superadmin')->group(function () {
         Route::post('/slvl/add-days-to-bank', [SLVLController::class, 'addDaysToBank'])
             ->name('slvl.addDaysToBank');
-            
-        // Add this new route for bulk adding days
-        Route::post('/slvl/bulk-add-days-to-bank', [SLVLController::class, 'bulkAddDaysToBank'])
-            ->name('slvl.bulkAddDaysToBank');
-        
-        // Bulk Actions for managers
-        Route::middleware('role:department_manager,hrd_manager,superadmin')->group(function () {
-            Route::post('/slvl/bulk-update', [SLVLController::class, 'bulkUpdateStatus'])
-                ->name('slvl.bulkUpdateStatus');
-            
-            // Force approve route (superadmin only)
-            Route::middleware('role:superadmin')->group(function () {
-                Route::post('/slvl/force-approve', [SLVLController::class, 'forceApprove'])
-                    ->name('slvl.force-approve');
-            });
-        });
+    });
     });
 
     // Finance Routes
@@ -525,6 +543,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
 });
 
 // CoreHR Routes
+// CoreHR Routes
 Route::middleware(['role:superadmin,hrd'])->group(function () {
     // Promotion Routes
     Route::get('/core-hr/promotion', function () {
@@ -615,7 +634,7 @@ Route::middleware(['role:superadmin,hrd'])->group(function () {
     Route::delete('/terminations/{id}', [TerminationController::class, 'destroy'])->name('terminations.destroy');
     Route::get('/terminations/export', [TerminationController::class, 'export'])->name('terminations.export');
 
-    // Travel Routes (different from travel orders)
+    // Travel Routes
     Route::get('/core-hr/travel', function () {
         return Inertia::render('CoreHR/Travel', [
             'auth' => ['user' => Auth::user()]
@@ -628,9 +647,10 @@ Route::middleware(['role:superadmin,hrd'])->group(function () {
     Route::delete('/travel/{id}', [TravelController::class, 'destroy'])->name('travel.destroy');
     Route::get('/travel/export', [TravelController::class, 'export'])->name('travel.export');
 });
-
-// Meetings and Events Routes
+// Add this route to your existing middleware group for meetings
 Route::middleware(['auth', 'verified', 'role:superadmin,hrd'])->group(function () {
+    // Existing routes...
+    
     Route::get('/meetings', function () {
         $status = request()->input('status', 'all');
         
@@ -658,10 +678,9 @@ Route::middleware(['auth', 'verified', 'role:superadmin,hrd'])->group(function (
             'auth' => ['user' => Auth::user()]
         ]);
     })->name('meetings.index');
-    
     // API routes for Meetings
     Route::post('/meetings/{id}/reschedule', [MeetingsController::class, 'reschedule'])
-        ->name('meetings.reschedule');
+->name('meetings.reschedule');
     Route::get('/meetings/list', [MeetingsController::class, 'list'])
         ->name('meetings.list');
     Route::post('/meetings', [MeetingsController::class, 'store'])
@@ -681,8 +700,9 @@ Route::middleware(['auth', 'verified', 'role:superadmin,hrd'])->group(function (
     Route::get('/api/employees', [EmployeeController::class, 'getEmployeesForSelect'])
         ->name('api.employees');
 
-    // Events Routes
     Route::get('/events', [EventsController::class, 'index'])->name('events.index');
+
+    // The rest of your routes are fine:
     Route::get('/events/debug', [EventsController::class, 'debug'])->name('events.debug');
     Route::get('/events/list', [EventsController::class, 'list'])->name('events.list');
     Route::post('/events', [EventsController::class, 'store'])->name('events.store');
@@ -690,10 +710,10 @@ Route::middleware(['auth', 'verified', 'role:superadmin,hrd'])->group(function (
     Route::delete('/events/{id}', [EventsController::class, 'destroy'])->name('events.destroy');
     Route::post('/events/{id}/status', [EventsController::class, 'updateStatus'])->name('events.updateStatus');
     Route::get('/events/export', [EventsController::class, 'export'])->name('events.export');
-    Route::put('/events/{id}/reschedule', [EventsController::class, 'reschedule'])
-        ->name('events.reschedule');
-
-    // HR Calendar routes
+});
+// Add this route inside your middleware group with other HR-related routes
+Route::middleware(['auth', 'verified', 'role:superadmin,hrd'])->group(function () {
+    // HR Calendar routes - updated to reflect correct path
     Route::get('/hr-calendar', function () {
         return Inertia::render('HRCalendar/HrCalendar', [
             'auth' => ['user' => Auth::user()]
@@ -705,6 +725,8 @@ Route::middleware(['auth', 'verified', 'role:superadmin,hrd'])->group(function (
         ->name('hr-calendar.data');
     Route::get('/hr-calendar/departments', [HrCalendarController::class, 'getDepartments'])
         ->name('hr-calendar.departments');
+        Route::put('/events/{id}/reschedule', [EventsController::class, 'reschedule'])
+        ->name('events.reschedule');
 });
 
 require __DIR__.'/auth.php';
