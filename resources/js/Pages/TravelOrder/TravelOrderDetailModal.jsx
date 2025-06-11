@@ -1,5 +1,5 @@
 // resources/js/Pages/TravelOrder/TravelOrderDetailModal.jsx
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { format, parseISO } from 'date-fns';
 import { 
     X, 
@@ -34,13 +34,42 @@ const TravelOrderDetailModal = ({
     const [showConfirmation, setShowConfirmation] = useState(false);
     const [pendingAction, setPendingAction] = useState(null);
     
+    // Debug function for development
+    const debugLog = (message, data = null) => {
+        if (process.env.NODE_ENV === 'development') {
+            console.log(`[TravelOrderDetailModal] ${message}`, data);
+        }
+    };
+    
     // Check if user can update status
     const canUpdateStatus = !viewOnly && 
         travelOrder.status === 'pending' && 
         (userRoles.isHrdManager || userRoles.isSuperAdmin);
     
+    // Reset states when modal opens/closes or processing changes
+    useEffect(() => {
+        if (processing) {
+            setLocalProcessing(true);
+        }
+    }, [processing]);
+    
+    useEffect(() => {
+        // Reset local state when modal is closed
+        if (!travelOrder) {
+            setLocalProcessing(false);
+            setShowConfirmation(false);
+            setPendingAction(null);
+            setRemarks('');
+        }
+    }, [travelOrder]);
+    
     const handleStatusChange = (status) => {
-        if (localProcessing || processing) return;
+        debugLog('Status change initiated', { status, localProcessing, processing });
+        
+        if (localProcessing || processing) {
+            debugLog('Blocked: Already processing');
+            return;
+        }
         
         // Validation for rejection
         if (status === 'rejected' && !remarks.trim()) {
@@ -56,16 +85,20 @@ const TravelOrderDetailModal = ({
         
         // Show confirmation for important actions
         if (status === 'rejected' || status === 'cancelled' || status === 'force_approved') {
+            debugLog('Showing confirmation for', status);
             setPendingAction(status);
             setShowConfirmation(true);
             return;
         }
         
-        // Execute the status change
+        // Execute the status change directly for approve
+        debugLog('Executing status change directly', status);
         executeStatusChange(status);
     };
     
     const executeStatusChange = (status) => {
+        debugLog('Executing status change', { status, travelOrderId: travelOrder.id });
+        
         setLocalProcessing(true);
         
         // Create data object with status and remarks
@@ -83,41 +116,78 @@ const TravelOrderDetailModal = ({
                 if (result && typeof result.then === 'function') {
                     result
                         .then(() => {
+                            debugLog('Status update successful');
                             setLocalProcessing(false);
-                            // Modal will be closed by parent component
+                            setShowConfirmation(false);
+                            setPendingAction(null);
+                            // Close modal AFTER successful update
+                            if (typeof onClose === 'function') {
+                                onClose();
+                            }
                         })
                         .catch((error) => {
+                            debugLog('Status update failed', error);
                             console.error('Error updating status:', error);
                             alert('Error: Unable to update status. Please try again.');
                             setLocalProcessing(false);
+                            setShowConfirmation(false);
+                            setPendingAction(null);
+                            // Don't close modal on error - user might want to retry
                         });
                 } else {
+                    debugLog('Status update completed (non-promise result)');
                     setLocalProcessing(false);
-                    // Modal will be closed by parent component
+                    setShowConfirmation(false);
+                    setPendingAction(null);
+                    // Close modal if non-promise result (assuming success)
+                    if (typeof onClose === 'function') {
+                        onClose();
+                    }
                 }
             } catch (error) {
+                debugLog('Status update exception', error);
                 console.error('Error updating status:', error);
                 alert('Error: Unable to update status. Please try again.');
                 setLocalProcessing(false);
+                setShowConfirmation(false);
+                setPendingAction(null);
+                // Don't close modal on error
             }
         } else {
             console.error('onStatusUpdate is not a function');
-            alert('Error: Unable to update status. Please try again later.');
+            alert('Error: Unable to update status. Please refresh the page and try again.');
             setLocalProcessing(false);
-        }
-    };
-    
-    const handleConfirmAction = () => {
-        setShowConfirmation(false);
-        if (pendingAction) {
-            executeStatusChange(pendingAction);
+            setShowConfirmation(false);
             setPendingAction(null);
         }
     };
     
+    const handleConfirmAction = () => {
+        if (pendingAction && !localProcessing) {
+            debugLog('Confirming action', pendingAction);
+            executeStatusChange(pendingAction);
+        }
+    };
+    
     const handleCancelAction = () => {
-        setShowConfirmation(false);
-        setPendingAction(null);
+        if (!localProcessing) {
+            debugLog('Cancelling action');
+            setShowConfirmation(false);
+            setPendingAction(null);
+        }
+    };
+    
+    const handleCloseModal = () => {
+        // Don't allow closing if currently processing
+        if (localProcessing || processing) {
+            debugLog('Cannot close modal while processing');
+            return;
+        }
+        
+        debugLog('Closing modal');
+        if (typeof onClose === 'function') {
+            onClose();
+        }
     };
     
     // Format date safely
@@ -234,18 +304,41 @@ const TravelOrderDetailModal = ({
         }
     };
     
-    
-// Handle document download
-const handleDocumentDownload = (index) => {
-    // Use the route helper to generate the correct URL
-    const downloadUrl = route('travel-orders.download-document', {
-        id: travelOrder.id,
-        index: index
-    });
-    
-    // Open in new window to trigger download
-    window.open(downloadUrl, '_blank');
-};
+    // Handle document download with improved error handling
+    const handleDocumentDownload = (index) => {
+        try {
+            debugLog('Document download initiated', { index, travelOrderId: travelOrder.id });
+            
+            // Check if route helper is available
+            let downloadUrl;
+            if (typeof route === 'function') {
+                downloadUrl = route('travel-orders.download-document', {
+                    id: travelOrder.id,
+                    index: index
+                });
+            } else {
+                // Fallback to manual URL construction
+                downloadUrl = `/travel-orders/${travelOrder.id}/download-document/${index}`;
+            }
+            
+            debugLog('Download URL generated', downloadUrl);
+            
+            // Create a temporary link element for download
+            const link = document.createElement('a');
+            link.href = downloadUrl;
+            link.target = '_blank';
+            link.rel = 'noopener noreferrer';
+            
+            // Append to body, click, and remove
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+        } catch (error) {
+            console.error('Error downloading document:', error);
+            alert('Error downloading document. Please try again.');
+        }
+    };
     
     // Get action button properties
     const getActionButtonProps = (status) => {
@@ -304,6 +397,10 @@ const handleDocumentDownload = (index) => {
 
     const documents = getDocuments();
 
+    if (!travelOrder) {
+        return null;
+    }
+
     return (
         <>
             <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -348,7 +445,7 @@ const handleDocumentDownload = (index) => {
                                 <div className="flex items-center space-x-2">
                                     <TravelOrderStatusBadge status={travelOrder.status} />
                                     <button
-                                        onClick={onClose}
+                                        onClick={handleCloseModal}
                                         className="text-gray-400 hover:text-gray-600 focus:outline-none"
                                         disabled={localProcessing || processing}
                                     >
@@ -510,7 +607,7 @@ const handleDocumentDownload = (index) => {
                                             <div className="grid grid-cols-3 gap-1">
                                                 <span className="text-sm font-medium text-gray-500">Office Return:</span>
                                                 <span className="col-span-2 text-sm text-gray-900 flex items-center">
-                                                    <Clock className="h-4 w-4 mr-1 text-gray-400" />
+                                                    <Clock className="h-3 w-3 mr-1 text-gray-400" />
                                                     {formatTime(travelOrder.office_return_time)}
                                                 </span>
                                             </div>
@@ -611,6 +708,7 @@ const handleDocumentDownload = (index) => {
                                                             onClick={() => handleDocumentDownload(index)}
                                                             className="ml-3 flex-shrink-0 text-indigo-600 hover:text-indigo-800 focus:outline-none"
                                                             title="Download document"
+                                                            disabled={localProcessing || processing}
                                                         >
                                                             <Download className="h-4 w-4" />
                                                         </button>
@@ -697,7 +795,7 @@ const handleDocumentDownload = (index) => {
                                                 disabled={localProcessing || processing}
                                             >
                                                 <CheckCircle className="h-4 w-4 mr-2" />
-                                                {localProcessing ? 'Processing...' : 'Approve'}
+                                                {localProcessing && pendingAction === 'approved' ? 'Processing...' : 'Approve'}
                                             </button>
                                             
                                             <button
@@ -706,7 +804,7 @@ const handleDocumentDownload = (index) => {
                                                 disabled={localProcessing || processing}
                                             >
                                                 <XCircle className="h-4 w-4 mr-2" />
-                                                {localProcessing ? 'Processing...' : 'Reject'}
+                                                {localProcessing && pendingAction === 'rejected' ? 'Processing...' : 'Reject'}
                                             </button>
                                             
                                             {/* Force Approve option for superadmins only */}
@@ -717,7 +815,7 @@ const handleDocumentDownload = (index) => {
                                                     disabled={localProcessing || processing}
                                                 >
                                                     <CheckCircle className="h-4 w-4 mr-2" />
-                                                    {localProcessing ? 'Processing...' : 'Force Approve'}
+                                                    {localProcessing && pendingAction === 'force_approved' ? 'Processing...' : 'Force Approve'}
                                                 </button>
                                             )}
                                         </div>
@@ -745,7 +843,7 @@ const handleDocumentDownload = (index) => {
                             <button 
                                 type="button" 
                                 className="w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                                onClick={onClose}
+                                onClick={handleCloseModal}
                                 disabled={localProcessing || processing}
                             >
                                 Close
@@ -801,16 +899,25 @@ const handleDocumentDownload = (index) => {
                                     } text-base font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50 disabled:cursor-not-allowed`}
                                     onClick={handleConfirmAction}
                                     disabled={
+                                        localProcessing ||
                                         (pendingAction === 'rejected' && !remarks.trim()) ||
                                         (pendingAction === 'force_approved' && !remarks.trim())
                                     }
                                 >
-                                    Yes, {getActionButtonProps(pendingAction).text}
+                                    {localProcessing ? (
+                                        <>
+                                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                            Processing...
+                                        </>
+                                    ) : (
+                                        `Yes, ${getActionButtonProps(pendingAction).text}`
+                                    )}
                                 </button>
                                 <button
                                     type="button"
-                                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50"
                                     onClick={handleCancelAction}
+                                    disabled={localProcessing}
                                 >
                                     Cancel
                                 </button>

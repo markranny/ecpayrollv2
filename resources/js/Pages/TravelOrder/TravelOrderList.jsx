@@ -197,71 +197,52 @@ const TravelOrderList = ({
         }
     };
     
-    // Handle status update (from modal)
-    const handleStatusUpdate = (id, data) => {
-        setUpdatingId(id);
-        setLocalProcessing(true);
-        
-        if (typeof onStatusUpdate === 'function') {
-            try {
-                const result = onStatusUpdate(id, data);
-                
-                if (result && typeof result.then === 'function') {
-                    result
-                        .then(() => {
-                            setUpdatingId(null);
-                            setLocalProcessing(false);
-                        })
-                        .catch((error) => {
-                            console.error('Error updating status:', error);
-                            alert('Error: Unable to update status. Please try again.');
-                            setUpdatingId(null);
-                            setLocalProcessing(false);
-                        });
-                } else {
-                    setUpdatingId(null);
-                    setLocalProcessing(false);
-                }
-            } catch (error) {
-                console.error('Error updating status:', error);
-                alert('Error: Unable to update status. Please try again.');
+    // Fixed handleStatusUpdate function in TravelOrderList.jsx
+const handleStatusUpdate = (id, data) => {
+    setUpdatingId(id);
+    setLocalProcessing(true);
+    
+    if (typeof onStatusUpdate === 'function') {
+        try {
+            const result = onStatusUpdate(id, data);
+            
+            if (result && typeof result.then === 'function') {
+                result
+                    .then(() => {
+                        setUpdatingId(null);
+                        setLocalProcessing(false);
+                        // Close modal AFTER successful update
+                        handleCloseModal();
+                    })
+                    .catch((error) => {
+                        console.error('Error updating status:', error);
+                        alert('Error: Unable to update status. Please try again.');
+                        setUpdatingId(null);
+                        setLocalProcessing(false);
+                        // Don't close modal on error - user might want to retry
+                    });
+            } else {
                 setUpdatingId(null);
                 setLocalProcessing(false);
+                // Close modal if non-promise result (assuming success)
+                handleCloseModal();
             }
-        } else {
-            console.error('onStatusUpdate prop is not a function');
-            alert('Error: Unable to update status. Please refresh the page and try again.');
+        } catch (error) {
+            console.error('Error updating status:', error);
+            alert('Error: Unable to update status. Please try again.');
             setUpdatingId(null);
             setLocalProcessing(false);
+            // Don't close modal on error
         }
-        handleCloseModal();
-    };
+    } else {
+        console.error('onStatusUpdate is not a function');
+        alert('Error: Unable to update status. Please refresh the page and try again.');
+        setUpdatingId(null);
+        setLocalProcessing(false);
+        // Don't close modal on error
+    }
     
-    const handleDelete = (id) => {
-        if (confirm('Are you sure you want to delete this travel order?')) {
-            setDeletingId(id);
-            setLocalProcessing(true);
-            
-            router.delete(route('travel-orders.destroy', id), {
-                preserveScroll: true,
-                onSuccess: (page) => {
-                    const updatedTravelOrders = localTravelOrders.filter(to => to.id !== id);
-                    setLocalTravelOrders(updatedTravelOrders);
-                    applyFilters(updatedTravelOrders, filterStatus, searchTerm, dateRange);
-                    
-                    toast.success('Travel order deleted successfully');
-                    setDeletingId(null);
-                    setLocalProcessing(false);
-                },
-                onError: (errors) => {
-                    console.error('Error deleting travel order:', errors);
-                    toast.error('Failed to delete travel order');
-                    setDeletingId(null);
-                    setLocalProcessing(false);
-                }
-            });
-        }
-    };
+};
     
     // Format date safely
     const formatDate = (dateString) => {

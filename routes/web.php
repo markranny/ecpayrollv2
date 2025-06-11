@@ -222,44 +222,47 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('attendance.export');
     });
 
-    // Travel Order Routes - REORGANIZED FOR PROPER ORDERING
-Route::middleware(['auth'])->group(function () {
-    // Document download route (must be before parameterized routes)
-    Route::get('/travel-orders/{id}/documents/{index}/download', [TravelOrderController::class, 'downloadDocument'])
-        ->name('travel-orders.download-document');
-    
-    // DELETE route - make sure it's accessible to appropriate users
-    Route::delete('/travel-orders/{id}', [TravelOrderController::class, 'destroy'])
-        ->name('travel-orders.destroy');
-    
-    // Alternative POST delete route for browsers that don't support DELETE
-    Route::post('/travel-orders/{id}/delete', [TravelOrderController::class, 'destroy'])
-        ->name('travel-orders.destroy.post');
-});
-
-// Travel Order Routes - HRD/Admin restricted (should come AFTER the general routes)
-Route::middleware('role:hrd_manager,superadmin')->group(function () {
-    // Index route - this should come AFTER the DELETE routes above
+    Route::middleware(['auth', 'role:hrd_manager,superadmin'])->group(function () {
+    // Index route
     Route::get('/travel-orders', [TravelOrderController::class, 'index'])
         ->name('travel-orders.index');
     
+    // Export route - specific route, must come before parameterized routes
     Route::get('/travel-orders/export', [TravelOrderController::class, 'export'])
         ->name('travel-orders.export');
     
+    // Store route
     Route::post('/travel-orders', [TravelOrderController::class, 'store'])
         ->name('travel-orders.store');
     
+    // Bulk actions - specific routes, must come before parameterized routes
     Route::post('/travel-orders/bulk-update', [TravelOrderController::class, 'bulkUpdateStatus'])
         ->name('travel-orders.bulkUpdateStatus');
     
-    Route::post('/travel-orders/{travelOrder}/status', [TravelOrderController::class, 'updateStatus'])
-        ->name('travel-orders.updateStatus');
-    
     // Force approve route (superadmin only)
-    Route::middleware('role:superadmin')->group(function () {
-        Route::post('/travel-orders/force-approve', [TravelOrderController::class, 'forceApprove'])
-            ->name('travel-orders.force-approve');
-    });
+    Route::post('/travel-orders/force-approve', [TravelOrderController::class, 'forceApprove'])
+        ->middleware('role:superadmin')
+        ->name('travel-orders.force-approve');
+    
+    // Document download route - specific parameterized route
+    Route::get('/travel-orders/{id}/documents/{index}/download', [TravelOrderController::class, 'downloadDocument'])
+        ->name('travel-orders.download-document')
+        ->where(['id' => '[0-9]+', 'index' => '[0-9]+']);
+    
+    // Status update route
+    Route::post('/travel-orders/{travelOrder}/status', [TravelOrderController::class, 'updateStatus'])
+        ->name('travel-orders.updateStatus')
+        ->where(['travelOrder' => '[0-9]+']);
+    
+    // DELETE routes - these should be with the same middleware group
+    Route::delete('/travel-orders/{id}', [TravelOrderController::class, 'destroy'])
+        ->name('travel-orders.destroy')
+        ->where(['id' => '[0-9]+']);
+    
+    // Alternative POST delete route for browsers that don't support DELETE
+    Route::post('/travel-orders/{id}/delete', [TravelOrderController::class, 'destroy'])
+        ->name('travel-orders.destroy.post')
+        ->where(['id' => '[0-9]+']);
 });
 
     // Overtime Routes - Available to both employees and managers
@@ -621,12 +624,12 @@ Route::middleware(['role:superadmin,hrd'])->group(function () {
             'auth' => ['user' => Auth::user()]
         ]);
     })->name('travel.page');
-    Route::get('/travel/list', [TravelController::class, 'list'])->name('travel.list');
-    Route::post('/travel', [TravelController::class, 'store'])->name('travel.store');
-    Route::put('/travel/{id}', [TravelController::class, 'update'])->name('travel.update');
-    Route::post('/travel/{id}/status', [TravelController::class, 'updateStatus'])->name('travel.updateStatus');
-    Route::delete('/travel/{id}', [TravelController::class, 'destroy'])->name('travel.destroy');
-    Route::get('/travel/export', [TravelController::class, 'export'])->name('travel.export');
+    Route::get('/travel/list', [TravelOrderController::class, 'list'])->name('travel.list');
+    Route::post('/travel', [TravelOrderController::class, 'store'])->name('travel.store');
+    Route::put('/travel/{id}', [TravelOrderController::class, 'update'])->name('travel.update');
+    Route::post('/travel/{id}/status', [TravelOrderController::class, 'updateStatus'])->name('travel.updateStatus');
+    Route::delete('/travel/{id}', [TravelOrderController::class, 'destroy'])->name('travel.destroy');
+    Route::get('/travel/export', [TravelOrderController::class, 'export'])->name('travel.export');
 });
 
 // Meetings and Events Routes

@@ -869,10 +869,9 @@ public function destroy($id)
         $userRoles = $this->getUserRoles($user);
         
         // Allow deletion if:
-        // 1. User is superadmin
-        // 2. User is HRD manager
-        // 3. User created the travel order and it's still pending
-        // 4. User is department manager and manages the employee's department (and order is pending)
+        // 1. User is superadmin or HRD manager
+        // 2. User created the travel order and it's still pending
+        // 3. User is department manager and manages the employee's department (and order is pending)
         if ($userRoles['isSuperAdmin'] || $userRoles['isHrdManager']) {
             $canDelete = true;
         } elseif ($travelOrder->created_by === $user->id && $travelOrder->status === 'pending') {
@@ -887,6 +886,7 @@ public function destroy($id)
         if (!$canDelete) {
             if (request()->expectsJson()) {
                 return response()->json([
+                    'success' => false,
                     'message' => 'You are not authorized to delete this travel order'
                 ], 403);
             }
@@ -918,6 +918,7 @@ public function destroy($id)
         
         if (request()->expectsJson()) {
             return response()->json([
+                'success' => true,
                 'message' => 'Travel order deleted successfully'
             ]);
         }
@@ -932,6 +933,7 @@ public function destroy($id)
         
         if (request()->expectsJson()) {
             return response()->json([
+                'success' => false,
                 'message' => 'Travel order not found'
             ], 404);
         }
@@ -947,6 +949,7 @@ public function destroy($id)
         
         if (request()->expectsJson()) {
             return response()->json([
+                'success' => false,
                 'message' => 'Failed to delete travel order: ' . $e->getMessage()
             ], 500);
         }
