@@ -561,183 +561,267 @@ class TravelOrderController extends Controller
     }
 
     public function updateStatus(Request $request, TravelOrder $travelOrder)
-    {
-        $user = Auth::user();
-        
-        $validated = $request->validate([
-            'status' => 'required|in:approved,rejected,completed,cancelled,force_approved',
-            'remarks' => 'nullable|string|max:500',
-        ]);
+{
+    $user = Auth::user();
+    
+    $validated = $request->validate([
+        'status' => 'required|in:approved,rejected,completed,cancelled,force_approved',
+        'remarks' => 'nullable|string|max:500',
+    ]);
 
-        // Check permission
-        $canUpdate = false;
-        
-        // Check if force approval is only used by superadmin
-        if ($validated['status'] === 'force_approved') {
-            if (!$this->isSuperAdmin($user)) {
-                return response()->json([
-                    'message' => 'Only superadmin can force approve travel orders.'
-                ], 403);
-            }
-            $canUpdate = true;
-        } elseif ($this->isHrdManager($user) || $this->isSuperAdmin($user)) {
-            $canUpdate = true;
-        }
-
-        if (!$canUpdate) {
+    // Check permission
+    $canUpdate = false;
+    
+    // Check if force approval is only used by superadmin
+    if ($validated['status'] === 'force_approved') {
+        if (!$this->isSuperAdmin($user)) {
             return response()->json([
-                'message' => 'You are not authorized to update this travel order status.'
+                'message' => 'Only superadmin can force approve travel orders.',
+                'success' => false
             ], 403);
         }
+        $canUpdate = true;
+    } elseif ($this->isHrdManager($user) || $this->isSuperAdmin($user)) {
+        $canUpdate = true;
+    }
 
-        // Log the action for debugging
-        \Log::info('Updating travel order status', [
-            'travel_order_id' => $travelOrder->id,
-            'current_status' => $travelOrder->status,
-            'new_status' => $validated['status'],
-            'user_id' => $user->id,
-            'user_name' => $user->name
-        ]);
+    if (!$canUpdate) {
+        return response()->json([
+            'message' => 'You are not authorized to update this travel order status.',
+            'success' => false
+        ], 403);
+    }
 
-        try {
-            $actualStatus = $validated['status'] === 'force_approved' ? 'approved' : $validated['status'];
-            
-            $travelOrder->status = $actualStatus;
-            $travelOrder->remarks = $validated['remarks'];
-            
-            if (in_array($validated['status'], ['approved', 'rejected', 'completed', 'cancelled', 'force_approved'])) {
-                $travelOrder->approved_by = $user->id;
-                $travelOrder->approved_at = now();
-            }
+    // Log the action for debugging
+    \Log::info('Updating travel order status', [
+        'travel_order_id' => $travelOrder->id,
+        'current_status' => $travelOrder->status,
+        'new_status' => $validated['status'],
+        'user_id' => $user->id,
+        'user_name' => $user->name,
+        'remarks' => $validated['remarks']
+    ]);
 
-            // If this is a force approval, set the force approval fields
-            if ($validated['status'] === 'force_approved') {
-                $travelOrder->force_approved = true;
-                $travelOrder->force_approved_by = $user->id;
-                $travelOrder->force_approved_at = now();
-                $travelOrder->force_approve_remarks = $validated['remarks'] ?? 'Force approved by admin';
-            }
-            
-            $travelOrder->save();
+    try {
+        DB::beginTransaction();
+        
+        $actualStatus = $validated['status'] === 'force_approved' ? 'approved' : $validated['status'];
+        
+        $travelOrder->status = $actualStatus;
+        $travelOrder->remarks = $validated['remarks'];
+        
+        if (in_array($validated['status'], ['approved', 'rejected', 'completed', 'cancelled', 'force_approved'])) {
+            $travelOrder->approved_by = $user->id;
+            $travelOrder->approved_at = now();
+        }
 
+        // If this is a force approval, set the force approval fields
+        if ($validated['status'] === 'force_approved') {
+            $travelOrder->force_approved = true;
+            $travelOrder->force_approved_by = $user->id;
+            $travelOrder->force_approved_at = now();
+            $travelOrder->force_approve_remarks = $validated['remarks'] ?? 'Force approved by admin';
+        }
+        
+        $travelOrder->save();
+        
+        DB::commit();
+
+        // For AJAX requests, return JSON response
+        if ($request->expectsJson()) {
             // Get fresh travel order data for the response
             $travelOrder = TravelOrder::with(['employee', 'creator', 'approver', 'forceApprover'])
                 ->find($travelOrder->id);
 
             return response()->json([
                 'message' => 'Travel order status updated successfully.',
+                'success' => true,
                 'travelOrder' => $travelOrder
             ]);
-        } catch (\Exception $e) {
-            \Log::error('Failed to update travel order status', [
-                'travel_order_id' => $travelOrder->id,
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
+        }
+
+        // For regular requests, redirect back with fresh data
+        $freshTravelOrders = $this->getFreshTravelOrdersForUser($user);
+        
+        return redirect()->back()->with([
+            'message' => 'Travel order status updated successfully.',
+            'travelOrders' => $freshTravelOrders
+        ]);
+        
+    } catch (\Exception $e) {
+        DB::rollBack();
+        
+        \Log::error('Failed to update travel order status', [
+            'travel_order_id' => $travelOrder->id,
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+        
+        if ($request->expectsJson()) {
             return response()->json([
-                'message' => 'Failed to update travel order status: ' . $e->getMessage()
+                'message' => 'Failed to update travel order status: ' . $e->getMessage(),
+                'success' => false
             ], 500);
         }
+        
+        return redirect()->back()->with('error', 'Failed to update travel order status: ' . $e->getMessage());
     }
+}
 
-    /**
-     * Bulk update status for multiple travel orders
-     */
+private function getFreshTravelOrdersForUser($user)
+{
+    $userRoles = $this->getUserRoles($user);
+    
+    $travelOrdersQuery = TravelOrder::with(['employee', 'creator', 'approver', 'forceApprover']);
+    
+    // Filter based on user roles (same logic as index method)
+    if ($userRoles['isEmployee'] && !$userRoles['isDepartmentManager'] && !$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+        $employeeId = $user->employee ? $user->employee->id : null;
+        if ($employeeId) {
+            $travelOrdersQuery->where('employee_id', $employeeId);
+        } else {
+            $travelOrdersQuery->where('created_by', $user->id);
+        }
+    } elseif ($userRoles['isDepartmentManager'] && !$userRoles['isSuperAdmin']) {
+        $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+            ->pluck('department')
+            ->toArray();
+            
+        $travelOrdersQuery->where(function($query) use ($user, $managedDepartments) {
+            $query->where('created_by', $user->id)
+                ->orWhereHas('employee', function($q) use ($managedDepartments) {
+                    $q->whereIn('Department', $managedDepartments);
+                });
+        });
+    }
+    
+    return $travelOrdersQuery->orderBy('created_at', 'desc')->get();
+}
+
     public function bulkUpdateStatus(Request $request)
-    {
-        $user = Auth::user();
-        
-        $validated = $request->validate([
-            'travel_order_ids' => 'required|array',
-            'travel_order_ids.*' => 'required|integer|exists:travel_orders,id',
-            'status' => 'required|in:approved,rejected,completed,cancelled,force_approved',
-            'remarks' => 'nullable|string|max:500',
-        ]);
+{
+    $user = Auth::user();
+    
+    $validated = $request->validate([
+        'travel_order_ids' => 'required|array',
+        'travel_order_ids.*' => 'required|integer|exists:travel_orders,id',
+        'status' => 'required|in:approved,rejected,completed,cancelled,force_approved',
+        'remarks' => 'nullable|string|max:500',
+    ]);
 
-        // Check permission
-        if (!$this->isHrdManager($user) && !$this->isSuperAdmin($user)) {
-            return redirect()->back()->with('error', 'You are not authorized to update travel order status.');
-        }
-
-        // Check if force_approved is only used by superadmin
-        if ($validated['status'] === 'force_approved' && !$this->isSuperAdmin($user)) {
-            return redirect()->back()->with('error', 'Only superadmin can force approve travel orders.');
-        }
-
-        // Log the bulk update action
-        \Log::info('Bulk update of travel order statuses initiated', [
-            'user_id' => $user->id,
-            'user_name' => $user->name,
-            'count' => count($validated['travel_order_ids']),
-            'target_status' => $validated['status']
-        ]);
-
-        $successCount = 0;
-        $failCount = 0;
-        $errors = [];
-
-        DB::beginTransaction();
-        
-        try {
-            $actualStatus = $validated['status'] === 'force_approved' ? 'approved' : $validated['status'];
-            
-            foreach ($validated['travel_order_ids'] as $travelOrderId) {
-                try {
-                    $travelOrder = TravelOrder::findOrFail($travelOrderId);
-                    
-                    $updateData = [
-                        'status' => $actualStatus,
-                        'remarks' => $validated['remarks'],
-                        'approved_by' => $user->id,
-                        'approved_at' => now(),
-                    ];
-
-                    // If this is a force approval, add force approval fields
-                    if ($validated['status'] === 'force_approved') {
-                        $updateData['force_approved'] = true;
-                        $updateData['force_approved_by'] = $user->id;
-                        $updateData['force_approved_at'] = now();
-                        $updateData['force_approve_remarks'] = $validated['remarks'] ?? 'Force approved by admin';
-                    }
-
-                    $travelOrder->update($updateData);
-                    $successCount++;
-
-                    \Log::info("Successfully updated travel order #{$travelOrderId}", [
-                        'from_status' => $travelOrder->getOriginal('status'),
-                        'to_status' => $actualStatus,
-                        'by_user' => $user->name
-                    ]);
-                } catch (\Exception $e) {
-                    $failCount++;
-                    $errors[] = "Error updating travel order #{$travelOrderId}: " . $e->getMessage();
-                    \Log::error("Error updating travel order #{$travelOrderId}: " . $e->getMessage());
-                }
-            }
-
-            DB::commit();
-
-            $actionText = $validated['status'] === 'force_approved' ? 'force approved' : $actualStatus;
-            $message = "Successfully {$actionText} {$successCount} travel order(s).";
-            
-            if ($failCount > 0) {
-                $message .= " {$failCount} updates failed.";
-            }
-
-            return redirect()->back()->with('message', $message);
-
-        } catch (\Exception $e) {
-            DB::rollBack();
-            
-            \Log::error('Error during bulk travel order update', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString()
-            ]);
-
-            return redirect()->back()->with('error', 'Error updating travel order statuses: ' . $e->getMessage());
-        }
+    // Check permission
+    if (!$this->isHrdManager($user) && !$this->isSuperAdmin($user)) {
+        return response()->json([
+            'message' => 'You are not authorized to update travel order status.',
+            'success' => false
+        ], 403);
     }
+
+    // Check if force_approved is only used by superadmin
+    if ($validated['status'] === 'force_approved' && !$this->isSuperAdmin($user)) {
+        return response()->json([
+            'message' => 'Only superadmin can force approve travel orders.',
+            'success' => false
+        ], 403);
+    }
+
+    \Log::info('Bulk update of travel order statuses initiated', [
+        'user_id' => $user->id,
+        'user_name' => $user->name,
+        'count' => count($validated['travel_order_ids']),
+        'target_status' => $validated['status'],
+        'remarks' => $validated['remarks']
+    ]);
+
+    $successCount = 0;
+    $failCount = 0;
+    $errors = [];
+
+    DB::beginTransaction();
+    
+    try {
+        $actualStatus = $validated['status'] === 'force_approved' ? 'approved' : $validated['status'];
+        
+        foreach ($validated['travel_order_ids'] as $travelOrderId) {
+            try {
+                $travelOrder = TravelOrder::findOrFail($travelOrderId);
+                
+                $updateData = [
+                    'status' => $actualStatus,
+                    'remarks' => $validated['remarks'],
+                    'approved_by' => $user->id,
+                    'approved_at' => now(),
+                ];
+
+                // If this is a force approval, add force approval fields
+                if ($validated['status'] === 'force_approved') {
+                    $updateData['force_approved'] = true;
+                    $updateData['force_approved_by'] = $user->id;
+                    $updateData['force_approved_at'] = now();
+                    $updateData['force_approve_remarks'] = $validated['remarks'] ?? 'Force approved by admin';
+                }
+
+                $travelOrder->update($updateData);
+                $successCount++;
+
+                \Log::info("Successfully updated travel order #{$travelOrderId}", [
+                    'from_status' => $travelOrder->getOriginal('status'),
+                    'to_status' => $actualStatus,
+                    'by_user' => $user->name
+                ]);
+            } catch (\Exception $e) {
+                $failCount++;
+                $errors[] = "Error updating travel order #{$travelOrderId}: " . $e->getMessage();
+                \Log::error("Error updating travel order #{$travelOrderId}: " . $e->getMessage());
+            }
+        }
+
+        DB::commit();
+
+        $actionText = $validated['status'] === 'force_approved' ? 'force approved' : $actualStatus;
+        $message = "Successfully {$actionText} {$successCount} travel order(s).";
+        
+        if ($failCount > 0) {
+            $message .= " {$failCount} updates failed.";
+        }
+
+        // For AJAX requests, return JSON response
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => $message,
+                'success' => true,
+                'errors' => $errors,
+                'successCount' => $successCount,
+                'failCount' => $failCount
+            ]);
+        }
+
+        // For regular requests, redirect back with fresh data
+        $freshTravelOrders = $this->getFreshTravelOrdersForUser($user);
+        
+        return redirect()->back()->with([
+            'message' => $message,
+            'travelOrders' => $freshTravelOrders
+        ]);
+
+    } catch (\Exception $e) {
+        DB::rollBack();
+        
+        \Log::error('Error during bulk travel order update', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString()
+        ]);
+
+        if ($request->expectsJson()) {
+            return response()->json([
+                'message' => 'Error updating travel order statuses: ' . $e->getMessage(),
+                'success' => false
+            ], 500);
+        }
+
+        return redirect()->back()->with('error', 'Error updating travel order statuses: ' . $e->getMessage());
+    }
+}
 
     /**
      * Force approve travel orders (Superadmin only)
