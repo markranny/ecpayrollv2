@@ -431,6 +431,8 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('/slvl/bank/{employeeId}', [SLVLController::class, 'getSLVLBank'])
             ->name('slvl.getSLVLBank');
 
+        Route::get('/slvl/employees-bank-data', [SLVLController::class, 'getEmployeesWithBankData'])->name('slvl.getEmployeesWithBankData');
+
         Route::post('/slvl/add-days-to-bank', [SLVLController::class, 'addDaysToBank'])
             ->name('slvl.addDaysToBank');
             

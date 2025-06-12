@@ -195,138 +195,123 @@ class OffsetController extends Controller
     }
 
     /**
-     * Update the status of an offset request.
-     */
-    public function updateStatus(Request $request, $id)
-    {
-        $user = Auth::user();
-        $offset = Offset::findOrFail($id);
-        
-        $validated = $request->validate([
-            'status' => 'required|in:approved,rejected,force_approved',
-            'remarks' => 'nullable|string|max:500',
-        ]);
+ * Update the status of an offset request.
+ */
+public function updateStatus(Request $request, $id)
+{
+    $user = Auth::user();
+    $offset = Offset::findOrFail($id);
+    
+    $validated = $request->validate([
+        'status' => 'required|in:approved,rejected,force_approved',
+        'remarks' => 'nullable|string|max:500',
+    ]);
 
-        // Check permission
-        $canUpdate = false;
-        $isForceApproval = $validated['status'] === 'force_approved';
-        
-        $userRoles = $this->getUserRoles($user);
-        
-        // Only superadmin can force approve
-        if ($isForceApproval && $userRoles['isSuperAdmin']) {
-            $canUpdate = true;
-            // Force approval becomes a regular approval but with admin override
-            $validated['status'] = 'approved';
-        }
-        // Department manager can approve/reject for their department
-        elseif ($userRoles['isDepartmentManager'] && 
-            in_array($offset->employee->Department, $userRoles['managedDepartments']) &&
-            !$isForceApproval) {
-            $canUpdate = true;
-        }
-        // HRD manager or superadmin can approve/reject any request
-        elseif (($userRoles['isHrdManager'] || $userRoles['isSuperAdmin']) && !$isForceApproval) {
-            $canUpdate = true;
-        }
+    // Check permission
+    $canUpdate = false;
+    $isForceApproval = $validated['status'] === 'force_approved';
+    
+    $userRoles = $this->getUserRoles($user);
+    
+    // Only superadmin can force approve
+    if ($isForceApproval && $userRoles['isSuperAdmin']) {
+        $canUpdate = true;
+        // Force approval becomes a regular approval but with admin override
+        $validated['status'] = 'approved';
+    }
+    // Department manager can approve/reject for their department
+    elseif ($userRoles['isDepartmentManager'] && 
+        in_array($offset->employee->Department, $userRoles['managedDepartments']) &&
+        !$isForceApproval) {
+        $canUpdate = true;
+    }
+    // HRD manager or superadmin can approve/reject any request
+    elseif (($userRoles['isHrdManager'] || $userRoles['isSuperAdmin']) && !$isForceApproval) {
+        $canUpdate = true;
+    }
 
-        if (!$canUpdate) {
-            return response()->json([
-                'message' => 'You are not authorized to update this offset request.'
-            ], 403);
-        }
+    if (!$canUpdate) {
+        return redirect()->back()->with('error', 'You are not authorized to update this offset request.');
+    }
 
-        DB::beginTransaction();
+    DB::beginTransaction();
+    
+    try {
+        // Special case for force approval by superadmin
+        if ($isForceApproval) {
+            $offset->remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
+        } else {
+            $offset->remarks = $validated['remarks'];
+        }
         
-        try {
-            // Special case for force approval by superadmin
-            if ($isForceApproval) {
-                $offset->remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
-            } else {
-                $offset->remarks = $validated['remarks'];
+        $oldStatus = $offset->status;
+        $offset->status = $validated['status'];
+        $offset->approved_by = $user->id;
+        $offset->approved_at = now();
+        $offset->save();
+        
+        // Update offset bank if approved
+        if ($offset->status === 'approved' && $oldStatus !== 'approved') {
+            $employee = $offset->employee;
+            
+            // Create or get offset bank
+            $offsetBank = $employee->offsetBank;
+            if (!$offsetBank) {
+                $offsetBank = new OffsetBank([
+                    'employee_id' => $employee->id,
+                    'total_hours' => 0,
+                    'used_hours' => 0,
+                    'remaining_hours' => 0,
+                    'last_updated' => now()
+                ]);
+                $offsetBank->save();
             }
             
-            $oldStatus = $offset->status;
-            $offset->status = $validated['status'];
-            $offset->approved_by = $user->id;
-            $offset->approved_at = now();
-            $offset->save();
+            // Update bank based on transaction type
+            if ($offset->transaction_type === 'credit') {
+                $offsetBank->addHours($offset->hours, "Credit from offset ID {$offset->id}");
+            } else {
+                // Check if there are enough hours in the bank
+                if ($offsetBank->remaining_hours < $offset->hours) {
+                    DB::rollBack();
+                    return redirect()->back()->with('error', 'Insufficient hours in offset bank. Employee only has ' . $offsetBank->remaining_hours . ' hours available.');
+                }
+                
+                $offsetBank->useHours($offset->hours, "Debit from offset ID {$offset->id}");
+            }
             
-            // Update offset bank if approved
-            if ($offset->status === 'approved' && $oldStatus !== 'approved') {
-                $employee = $offset->employee;
-                
-                // Create or get offset bank
-                $offsetBank = $employee->offsetBank;
-                if (!$offsetBank) {
-                    $offsetBank = new OffsetBank([
-                        'employee_id' => $employee->id,
-                        'total_hours' => 0,
-                        'used_hours' => 0,
-                        'remaining_hours' => 0,
-                        'last_updated' => now()
-                    ]);
-                    $offsetBank->save();
-                }
-                
-                // Update bank based on transaction type
+            $offset->is_bank_updated = true;
+            $offset->save();
+        }
+        
+        // Undo bank update if status changed from approved to something else
+        if ($oldStatus === 'approved' && $offset->status !== 'approved' && $offset->is_bank_updated) {
+            $offsetBank = $offset->employee->offsetBank;
+            
+            if ($offsetBank) {
+                // Reverse the transaction
                 if ($offset->transaction_type === 'credit') {
-                    $offsetBank->addHours($offset->hours, "Credit from offset ID {$offset->id}");
+                    // Subtract hours from bank
+                    $offsetBank->useHours($offset->hours, "Reversal of credit from offset ID {$offset->id}");
                 } else {
-                    // Check if there are enough hours in the bank
-                    if ($offsetBank->remaining_hours < $offset->hours) {
-                        DB::rollBack();
-                        return response()->json([
-                            'message' => 'Insufficient hours in offset bank. Employee only has ' . $offsetBank->remaining_hours . ' hours available.'
-                        ], 400);
-                    }
-                    
-                    $offsetBank->useHours($offset->hours, "Debit from offset ID {$offset->id}");
+                    // Add hours back to bank
+                    $offsetBank->addHours($offset->hours, "Reversal of debit from offset ID {$offset->id}");
                 }
                 
-                $offset->is_bank_updated = true;
+                $offset->is_bank_updated = false;
                 $offset->save();
             }
-            
-            // Undo bank update if status changed from approved to something else
-            if ($oldStatus === 'approved' && $offset->status !== 'approved' && $offset->is_bank_updated) {
-                $offsetBank = $offset->employee->offsetBank;
-                
-                if ($offsetBank) {
-                    // Reverse the transaction
-                    if ($offset->transaction_type === 'credit') {
-                        // Subtract hours from bank
-                        $offsetBank->useHours($offset->hours, "Reversal of credit from offset ID {$offset->id}");
-                    } else {
-                        // Add hours back to bank
-                        $offsetBank->addHours($offset->hours, "Reversal of debit from offset ID {$offset->id}");
-                    }
-                    
-                    $offset->is_bank_updated = false;
-                    $offset->save();
-                }
-            }
-
-            DB::commit();
-            
-            // Get fresh data
-            $offset = Offset::with(['employee', 'offset_type', 'approver'])->find($offset->id);
-            
-            // Get full updated list
-            $offsets = $this->getFilteredOffsets($user);
-
-            return response()->json([
-                'message' => 'Offset status updated successfully.',
-                'offset' => $offset,
-                'offsets' => $offsets
-            ]);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return response()->json([
-                'message' => 'Failed to update offset status: ' . $e->getMessage()
-            ], 500);
         }
+
+        DB::commit();
+        
+        return redirect()->back()->with('message', 'Offset status updated successfully.');
+        
+    } catch (\Exception $e) {
+        DB::rollBack();
+        return redirect()->back()->with('error', 'Failed to update offset status: ' . $e->getMessage());
     }
+}
 
     /**
      * Bulk update the status of multiple offset requests.
@@ -770,62 +755,55 @@ class OffsetController extends Controller
     }
     
     /**
-     * Add hours directly to an employee's offset bank.
-     */
-    public function addHoursToBank(Request $request)
-    {
-        // Only HRD manager and superadmin can add hours directly
-        $user = Auth::user();
-        $userRoles = $this->getUserRoles($user);
-        
-        if (!$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
-            return response()->json([
-                'message' => 'You are not authorized to perform this action.'
-            ], 403);
-        }
-        
-        $validated = $request->validate([
-            'employee_id' => 'required|integer|exists:employees,id',
-            'hours' => 'required|numeric|min:0.5|max:100',
-            'notes' => 'nullable|string|max:500',
-        ]);
-        
-        DB::beginTransaction();
-        
-        try {
-            $employee = Employee::find($validated['employee_id']);
-            
-            // Create or get offset bank
-            $offsetBank = $employee->offsetBank;
-            if (!$offsetBank) {
-                $offsetBank = new OffsetBank([
-                    'employee_id' => $employee->id,
-                    'total_hours' => 0,
-                    'used_hours' => 0,
-                    'remaining_hours' => 0,
-                    'last_updated' => now()
-                ]);
-                $offsetBank->save();
-            }
-            
-            // Add hours to bank
-            $notes = $validated['notes'] ?? "Manual addition by {$user->name}";
-            $offsetBank->addHours($validated['hours'], $notes);
-            
-            DB::commit();
-            
-            return response()->json([
-                'message' => 'Hours added to offset bank successfully.',
-                'offset_bank' => $offsetBank
-            ]);
-            
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return response()->json([
-                'message' => 'Failed to add hours to offset bank: ' . $e->getMessage()
-            ], 500);
-        }
+ * Add hours directly to an employee's offset bank.
+ */
+public function addHoursToBank(Request $request)
+{
+    // Only HRD manager and superadmin can add hours directly
+    $user = Auth::user();
+    $userRoles = $this->getUserRoles($user);
+    
+    if (!$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+        return redirect()->back()->with('error', 'You are not authorized to perform this action.');
     }
+    
+    $validated = $request->validate([
+        'employee_id' => 'required|integer|exists:employees,id',
+        'hours' => 'required|numeric|min:0.5|max:100',
+        'notes' => 'nullable|string|max:500',
+    ]);
+    
+    DB::beginTransaction();
+    
+    try {
+        $employee = Employee::find($validated['employee_id']);
+        
+        // Create or get offset bank
+        $offsetBank = $employee->offsetBank;
+        if (!$offsetBank) {
+            $offsetBank = new OffsetBank([
+                'employee_id' => $employee->id,
+                'total_hours' => 0,
+                'used_hours' => 0,
+                'remaining_hours' => 0,
+                'last_updated' => now()
+            ]);
+            $offsetBank->save();
+        }
+        
+        // Add hours to bank
+        $notes = $validated['notes'] ?? "Manual addition by {$user->name}";
+        $offsetBank->addHours($validated['hours'], $notes);
+        
+        DB::commit();
+        
+        return redirect()->back()->with('message', 'Hours added to offset bank successfully.');
+        
+    } catch (\Exception $e) {
+        DB::rollBack();
+        return redirect()->back()->with('error', 'Failed to add hours to offset bank: ' . $e->getMessage());
+    }
+}
     
     /**
      * Get the offset bank details for an employee.

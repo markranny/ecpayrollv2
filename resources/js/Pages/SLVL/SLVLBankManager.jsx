@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { Search, RefreshCw, Calendar, Plus, Eye } from 'lucide-react';
 import { router } from '@inertiajs/react';
 
-const SLVLBankManager = ({ employees }) => {
+const SLVLBankManager = ({ employees: initialEmployees }) => {
     const [searchTerm, setSearchTerm] = useState('');
-    const [filteredEmployees, setFilteredEmployees] = useState(employees || []);
+    const [employees, setEmployees] = useState(initialEmployees || []);
+    const [filteredEmployees, setFilteredEmployees] = useState(initialEmployees || []);
     const [selectedEmployee, setSelectedEmployee] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [isLoadingEmployees, setIsLoadingEmployees] = useState(false);
     const [bankDetails, setBankDetails] = useState(null);
     const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
     
@@ -42,7 +44,26 @@ const SLVLBankManager = ({ employees }) => {
         yearOptions.push(year);
     }
     
-    // Update filtered employees when search term changes
+    // Function to fetch employees with bank data for specific year
+    const fetchEmployeesForYear = async (year) => {
+        setIsLoadingEmployees(true);
+        try {
+            const response = await fetch(`/slvl/employees-bank-data?year=${year}`);
+            if (!response.ok) {
+                throw new Error('Failed to fetch employees bank data');
+            }
+            
+            const data = await response.json();
+            setEmployees(data.employees);
+        } catch (error) {
+            console.error('Error fetching employees bank data:', error);
+            alert('Failed to fetch employees bank data for the selected year. Please try again.');
+        } finally {
+            setIsLoadingEmployees(false);
+        }
+    };
+    
+    // Update filtered employees when search term or employees change
     useEffect(() => {
         if (!employees) return;
         
@@ -83,10 +104,29 @@ const SLVLBankManager = ({ employees }) => {
     };
     
     // Handle year change
-    const handleYearChange = (year) => {
+    const handleYearChange = async (year) => {
         setSelectedYear(year);
+        
+        // Update employees list for the new year
+        await fetchEmployeesForYear(year);
+        
+        // If there's a selected employee, refresh their details for the new year
         if (selectedEmployee) {
-            handleSelectEmployee(selectedEmployee);
+            setIsLoading(true);
+            try {
+                const response = await fetch(`/slvl/bank/${selectedEmployee.id}?year=${year}`);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch SLVL bank details');
+                }
+                
+                const data = await response.json();
+                setBankDetails(data);
+            } catch (error) {
+                console.error('Error fetching SLVL bank details:', error);
+                alert('Failed to fetch SLVL bank details. Please try again.');
+            } finally {
+                setIsLoading(false);
+            }
         }
     };
     
@@ -175,7 +215,7 @@ const SLVLBankManager = ({ employees }) => {
         
         router.post(route('slvl.addDaysToBank'), formData, {
             preserveScroll: true,
-            onSuccess: (page) => {
+            onSuccess: async (page) => {
                 setSubmitting(false);
                 setShowAddDaysModal(false);
                 
@@ -185,6 +225,9 @@ const SLVLBankManager = ({ employees }) => {
                 } else {
                     alert(`Successfully added ${addDaysForm.days} ${addDaysForm.leave_type} leave days to ${addDaysForm.employee_name}'s bank`);
                 }
+                
+                // Refresh the employees list and bank details
+                await fetchEmployeesForYear(selectedYear);
                 
                 // Refresh the bank details if viewing the same employee
                 if (selectedEmployee && selectedEmployee.id === addDaysForm.employee_id) {
@@ -200,9 +243,6 @@ const SLVLBankManager = ({ employees }) => {
                     year: selectedYear,
                     notes: ''
                 });
-                
-                // Reload the page to get fresh data
-                window.location.reload();
             },
             onError: (errors) => {
                 setSubmitting(false);
@@ -248,7 +288,7 @@ const SLVLBankManager = ({ employees }) => {
         
         router.post(route('slvl.bulkAddDaysToBank'), formData, {
             preserveScroll: true,
-            onSuccess: (page) => {
+            onSuccess: async (page) => {
                 setBulkSubmitting(false);
                 setShowBulkAddModal(false);
                 
@@ -259,6 +299,9 @@ const SLVLBankManager = ({ employees }) => {
                     alert(`Successfully added ${bulkAddForm.days} ${bulkAddForm.leave_type} leave days to ${bulkAddForm.employee_ids.length} employee(s)`);
                 }
                 
+                // Refresh the employees list
+                await fetchEmployeesForYear(selectedYear);
+                
                 // Reset form
                 setBulkAddForm({
                     employee_ids: [],
@@ -267,9 +310,6 @@ const SLVLBankManager = ({ employees }) => {
                     year: selectedYear,
                     notes: ''
                 });
-                
-                // Reload the page to get fresh data
-                window.location.reload();
             },
             onError: (errors) => {
                 setBulkSubmitting(false);
@@ -329,11 +369,16 @@ const SLVLBankManager = ({ employees }) => {
                             className="rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                             value={selectedYear}
                             onChange={(e) => handleYearChange(parseInt(e.target.value))}
+                            disabled={isLoadingEmployees}
                         >
                             {yearOptions.map(year => (
                                 <option key={year} value={year}>{year}</option>
                             ))}
                         </select>
+                        
+                        {isLoadingEmployees && (
+                            <RefreshCw className="h-4 w-4 text-indigo-500 animate-spin" />
+                        )}
                         
                         {/* Bulk Add Buttons */}
                         <div className="flex space-x-2 ml-4">
@@ -374,11 +419,21 @@ const SLVLBankManager = ({ employees }) => {
                                 className="pl-10 w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
+                                disabled={isLoadingEmployees}
                             />
                         </div>
                     </div>
                     
-                    <div className="overflow-auto max-h-[500px]">
+                    <div className="overflow-auto max-h-[500px] relative">
+                        {isLoadingEmployees && (
+                            <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-10">
+                                <div className="text-center">
+                                    <RefreshCw className="h-6 w-6 text-indigo-500 animate-spin mx-auto mb-2" />
+                                    <span className="text-sm text-gray-600">Loading employees...</span>
+                                </div>
+                            </div>
+                        )}
+                        
                         {filteredEmployees.length === 0 ? (
                             <div className="p-4 text-center text-gray-500">
                                 <Search className="h-8 w-8 mx-auto mb-2 text-gray-400" />

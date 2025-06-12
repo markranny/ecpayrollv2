@@ -949,9 +949,9 @@ public function forceApprove(Request $request)
 }
 
     /**
-     * Update the status of an overtime request.
-     */
-    public function updateStatus(Request $request, Overtime $overtime)
+ * Update the status of an overtime request.
+ */
+public function updateStatus(Request $request, Overtime $overtime)
 {
     $user = Auth::user();
     
@@ -989,18 +989,8 @@ public function forceApprove(Request $request)
                 ]);
             }
             
-            // Get fresh overtime data for the response
-            $overtime = Overtime::with(['employee', 'creator', 'departmentManager', 'departmentApprover', 'hrdApprover'])
-                ->find($overtime->id);
-                
-            // Get full updated list
-            $overtimes = $this->getFilteredOvertimes($user);
-
-            return response()->json([
-                'message' => 'Overtime remarks updated successfully.',
-                'overtime' => $overtime,
-                'overtimes' => $overtimes
-            ]);
+            return redirect()->back()->with('message', 'Overtime remarks updated successfully.');
+            
         } catch (\Exception $e) {
             // Log the error
             \Log::error('Failed to update overtime remarks', [
@@ -1009,10 +999,7 @@ public function forceApprove(Request $request)
                 'trace' => $e->getTraceAsString()
             ]);
             
-            // Return error response
-            return response()->json([
-                'message' => 'Failed to update overtime remarks: ' . $e->getMessage()
-            ], 500);
+            return redirect()->back()->with('error', 'Failed to update overtime remarks: ' . $e->getMessage());
         }
     }
 
@@ -1066,9 +1053,7 @@ public function forceApprove(Request $request)
             'requested_status' => $validated['status']
         ]);
         
-        return response()->json([
-            'message' => 'You are not authorized to update this overtime request status.'
-        ], 403);
+        return redirect()->back()->with('error', 'You are not authorized to update this overtime request status.');
     }
 
     try {
@@ -1110,18 +1095,8 @@ public function forceApprove(Request $request)
             'by_user' => $user->name
         ]);
 
-        // Get fresh overtime data for the response
-        $overtime = Overtime::with(['employee', 'creator', 'departmentManager', 'departmentApprover', 'hrdApprover'])
-            ->find($overtime->id);
-            
-        // Get full updated list
-        $overtimes = $this->getFilteredOvertimes($user);
-
-        return response()->json([
-            'message' => 'Overtime status updated successfully.',
-            'overtime' => $overtime,
-            'overtimes' => $overtimes
-        ]);
+        return redirect()->back()->with('message', 'Overtime status updated successfully.');
+        
     } catch (\Exception $e) {
         // Log the error
         \Log::error('Failed to update overtime status', [
@@ -1130,10 +1105,7 @@ public function forceApprove(Request $request)
             'trace' => $e->getTraceAsString()
         ]);
         
-        // Return error response
-        return response()->json([
-            'message' => 'Failed to update overtime status: ' . $e->getMessage()
-        ], 500);
+        return redirect()->back()->with('error', 'Failed to update overtime status: ' . $e->getMessage());
     }
 }
 
