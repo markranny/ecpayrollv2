@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
-import { Download, Search, X, Filter } from 'lucide-react';
+import { Download, Search, X, Filter, Loader2 } from 'lucide-react';
 import RetroStatusBadge from './RetroStatusBadge';
 import RetroDetailModal from './RetroDetailModal';
 import RetroBulkActionModal from './RetroBulkActionModal';
@@ -12,7 +12,8 @@ const RetroList = ({
     retros, 
     onStatusUpdate, 
     onDelete, 
-    userRoles = {}
+    userRoles = {},
+    processing = false
 }) => {
     const [selectedRetro, setSelectedRetro] = useState(null);
     const [showModal, setShowModal] = useState(false);
@@ -20,8 +21,11 @@ const RetroList = ({
     const [filteredRetros, setFilteredRetros] = useState(retros || []);
     const [localRetros, setLocalRetros] = useState(retros || []);
     
-    // Add processing state
-    const [processing, setProcessing] = useState(false);
+    // Loading states for various operations
+    const [localProcessing, setLocalProcessing] = useState(false);
+    const [deletingId, setDeletingId] = useState(null);
+    const [updatingId, setUpdatingId] = useState(null);
+    const [exporting, setExporting] = useState(false);
     
     // Search functionality
     const [searchTerm, setSearchTerm] = useState('');
@@ -101,6 +105,7 @@ const RetroList = ({
     
     // Handle status filter change
     const handleStatusFilterChange = (e) => {
+        if (processing || localProcessing) return;
         const status = e.target.value;
         setFilterStatus(status);
         applyFilters(localRetros, status, searchTerm, dateRange);
@@ -108,6 +113,7 @@ const RetroList = ({
     
     // Handle search input change
     const handleSearchChange = (e) => {
+        if (processing || localProcessing) return;
         const value = e.target.value;
         setSearchTerm(value);
         applyFilters(localRetros, filterStatus, value, dateRange);
@@ -115,6 +121,7 @@ const RetroList = ({
     
     // Handle date range changes
     const handleDateRangeChange = (field, value) => {
+        if (processing || localProcessing) return;
         const newDateRange = { ...dateRange, [field]: value };
         setDateRange(newDateRange);
         applyFilters(localRetros, filterStatus, searchTerm, newDateRange);
@@ -122,6 +129,7 @@ const RetroList = ({
     
     // Clear all filters
     const clearFilters = () => {
+        if (processing || localProcessing) return;
         setFilterStatus('');
         setSearchTerm('');
         setDateRange({ from: '', to: '' });
@@ -130,6 +138,7 @@ const RetroList = ({
     
     // Open detail modal
     const handleViewDetail = (retro) => {
+        if (processing || localProcessing) return;
         setSelectedRetro(retro);
         setShowModal(true);
     };
@@ -142,15 +151,49 @@ const RetroList = ({
     
     // Handle status update (from modal)
     const handleStatusUpdate = (id, data) => {
+        setUpdatingId(id);
+        setLocalProcessing(true);
+        
         if (typeof onStatusUpdate === 'function') {
-            onStatusUpdate(id, data);
+            try {
+                const result = onStatusUpdate(id, data);
+                
+                if (result && typeof result.then === 'function') {
+                    result
+                        .then(() => {
+                            setUpdatingId(null);
+                            setLocalProcessing(false);
+                            handleCloseModal();
+                        })
+                        .catch((error) => {
+                            console.error('Error updating status:', error);
+                            toast.error('Error: Unable to update status. Please try again.');
+                            setUpdatingId(null);
+                            setLocalProcessing(false);
+                        });
+                } else {
+                    setUpdatingId(null);
+                    setLocalProcessing(false);
+                    handleCloseModal();
+                }
+            } catch (error) {
+                console.error('Error updating status:', error);
+                toast.error('Error: Unable to update status. Please try again.');
+                setUpdatingId(null);
+                setLocalProcessing(false);
+            }
+        } else {
+            console.error('onStatusUpdate is not a function');
+            toast.error('Error: Unable to update status. Please refresh the page and try again.');
+            setUpdatingId(null);
+            setLocalProcessing(false);
         }
-        handleCloseModal();
     };
     
     const handleDelete = (id) => {
         if (confirm('Are you sure you want to delete this retro request?')) {
-            setProcessing(true);
+            setDeletingId(id);
+            setLocalProcessing(true);
             
             router.delete(route('retro.destroy', id), {
                 preserveScroll: true,
@@ -161,20 +204,23 @@ const RetroList = ({
                     const updatedLocalRetros = localRetros.filter(item => item.id !== id);
                     setLocalRetros(updatedLocalRetros);
                     
-                    // Also update filtered retros
-                    setFilteredRetros(prev => prev.filter(item => item.id !== id));
+                    // Re-apply current filters to the updated data
+                    applyFilters(updatedLocalRetros, filterStatus, searchTerm, dateRange);
                     
                     // Clear selection if the deleted item was selected
                     if (selectedIds.includes(id)) {
                         setSelectedIds(prev => prev.filter(itemId => itemId !== id));
                     }
                     
-                    setProcessing(false);
+                    setDeletingId(null);
+                    setLocalProcessing(false);
                 },
                 onError: (errors) => {
                     console.error('Error deleting:', errors);
-                    toast.error('Failed to delete retro request');
-                    setProcessing(false);
+                    toast.error('Failed to delete retro request: ' + 
+                        (errors?.message || 'Unknown error'));
+                    setDeletingId(null);
+                    setLocalProcessing(false);
                 }
             });
         }
@@ -192,6 +238,8 @@ const RetroList = ({
 
     // Multiple selection handlers
     const toggleSelectAll = () => {
+        if (processing || localProcessing) return;
+        
         setSelectAll(!selectAll);
         if (!selectAll) {
             let selectableIds = [];
@@ -209,6 +257,8 @@ const RetroList = ({
     };
 
     const toggleSelectItem = (id) => {
+        if (processing || localProcessing) return;
+        
         setSelectedIds(prevIds => {
             if (prevIds.includes(id)) {
                 return prevIds.filter(itemId => itemId !== id);
@@ -223,6 +273,7 @@ const RetroList = ({
             alert('Please select at least one retro request');
             return;
         }
+        if (processing || localProcessing) return;
         setShowBulkActionModal(true);
     };
 
@@ -231,7 +282,7 @@ const RetroList = ({
     };
 
     const handleBulkStatusUpdate = (status, remarks) => {
-        setProcessing(true);
+        setLocalProcessing(true);
         
         const data = {
             retro_ids: selectedIds,
@@ -278,18 +329,23 @@ const RetroList = ({
                 
                 // Close modal and reset processing state
                 handleCloseBulkActionModal();
-                setProcessing(false);
+                setLocalProcessing(false);
             },
             onError: (errors) => {
                 console.error('Error during bulk update:', errors);
-                toast.error('Failed to update retro requests');
-                setProcessing(false);
+                toast.error('Failed to update retro requests: ' + 
+                    (errors?.message || 'Unknown error'));
+                setLocalProcessing(false);
             }
         });
     }
     
     // Export to Excel functionality
     const exportToExcel = () => {
+        if (processing || localProcessing || exporting) return;
+        
+        setExporting(true);
+        
         const queryParams = new URLSearchParams();
         
         if (filterStatus) {
@@ -309,7 +365,17 @@ const RetroList = ({
         }
         
         const exportUrl = `/retro/export?${queryParams.toString()}`;
-        window.open(exportUrl, '_blank');
+        
+        const link = document.createElement('a');
+        link.href = exportUrl;
+        link.target = '_blank';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        setTimeout(() => {
+            setExporting(false);
+        }, 2000);
     };
 
     const canSelectRetro = (retro) => {
@@ -333,8 +399,33 @@ const RetroList = ({
         }).format(value);
     };
 
+    // Helper function for bulk action button content
+    const bulkActionButtonContent = () => {
+        if (localProcessing || processing) {
+            return (
+                <>
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    Processing...
+                </>
+            );
+        }
+        return `Bulk Action (${selectedIds.length})`;
+    };
+
     return (
-        <div className="bg-white shadow-md rounded-lg overflow-hidden flex flex-col h-[62vh]">
+        <div className="bg-white shadow-md rounded-lg overflow-hidden flex flex-col h-[62vh] relative">
+            {/* Global loading overlay for the entire list */}
+            {(processing || localProcessing) && (
+                <div className="absolute inset-0 bg-white bg-opacity-75 flex items-center justify-center z-40">
+                    <div className="text-center">
+                        <Loader2 className="h-8 w-8 animate-spin mx-auto mb-2 text-indigo-600" />
+                        <p className="text-sm text-gray-600">
+                            {processing ? 'Processing retro requests...' : 'Updating data...'}
+                        </p>
+                    </div>
+                </div>
+            )}
+            
             <div className="p-4 border-b">
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center space-y-4 md:space-y-0">
                     <h3 className="text-lg font-semibold">Retro Requests</h3>
@@ -343,18 +434,28 @@ const RetroList = ({
                         {/* Export Button */}
                         <button
                             onClick={exportToExcel}
-                            className="px-3 py-1 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 flex items-center"
+                            className="px-3 py-1 bg-green-600 text-white rounded-md text-sm hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 flex items-center disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
                             title="Export to Excel"
+                            disabled={exporting || processing || localProcessing}
                         >
-                            <Download className="h-4 w-4 mr-1" />
-                            Export
+                            {exporting ? (
+                                <>
+                                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                    Exporting...
+                                </>
+                            ) : (
+                                <>
+                                    <Download className="h-4 w-4 mr-1" />
+                                    Export
+                                </>
+                            )}
                         </button>
 
                         {/* Force Approve Button - Only visible for SuperAdmin */}
                         {userRoles.isSuperAdmin && (
                             <RetroForceApproveButton 
                                 selectedIds={selectedIds} 
-                                disabled={processing}
+                                disabled={processing || localProcessing}
                             />
                         )}
                         
@@ -362,10 +463,10 @@ const RetroList = ({
                         {selectedIds.length > 0 && (
                             <button
                                 onClick={handleOpenBulkActionModal}
-                                className="px-3 py-1 bg-indigo-600 text-white rounded-md text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                disabled={processing}
+                                className="px-3 py-1 bg-indigo-600 text-white rounded-md text-sm hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 flex items-center disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
+                                disabled={processing || localProcessing}
                             >
-                                Bulk Action ({selectedIds.length})
+                                {bulkActionButtonContent()}
                             </button>
                         )}
                         
@@ -376,6 +477,7 @@ const RetroList = ({
                                 className="rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                 value={filterStatus}
                                 onChange={handleStatusFilterChange}
+                                disabled={processing || localProcessing}
                             >
                                 <option value="">All Statuses</option>
                                 <option value="pending">Pending</option>
@@ -398,6 +500,7 @@ const RetroList = ({
                             className="pl-10 w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                             value={searchTerm}
                             onChange={handleSearchChange}
+                            disabled={processing || localProcessing}
                         />
                     </div>
                     
@@ -412,6 +515,7 @@ const RetroList = ({
                                 className="rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                 value={dateRange.from}
                                 onChange={(e) => handleDateRangeChange('from', e.target.value)}
+                                disabled={processing || localProcessing}
                             />
                         </div>
                         
@@ -425,6 +529,7 @@ const RetroList = ({
                                 className="rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                 value={dateRange.to}
                                 onChange={(e) => handleDateRangeChange('to', e.target.value)}
+                                disabled={processing || localProcessing}
                             />
                         </div>
                         
@@ -432,8 +537,9 @@ const RetroList = ({
                         {(filterStatus || searchTerm || dateRange.from || dateRange.to) && (
                             <button
                                 onClick={clearFilters}
-                                className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md text-sm flex items-center"
+                                className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md text-sm flex items-center disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
                                 title="Clear all filters"
+                                disabled={processing || localProcessing}
                             >
                                 <X className="h-4 w-4 mr-1" />
                                 Clear
@@ -454,6 +560,7 @@ const RetroList = ({
                                         className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                         checked={selectAll && selectedIds.length === selectableItemsCount}
                                         onChange={toggleSelectAll}
+                                        disabled={processing || localProcessing}
                                     />
                                 </th>
                             )}
@@ -484,12 +591,14 @@ const RetroList = ({
                         {filteredRetros.length === 0 ? (
                             <tr>
                                 <td colSpan={selectableItemsCount > 0 ? "8" : "7"} className="px-6 py-4 text-center text-sm text-gray-500">
-                                    No retro records found
+                                    {processing || localProcessing ? 'Loading retro requests...' : 'No retro records found'}
                                 </td>
                             </tr>
                         ) : (
                             filteredRetros.map(retro => (
-                                <tr key={retro.id} className="hover:bg-gray-50">
+                                <tr key={retro.id} className={`hover:bg-gray-50 transition-colors duration-200 ${
+                                    (deletingId === retro.id || updatingId === retro.id) ? 'opacity-50' : ''
+                                }`}>
                                     {selectableItemsCount > 0 && (
                                         <td className="px-4 py-4">
                                             {canSelectRetro(retro) && (
@@ -498,6 +607,7 @@ const RetroList = ({
                                                     className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                                     checked={selectedIds.includes(retro.id)}
                                                     onChange={() => toggleSelectItem(retro.id)}
+                                                    disabled={processing || localProcessing || deletingId === retro.id || updatingId === retro.id}
                                                 />
                                             )}
                                         </td>
@@ -510,6 +620,9 @@ const RetroList = ({
                                         </div>
                                         <div className="text-sm text-gray-500">
                                             {retro.employee?.idno || 'N/A'}
+                                        </div>
+                                        <div className="text-xs text-gray-400">
+                                            {retro.employee?.Department || 'No Dept'}
                                         </div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
@@ -540,32 +653,66 @@ const RetroList = ({
                                         {retro.approver ? retro.approver.name : 'N/A'}
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                        <button
-                                            onClick={() => handleViewDetail(retro)}
-                                            className="text-indigo-600 hover:text-indigo-900 mr-3"
-                                        >
-                                            View
-                                        </button>
-                                        
-                                        {(retro.status === 'pending' && 
-                                          (userRoles.isSuperAdmin || 
-                                           retro.employee_id === userRoles.employeeId || 
-                                           (userRoles.isDepartmentManager && 
-                                            userRoles.managedDepartments?.includes(retro.employee?.Department)))) && (
+                                        <div className="flex items-center justify-end space-x-2">
                                             <button
-                                                onClick={() => handleDelete(retro.id)}
-                                                className="text-red-600 hover:text-red-900"
-                                                disabled={processing}
+                                                onClick={() => handleViewDetail(retro)}
+                                                className="text-indigo-600 hover:text-indigo-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+                                                disabled={processing || localProcessing || updatingId === retro.id}
                                             >
-                                                Delete
+                                                View
                                             </button>
-                                        )}
+                                            
+                                            {(retro.status === 'pending' && 
+                                              (userRoles.isSuperAdmin || 
+                                               retro.employee_id === userRoles.employeeId || 
+                                               (userRoles.isDepartmentManager && 
+                                                userRoles.managedDepartments?.includes(retro.employee?.Department)))) && (
+                                                <button
+                                                    onClick={() => handleDelete(retro.id)}
+                                                    className="text-red-600 hover:text-red-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center transition-colors duration-200"
+                                                    disabled={processing || localProcessing || deletingId === retro.id}
+                                                >
+                                                    {deletingId === retro.id ? (
+                                                        <>
+                                                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                                            Deleting...
+                                                        </>
+                                                    ) : (
+                                                        'Delete'
+                                                    )}
+                                                </button>
+                                            )}
+                                        </div>
                                     </td>
                                 </tr>
                             ))
                         )}
                     </tbody>
                 </table>
+            </div>
+            
+            {/* Footer with summary information */}
+            <div className="px-4 py-3 bg-gray-50 border-t text-sm text-gray-600">
+                <div className="flex justify-between items-center">
+                    <div>
+                        Showing {filteredRetros.length} of {localRetros.length} retro requests
+                        {selectedIds.length > 0 && (
+                            <span className="ml-4 text-indigo-600 font-medium">
+                                {selectedIds.length} selected
+                            </span>
+                        )}
+                    </div>
+                    
+                    {/* Processing indicator */}
+                    {(processing || localProcessing) && (
+                        <div className="flex items-center text-indigo-600">
+                            <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                            <span className="text-xs">
+                                {processing ? 'Processing...' : 'Updating...'}
+                            </span>
+                        </div>
+                    )}
+                </div>
             </div>
             
             {/* Detail Modal */}
@@ -575,6 +722,8 @@ const RetroList = ({
                     onClose={handleCloseModal}
                     onStatusUpdate={handleStatusUpdate}
                     userRoles={userRoles}
+                    viewOnly={processing || localProcessing}
+                    processing={updatingId === selectedRetro.id}
                 />
             )}
 

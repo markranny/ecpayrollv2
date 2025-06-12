@@ -1,173 +1,412 @@
-// Save this as: resources/js/Pages/Retro/RetroPage.jsx
-import React, { useState, useEffect } from 'react';
-import { router, usePage } from '@inertiajs/react';
-import { Head } from '@inertiajs/react';
-import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
-import Sidebar from '@/Components/Sidebar';
-import RetroList from './RetroList';
-import RetroForm from './RetroForm';
-import { ToastContainer, toast } from 'react-toastify';
-import 'react-toastify/dist/ReactToastify.css';
-import { DollarSign, Plus, ListFilter } from 'lucide-react';
+import React, { useState } from 'react';
+import { format } from 'date-fns';
+import { X, User, Calendar, DollarSign, FileText, CheckCircle, XCircle } from 'lucide-react';
+import RetroStatusBadge from './RetroStatusBadge';
 
-const RetroPage = () => {
-    const { props } = usePage();
-    const { auth, flash = {}, userRoles = {}, retros = [], employees = [], departments = [] } = props;
-    
-    const [retroData, setRetroData] = useState(retros);
-    const [activeTab, setActiveTab] = useState('create');
+const RetroDetailModal = ({ retro, onClose, onStatusUpdate, userRoles = {} }) => {
+    const [status, setStatus] = useState('approved');
+    const [remarks, setRemarks] = useState('');
     const [processing, setProcessing] = useState(false);
-    
-    // Display flash messages
-    useEffect(() => {
-        if (flash && flash.message) {
-            toast.success(flash.message);
+
+    // Check if user can update status
+    const canUpdateStatus = () => {
+        if (retro.status !== 'pending') return false;
+        
+        if (userRoles.isSuperAdmin || userRoles.isHrdManager) {
+            return true;
         }
-        if (flash && flash.error) {
-            toast.error(flash.error);
+        
+        if (userRoles.isDepartmentManager && 
+            userRoles.managedDepartments?.includes(retro.employee?.Department)) {
+            return true;
         }
-    }, [flash]);
-    
-    // Handle form submission
-    const handleSubmitRetro = (formData) => {
-        router.post(route('retro.store'), formData, {
-            onSuccess: (page) => {
-                if (page.props.retros) {
-                    setRetroData(page.props.retros);
-                }
-                toast.success('Retro requests created successfully');
-            },
-            onError: (errors) => {
-                if (errors && typeof errors === 'object') {
-                    Object.keys(errors).forEach(key => {
-                        toast.error(errors[key]);
-                    });
-                } else {
-                    toast.error('An error occurred while submitting form');
-                }
-            }
-        });
+        
+        return false;
     };
-    
-    // Handle status updates (approve/reject)
-    const handleStatusUpdate = (id, data) => {
+
+    // Handle status update
+    const handleStatusUpdate = () => {
         if (processing) return;
+        
+        if (status === 'rejected' && !remarks.trim()) {
+            alert('Please provide remarks for rejection');
+            return;
+        }
         
         setProcessing(true);
         
-        router.post(route('retro.updateStatus', id), data, {
-            preserveScroll: true,
-            onSuccess: (page) => {
-                if (page.props.retros) {
-                    setRetroData(page.props.retros);
-                }
-                toast.success('Retro status updated successfully');
-                setProcessing(false);
-            },
-            onError: (errors) => {
-                let errorMessage = 'An error occurred while updating status';
-                if (errors && typeof errors === 'object') {
-                    errorMessage = Object.values(errors).join(', ');
-                }
-                toast.error(errorMessage);
-                setProcessing(false);
-            }
-        });
+        const data = {
+            status: status,
+            remarks: remarks
+        };
+        
+        onStatusUpdate(retro.id, data);
+        setProcessing(false);
     };
-    
-    // Handle deletion
-    const handleDeleteRetro = (id) => {
-        if (confirm('Are you sure you want to delete this retro request?')) {
-            router.delete(route('retro.destroy', id), {
-                preserveScroll: true,
-                onSuccess: (page) => {
-                    if (page.props.retros) {
-                        setRetroData(page.props.retros);
-                    } else {
-                        setRetroData(retroData.filter(retro => retro.id !== id));
-                    }
-                    toast.success('Retro request deleted successfully');
-                },
-                onError: () => toast.error('Failed to delete retro request')
-            });
+
+    // Format date safely
+    const formatDate = (dateString) => {
+        try {
+            return format(new Date(dateString), 'MMM dd, yyyy');
+        } catch (error) {
+            return 'Invalid date';
         }
     };
-    
+
+    // Format datetime safely
+    const formatDateTime = (dateString) => {
+        try {
+            return format(new Date(dateString), 'MMM dd, yyyy HH:mm');
+        } catch (error) {
+            return 'Invalid date';
+        }
+    };
+
+    // Format currency
+    const formatCurrency = (value) => {
+        return new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'PHP'
+        }).format(value || 0);
+    };
+
+    // Get employee name
+    const getEmployeeName = (employee) => {
+        if (!employee) return 'Unknown Employee';
+        return `${employee.Lname || ''}, ${employee.Fname || ''}`.trim();
+    };
+
+    // Get retro type label
+    const getRetroTypeLabel = (type) => {
+        const types = {
+            'salary': 'Salary Adjustment',
+            'allowance': 'Allowance Adjustment',
+            'overtime': 'Overtime Adjustment',
+            'bonus': 'Bonus Adjustment',
+            'deduction': 'Deduction Adjustment',
+            'other': 'Other Adjustment'
+        };
+        return types[type] || type?.charAt(0).toUpperCase() + type?.slice(1);
+    };
+
+    // Get adjustment type label
+    const getAdjustmentTypeLabel = (type) => {
+        const types = {
+            'increase': 'Increase',
+            'decrease': 'Decrease',
+            'correction': 'Correction',
+            'backdated': 'Backdated Adjustment'
+        };
+        return types[type] || type?.charAt(0).toUpperCase() + type?.slice(1);
+    };
+
+    // Calculate difference
+    const calculateDifference = () => {
+        const original = parseFloat(retro.original_value || 0);
+        const requested = parseFloat(retro.requested_value || 0);
+        return requested - original;
+    };
+
+    const difference = calculateDifference();
+
     return (
-        <AuthenticatedLayout user={auth.user}>
-            <Head title="Retro Management" />
-            
-            <div className="flex min-h-screen bg-gray-50">
-                <Sidebar />
+        <div className="fixed inset-0 z-50 overflow-y-auto">
+            <div className="flex items-center justify-center min-h-screen pt-4 px-4 pb-20 text-center sm:block sm:p-0">
+                <div className="fixed inset-0 transition-opacity" aria-hidden="true">
+                    <div className="absolute inset-0 bg-gray-500 opacity-75"></div>
+                </div>
                 
-                <div className="flex-1 p-8 ml-0">
-                    <div className="max-w-7xl mx-auto">
-                        <div className="flex items-center justify-between mb-8">
-                            <div>
-                                <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                                    <DollarSign className="inline-block w-7 h-7 mr-2 text-indigo-600" />
-                                    Retro Management
-                                </h1>
-                                <p className="text-gray-600">
-                                    Manage retrospective adjustments and corrections
-                                </p>
-                            </div>
+                <span className="hidden sm:inline-block sm:align-middle sm:h-screen" aria-hidden="true">&#8203;</span>
+                
+                <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-4xl sm:w-full">
+                    {/* Header */}
+                    <div className="bg-white px-4 pt-5 pb-4 sm:p-6 border-b border-gray-200">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-lg leading-6 font-medium text-gray-900 flex items-center">
+                                <DollarSign className="h-6 w-6 mr-2 text-indigo-600" />
+                                Retro Request Details
+                            </h3>
+                            <button
+                                onClick={onClose}
+                                className="rounded-md text-gray-400 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                                <X className="h-6 w-6" />
+                            </button>
                         </div>
-                
-                        <div className="bg-white overflow-hidden shadow-sm rounded-lg">
-                            <div className="p-6 bg-white border-b border-gray-200">
-                                <div className="mb-6">
-                                    <div className="border-b border-gray-200">
-                                        <nav className="-mb-px flex space-x-8">
-                                            <button
-                                                className={`${
-                                                    activeTab === 'list'
-                                                        ? 'border-indigo-500 text-indigo-600'
-                                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
-                                                onClick={() => setActiveTab('list')}
-                                            >
-                                                <ListFilter className="w-4 h-4 mr-2" />
-                                                View Retro Requests
-                                            </button>
-                                            <button
-                                                className={`${
-                                                    activeTab === 'create'
-                                                        ? 'border-indigo-500 text-indigo-600'
-                                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
-                                                onClick={() => setActiveTab('create')}
-                                            >
-                                                <Plus className="w-4 h-4 mr-2" />
-                                                New Retro Request
-                                            </button>
-                                        </nav>
+                    </div>
+
+                    {/* Content */}
+                    <div className="bg-white px-4 pt-5 pb-4 sm:p-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            {/* Employee Information */}
+                            <div className="bg-gray-50 p-4 rounded-lg">
+                                <h4 className="font-medium text-gray-900 mb-3 flex items-center">
+                                    <User className="h-5 w-5 mr-2 text-gray-600" />
+                                    Employee Information
+                                </h4>
+                                <div className="space-y-2">
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-700">Name:</span>
+                                        <span className="ml-2 text-sm text-gray-900">
+                                            {getEmployeeName(retro.employee)}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-700">Employee ID:</span>
+                                        <span className="ml-2 text-sm text-gray-900">
+                                            {retro.employee?.idno || 'N/A'}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-700">Department:</span>
+                                        <span className="ml-2 text-sm text-gray-900">
+                                            {retro.employee?.Department || 'N/A'}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-700">Position:</span>
+                                        <span className="ml-2 text-sm text-gray-900">
+                                            {retro.employee?.Jobtitle || 'N/A'}
+                                        </span>
                                     </div>
                                 </div>
-                                
-                                {activeTab === 'list' ? (
-                                    <RetroList 
-                                        retros={retroData} 
-                                        onStatusUpdate={handleStatusUpdate}
-                                        onDelete={handleDeleteRetro}
-                                        userRoles={userRoles}
-                                    />
-                                ) : (
-                                    <RetroForm 
-                                        employees={employees} 
-                                        departments={departments} 
-                                        onSubmit={handleSubmitRetro}
-                                    />
-                                )}
                             </div>
+
+                            {/* Retro Information */}
+                            <div className="bg-gray-50 p-4 rounded-lg">
+                                <h4 className="font-medium text-gray-900 mb-3 flex items-center">
+                                    <Calendar className="h-5 w-5 mr-2 text-gray-600" />
+                                    Retro Information
+                                </h4>
+                                <div className="space-y-2">
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-700">Type:</span>
+                                        <span className="ml-2 text-sm text-gray-900">
+                                            {getRetroTypeLabel(retro.retro_type)}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-700">Adjustment:</span>
+                                        <span className="ml-2 text-sm text-gray-900">
+                                            {getAdjustmentTypeLabel(retro.adjustment_type)}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-700">Retro Date:</span>
+                                        <span className="ml-2 text-sm text-gray-900">
+                                            {formatDate(retro.retro_date)}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-700">Status:</span>
+                                        <span className="ml-2">
+                                            <RetroStatusBadge status={retro.status} />
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Financial Information */}
+                            <div className="bg-gray-50 p-4 rounded-lg">
+                                <h4 className="font-medium text-gray-900 mb-3 flex items-center">
+                                    <DollarSign className="h-5 w-5 mr-2 text-gray-600" />
+                                    Financial Details
+                                </h4>
+                                <div className="space-y-2">
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-700">Original Value:</span>
+                                        <span className="ml-2 text-sm text-gray-900">
+                                            {formatCurrency(retro.original_value)}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-700">Requested Value:</span>
+                                        <span className="ml-2 text-sm text-gray-900">
+                                            {formatCurrency(retro.requested_value)}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-700">Difference:</span>
+                                        <span className={`ml-2 text-sm font-medium ${
+                                            difference > 0 ? 'text-green-600' : 
+                                            difference < 0 ? 'text-red-600' : 'text-gray-900'
+                                        }`}>
+                                            {difference > 0 ? '+' : ''}{formatCurrency(difference)}
+                                        </span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Approval Information */}
+                            <div className="bg-gray-50 p-4 rounded-lg">
+                                <h4 className="font-medium text-gray-900 mb-3 flex items-center">
+                                    <CheckCircle className="h-5 w-5 mr-2 text-gray-600" />
+                                    Approval Information
+                                </h4>
+                                <div className="space-y-2">
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-700">Created By:</span>
+                                        <span className="ml-2 text-sm text-gray-900">
+                                            {retro.creator?.name || 'System'}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-700">Created At:</span>
+                                        <span className="ml-2 text-sm text-gray-900">
+                                            {formatDateTime(retro.created_at)}
+                                        </span>
+                                    </div>
+                                    {retro.approved_by && (
+                                        <>
+                                            <div>
+                                                <span className="text-sm font-medium text-gray-700">Approved By:</span>
+                                                <span className="ml-2 text-sm text-gray-900">
+                                                    {retro.approver?.name || 'N/A'}
+                                                </span>
+                                            </div>
+                                            <div>
+                                                <span className="text-sm font-medium text-gray-700">Approved At:</span>
+                                                <span className="ml-2 text-sm text-gray-900">
+                                                    {formatDateTime(retro.approved_at)}
+                                                </span>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Reason */}
+                            <div className="md:col-span-2 bg-gray-50 p-4 rounded-lg">
+                                <h4 className="font-medium text-gray-900 mb-3 flex items-center">
+                                    <FileText className="h-5 w-5 mr-2 text-gray-600" />
+                                    Reason for Adjustment
+                                </h4>
+                                <p className="text-sm text-gray-900 whitespace-pre-wrap">
+                                    {retro.reason || 'No reason provided'}
+                                </p>
+                            </div>
+
+                            {/* Remarks */}
+                            {retro.remarks && (
+                                <div className="md:col-span-2 bg-gray-50 p-4 rounded-lg">
+                                    <h4 className="font-medium text-gray-900 mb-3">
+                                        Remarks
+                                    </h4>
+                                    <p className="text-sm text-gray-900 whitespace-pre-wrap">
+                                        {retro.remarks}
+                                    </p>
+                                </div>
+                            )}
+
+                            {/* Status Update Section - Only show if user can update */}
+                            {canUpdateStatus() && (
+                                <div className="md:col-span-2 bg-blue-50 p-4 rounded-lg border border-blue-200">
+                                    <h4 className="font-medium text-blue-900 mb-3">
+                                        Update Status
+                                    </h4>
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-blue-700 mb-1">
+                                                Action
+                                            </label>
+                                            <div className="flex space-x-4">
+                                                <label className="inline-flex items-center">
+                                                    <input
+                                                        type="radio"
+                                                        className="form-radio text-green-600"
+                                                        name="status"
+                                                        value="approved"
+                                                        checked={status === 'approved'}
+                                                        onChange={() => setStatus('approved')}
+                                                    />
+                                                    <span className="ml-2 text-green-700">Approve</span>
+                                                </label>
+                                                <label className="inline-flex items-center">
+                                                    <input
+                                                        type="radio"
+                                                        className="form-radio text-red-600"
+                                                        name="status"
+                                                        value="rejected"
+                                                        checked={status === 'rejected'}
+                                                        onChange={() => setStatus('rejected')}
+                                                    />
+                                                    <span className="ml-2 text-red-700">Reject</span>
+                                                </label>
+                                                {userRoles.isSuperAdmin && (
+                                                    <label className="inline-flex items-center">
+                                                        <input
+                                                            type="radio"
+                                                            className="form-radio text-purple-600"
+                                                            name="status"
+                                                            value="force_approved"
+                                                            checked={status === 'force_approved'}
+                                                            onChange={() => setStatus('force_approved')}
+                                                        />
+                                                        <span className="ml-2 text-purple-700">Force Approve</span>
+                                                    </label>
+                                                )}
+                                            </div>
+                                        </div>
+                                        
+                                        <div>
+                                            <label className="block text-sm font-medium text-blue-700 mb-1">
+                                                Remarks {status === 'rejected' && <span className="text-red-500">*</span>}
+                                            </label>
+                                            <textarea
+                                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-300 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
+                                                rows={3}
+                                                value={remarks}
+                                                onChange={(e) => setRemarks(e.target.value)}
+                                                placeholder="Enter remarks for this decision"
+                                            ></textarea>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
+                    </div>
+
+                    {/* Footer */}
+                    <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                        {canUpdateStatus() && (
+                            <button
+                                type="button"
+                                className={`w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 ${
+                                    status === 'rejected' 
+                                        ? 'bg-red-600 hover:bg-red-700 focus:ring-red-500' 
+                                        : status === 'force_approved'
+                                        ? 'bg-purple-600 hover:bg-purple-700 focus:ring-purple-500'
+                                        : 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
+                                } text-base font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm`}
+                                onClick={handleStatusUpdate}
+                                disabled={processing}
+                            >
+                                {processing ? 'Processing...' : (
+                                    <>
+                                        {status === 'rejected' ? (
+                                            <><XCircle className="h-4 w-4 mr-1" /> Reject</>
+                                        ) : status === 'force_approved' ? (
+                                            <><CheckCircle className="h-4 w-4 mr-1" /> Force Approve</>
+                                        ) : (
+                                            <><CheckCircle className="h-4 w-4 mr-1" /> Approve</>
+                                        )}
+                                    </>
+                                )}
+                            </button>
+                        )}
+                        <button
+                            type="button"
+                            className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm"
+                            onClick={onClose}
+                            disabled={processing}
+                        >
+                            Close
+                        </button>
                     </div>
                 </div>
             </div>
-            
-            <ToastContainer position="top-right" autoClose={3000} />
-        </AuthenticatedLayout>
+        </div>
     );
 };
 
-export default RetroPage;
+export default RetroDetailModal;

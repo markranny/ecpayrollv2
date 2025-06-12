@@ -15,7 +15,7 @@ const RetroPage = () => {
     
     // State to manage component data
     const [retroData, setRetroData] = useState(retros);
-    const [activeTab, setActiveTab] = useState('create');
+    const [activeTab, setActiveTab] = useState('list'); // Start with list view instead of create
     const [processing, setProcessing] = useState(false);
     
     // Display flash messages
@@ -26,10 +26,22 @@ const RetroPage = () => {
         if (flash && flash.error) {
             toast.error(flash.error);
         }
+        if (flash && flash.errors) {
+            // Handle validation errors
+            Object.keys(flash.errors).forEach(key => {
+                if (Array.isArray(flash.errors[key])) {
+                    flash.errors[key].forEach(error => toast.error(error));
+                } else {
+                    toast.error(flash.errors[key]);
+                }
+            });
+        }
     }, [flash]);
     
     // Handle form submission
     const handleSubmitRetro = (formData) => {
+        setProcessing(true);
+        
         router.post(route('retro.store'), formData, {
             onSuccess: (page) => {
                 // Update retros list with the new data from the response
@@ -37,16 +49,23 @@ const RetroPage = () => {
                     setRetroData(page.props.retros);
                 }
                 toast.success('Retro requests created successfully');
-                /* setActiveTab('list'); */
+                setActiveTab('list'); // Switch to list view after successful creation
+                setProcessing(false);
             },
             onError: (errors) => {
+                console.error('Submission errors:', errors);
                 if (errors && typeof errors === 'object') {
                     Object.keys(errors).forEach(key => {
-                        toast.error(errors[key]);
+                        if (Array.isArray(errors[key])) {
+                            errors[key].forEach(error => toast.error(error));
+                        } else {
+                            toast.error(errors[key]);
+                        }
                     });
                 } else {
                     toast.error('An error occurred while submitting form');
                 }
+                setProcessing(false);
             }
         });
     };
@@ -63,11 +82,21 @@ const RetroPage = () => {
                 // Update retros list
                 if (page.props.retros) {
                     setRetroData(page.props.retros);
+                } else {
+                    // Update the specific item in the state
+                    setRetroData(prevData => 
+                        prevData.map(item => 
+                            item.id === id 
+                                ? { ...item, status: data.status, remarks: data.remarks, approved_at: new Date().toISOString() }
+                                : item
+                        )
+                    );
                 }
                 toast.success('Retro status updated successfully');
                 setProcessing(false);
             },
             onError: (errors) => {
+                console.error('Status update errors:', errors);
                 let errorMessage = 'An error occurred while updating status';
                 if (errors && typeof errors === 'object') {
                     errorMessage = Object.values(errors).join(', ');
@@ -80,7 +109,11 @@ const RetroPage = () => {
     
     // Handle deletion
     const handleDeleteRetro = (id) => {
+        if (processing) return;
+        
         if (confirm('Are you sure you want to delete this retro request?')) {
+            setProcessing(true);
+            
             router.delete(route('retro.destroy', id), {
                 preserveScroll: true,
                 onSuccess: (page) => {
@@ -89,11 +122,16 @@ const RetroPage = () => {
                         setRetroData(page.props.retros);
                     } else {
                         // Remove the deleted item from the current state
-                        setRetroData(retroData.filter(retro => retro.id !== id));
+                        setRetroData(prevData => prevData.filter(retro => retro.id !== id));
                     }
                     toast.success('Retro request deleted successfully');
+                    setProcessing(false);
                 },
-                onError: () => toast.error('Failed to delete retro request')
+                onError: (errors) => {
+                    console.error('Delete errors:', errors);
+                    toast.error('Failed to delete retro request');
+                    setProcessing(false);
+                }
             });
         }
     };
@@ -158,12 +196,14 @@ const RetroPage = () => {
                                         onStatusUpdate={handleStatusUpdate}
                                         onDelete={handleDeleteRetro}
                                         userRoles={userRoles}
+                                        processing={processing}
                                     />
                                 ) : (
                                     <RetroForm 
                                         employees={employees} 
                                         departments={departments} 
                                         onSubmit={handleSubmitRetro}
+                                        processing={processing}
                                     />
                                 )}
                             </div>
@@ -172,7 +212,17 @@ const RetroPage = () => {
                 </div>
             </div>
             
-            <ToastContainer position="top-right" autoClose={3000} />
+            <ToastContainer 
+                position="top-right" 
+                autoClose={3000}
+                hideProgressBar={false}
+                newestOnTop={false}
+                closeOnClick
+                rtl={false}
+                pauseOnFocusLoss
+                draggable
+                pauseOnHover
+            />
         </AuthenticatedLayout>
     );
 };
