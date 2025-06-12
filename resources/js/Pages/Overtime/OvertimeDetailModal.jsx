@@ -386,7 +386,7 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                                 
                                 {/* Department Manager Approval Form */}
                                 {canApproveDept && (
-                                    <div className="mt-6 border-t border-gray-200 pt-4">
+                                    <div className="mt-6 border-t border-gray-200 pt-4 hidden">
                                         <h4 className="text-md font-medium text-gray-900 mb-3">Department Manager Decision</h4>
                                         
                                         <div className="mb-4">
@@ -424,7 +424,7 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                                 
                                 {/* HRD Manager Approval Form */}
                                 {canApproveHrd && (
-                                    <div className="mt-6 border-t border-gray-200 pt-4">
+                                    <div className="mt-6 border-t border-gray-200 pt-4 hidden">
                                         <h4 className="text-md font-medium text-gray-900 mb-3">HRD Manager Final Decision</h4>
                                         
                                         <div className="mb-4">

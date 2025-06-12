@@ -178,7 +178,7 @@ const RetroList = ({
                 }
             } catch (error) {
                 console.error('Error updating status:', error);
-                toast.error('Error: Unable to update status. Please try again.');
+                toast.error('Error: Unable to update status. Please refresh the page and try again.');
                 setUpdatingId(null);
                 setLocalProcessing(false);
             }
@@ -191,40 +191,90 @@ const RetroList = ({
     };
     
     const handleDelete = (id) => {
-        if (confirm('Are you sure you want to delete this retro request?')) {
-            setDeletingId(id);
-            setLocalProcessing(true);
-            
-            router.delete(route('retro.destroy', id), {
-                preserveScroll: true,
-                onSuccess: () => {
-                    toast.success('Retro request deleted successfully');
-                    
-                    // Update the local state instead of reloading the page
-                    const updatedLocalRetros = localRetros.filter(item => item.id !== id);
-                    setLocalRetros(updatedLocalRetros);
-                    
-                    // Re-apply current filters to the updated data
-                    applyFilters(updatedLocalRetros, filterStatus, searchTerm, dateRange);
-                    
-                    // Clear selection if the deleted item was selected
-                    if (selectedIds.includes(id)) {
-                        setSelectedIds(prev => prev.filter(itemId => itemId !== id));
-                    }
-                    
-                    setDeletingId(null);
-                    setLocalProcessing(false);
-                },
-                onError: (errors) => {
-                    console.error('Error deleting:', errors);
-                    toast.error('Failed to delete retro request: ' + 
-                        (errors?.message || 'Unknown error'));
-                    setDeletingId(null);
-                    setLocalProcessing(false);
-                }
-            });
-        }
+    // Add validation to ensure ID exists and is valid
+    if (!id || isNaN(id) || id <= 0) {
+        console.error('Delete failed: Invalid ID provided', id);
+        toast.error('Error: Invalid retro request ID');
+        return;
     }
+
+    if (confirm('Are you sure you want to delete this retro request?')) {
+        setDeletingId(id);
+        setLocalProcessing(true);
+        
+        console.log('Attempting to delete retro with ID:', id);
+        
+        // Solution 1: Use POST with _method parameter (more reliable)
+        const deleteUrl = `/retro/${id}/delete`; // Uses the POST delete route
+        
+        console.log('Delete URL:', deleteUrl);
+        
+        router.post(deleteUrl, {}, {
+            preserveScroll: true,
+            onSuccess: (page) => {
+                console.log('Delete successful for ID:', id);
+                toast.success('Retro request deleted successfully');
+                
+                // Update the local state instead of reloading the page
+                const updatedLocalRetros = localRetros.filter(item => item.id !== id);
+                setLocalRetros(updatedLocalRetros);
+                
+                // Re-apply current filters to the updated data
+                applyFilters(updatedLocalRetros, filterStatus, searchTerm, dateRange);
+                
+                // Clear selection if the deleted item was selected
+                if (selectedIds.includes(id)) {
+                    setSelectedIds(prev => prev.filter(itemId => itemId !== id));
+                }
+                
+                setDeletingId(null);
+                setLocalProcessing(false);
+            },
+            onError: (errors) => {
+                console.error('POST Delete failed, trying direct DELETE:', errors);
+                
+                // Fallback: Try direct DELETE with manual URL construction
+                const directDeleteUrl = `/retro/${id}`;
+                console.log('Trying direct DELETE to:', directDeleteUrl);
+                
+                router.delete(directDeleteUrl, {
+                    preserveScroll: true,
+                    onSuccess: (page) => {
+                        console.log('Direct DELETE successful for ID:', id);
+                        toast.success('Retro request deleted successfully');
+                        
+                        // Update the local state
+                        const updatedLocalRetros = localRetros.filter(item => item.id !== id);
+                        setLocalRetros(updatedLocalRetros);
+                        
+                        // Re-apply current filters to the updated data
+                        applyFilters(updatedLocalRetros, filterStatus, searchTerm, dateRange);
+                        
+                        // Clear selection if the deleted item was selected
+                        if (selectedIds.includes(id)) {
+                            setSelectedIds(prev => prev.filter(itemId => itemId !== id));
+                        }
+                        
+                        setDeletingId(null);
+                        setLocalProcessing(false);
+                    },
+                    onError: (deleteErrors) => {
+                        console.error('Both POST and DELETE methods failed:', deleteErrors);
+                        let errorMessage = 'Failed to delete retro request';
+                        
+                        if (deleteErrors && typeof deleteErrors === 'object') {
+                            errorMessage += ': ' + (Object.values(deleteErrors).join(', ') || 'Unknown error');
+                        }
+                        
+                        toast.error(errorMessage);
+                        setDeletingId(null);
+                        setLocalProcessing(false);
+                    }
+                });
+            }
+        });
+    }
+};
     
     // Format date safely
     const formatDate = (dateString) => {

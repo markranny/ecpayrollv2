@@ -351,8 +351,15 @@ class RetroController extends Controller
     }
 
     public function destroy($id)
-    {
-        $user = Auth::user();
+{
+    // Validate that ID is provided and is numeric
+    if (!$id || !is_numeric($id)) {
+        return back()->with('error', 'Invalid retro request ID provided');
+    }
+
+    $user = Auth::user();
+    
+    try {
         $retro = Retro::findOrFail($id);
         
         // Only allow deletion if status is pending and user has permission
@@ -379,13 +386,39 @@ class RetroController extends Controller
             return back()->with('error', 'You are not authorized to delete this retro request');
         }
         
-        try {
-            $retro->delete();
-            return back()->with('message', 'Retro request deleted successfully');
-        } catch (\Exception $e) {
-            return back()->with('error', 'Failed to delete retro request: ' . $e->getMessage());
+        $retro->delete();
+        
+        // Return success response for both web and AJAX requests
+        if (request()->expectsJson()) {
+            return response()->json(['message' => 'Retro request deleted successfully']);
         }
+        
+        return back()->with('message', 'Retro request deleted successfully');
+        
+    } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+        $errorMessage = 'Retro request not found';
+        
+        if (request()->expectsJson()) {
+            return response()->json(['error' => $errorMessage], 404);
+        }
+        
+        return back()->with('error', $errorMessage);
+    } catch (\Exception $e) {
+        \Log::error('Error deleting retro request: ' . $e->getMessage(), [
+            'retro_id' => $id,
+            'user_id' => $user->id,
+            'trace' => $e->getTraceAsString()
+        ]);
+        
+        $errorMessage = 'Failed to delete retro request: ' . $e->getMessage();
+        
+        if (request()->expectsJson()) {
+            return response()->json(['error' => $errorMessage], 500);
+        }
+        
+        return back()->with('error', $errorMessage);
     }
+}
 
     /**
      * Export retro requests to Excel.

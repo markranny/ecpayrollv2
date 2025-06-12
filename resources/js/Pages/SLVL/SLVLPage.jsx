@@ -63,7 +63,7 @@ const SLVLPage = () => {
                 }
                 
                 toast.success('SLVL request created successfully');
-                setActiveTab('list'); // Switch to list view after successful submission
+                /* setActiveTab('list'); */ 
                 setProcessing(false);
             },
             onError: (errors) => {
