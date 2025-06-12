@@ -270,9 +270,9 @@ const Sidebar = ({ showSidebar = true }) => {
                 { label: 'Overtime', path: '/overtimes' },
                 { label: 'Offset', path: '/offsets' },
                 { label: 'Change Restday', path: '/change-off-schedules' },
+                { label: 'Cancel Restday', path: '/cancel-rest-days' },
                 { label: 'Change Time Sched', path: '/time-schedules' },
                 { label: 'SLVL', path: '/slvl' },
-                { label: 'Official Business', path: '/official-business' },
                 { label: 'Travel Order', path: '/travel-orders' },
                 { label: 'Retro', path: '/retro' }
             ]

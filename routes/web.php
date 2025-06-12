@@ -35,6 +35,7 @@ use App\Http\Controllers\TrainingsController;
 use App\Http\Controllers\MeetingsController; 
 use App\Http\Controllers\EventsController; 
 use App\Http\Controllers\HrCalendarController;
+use App\Http\Controllers\CancelRestDayController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
@@ -630,6 +631,43 @@ Route::middleware(['role:superadmin,hrd'])->group(function () {
     Route::post('/travel/{id}/status', [TravelOrderController::class, 'updateStatus'])->name('travel.updateStatus');
     Route::delete('/travel/{id}', [TravelOrderController::class, 'destroy'])->name('travel.destroy');
     Route::get('/travel/export', [TravelOrderController::class, 'export'])->name('travel.export');
+
+    // Index route
+    Route::get('/cancel-rest-days', [CancelRestDayController::class, 'index'])
+        ->name('cancel-rest-days.index');
+    
+    // Store route
+    Route::post('/cancel-rest-days', [CancelRestDayController::class, 'store'])
+        ->name('cancel-rest-days.store');
+    
+    // Status update route
+    Route::post('/cancel-rest-days/{id}/status', [CancelRestDayController::class, 'updateStatus'])
+        ->name('cancel-rest-days.updateStatus')
+        ->where(['id' => '[0-9]+']);
+    
+    // Bulk update route
+    Route::post('/cancel-rest-days/bulk-update', [CancelRestDayController::class, 'bulkUpdateStatus'])
+        ->name('cancel-rest-days.bulkUpdateStatus');
+    
+    // Export route
+    Route::get('/cancel-rest-days/export', [CancelRestDayController::class, 'export'])
+        ->name('cancel-rest-days.export');
+    
+    // DELETE routes
+    Route::delete('/cancel-rest-days/{id}', [CancelRestDayController::class, 'destroy'])
+        ->name('cancel-rest-days.destroy')
+        ->where(['id' => '[0-9]+']);
+    
+    // Alternative POST delete route for browsers that don't support DELETE
+    Route::post('/cancel-rest-days/{id}/delete', [CancelRestDayController::class, 'destroy'])
+        ->name('cancel-rest-days.destroy.post')
+        ->where(['id' => '[0-9]+']);
+    
+    // Force approve route (superadmin only)
+    Route::middleware('role:superadmin')->group(function () {
+        Route::post('/cancel-rest-days/force-approve', [CancelRestDayController::class, 'forceApprove'])
+            ->name('cancel-rest-days.force-approve');
+    });
 });
 
 // Meetings and Events Routes
