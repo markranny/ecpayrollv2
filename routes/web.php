@@ -392,12 +392,24 @@ Route::middleware(['auth', 'verified'])->group(function () {
             ->name('retro.index');
         Route::post('/retro', [RetroController::class, 'store'])
             ->name('retro.store');
-        Route::put('/retro/{id}', [RetroController::class, 'update'])
-            ->name('retro.update');
+        Route::post('/retro/{id}/status', [RetroController::class, 'updateStatus'])
+            ->name('retro.updateStatus');
         Route::delete('/retro/{id}', [RetroController::class, 'destroy'])
             ->name('retro.destroy');
+        Route::post('/retro/{id}/delete', [RetroController::class, 'destroy'])
+            ->name('retro.destroy-post');
         Route::get('/retro/export', [RetroController::class, 'export'])
             ->name('retro.export');
+        
+        // Add this bulk update route for Retro
+        Route::post('/retro/bulk-update', [RetroController::class, 'bulkUpdateStatus'])
+            ->name('retro.bulkUpdateStatus');
+        
+        // Force approve route (superadmin only)
+        Route::middleware('role:superadmin')->group(function () {
+            Route::post('/retro/force-approve', [RetroController::class, 'forceApprove'])
+                ->name('retro.force-approve');
+        });
 
         // SLVL (Sick Leave/Vacation Leave) Routes
         Route::get('/slvl', [SLVLController::class, 'index'])

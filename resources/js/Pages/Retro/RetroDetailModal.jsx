@@ -1,3 +1,4 @@
+// Save this as: resources/js/Pages/Retro/RetroPage.jsx
 import React, { useState, useEffect } from 'react';
 import { router, usePage } from '@inertiajs/react';
 import { Head } from '@inertiajs/react';
@@ -13,7 +14,6 @@ const RetroPage = () => {
     const { props } = usePage();
     const { auth, flash = {}, userRoles = {}, retros = [], employees = [], departments = [] } = props;
     
-    // State to manage component data
     const [retroData, setRetroData] = useState(retros);
     const [activeTab, setActiveTab] = useState('create');
     const [processing, setProcessing] = useState(false);
@@ -32,12 +32,10 @@ const RetroPage = () => {
     const handleSubmitRetro = (formData) => {
         router.post(route('retro.store'), formData, {
             onSuccess: (page) => {
-                // Update retros list with the new data from the response
                 if (page.props.retros) {
                     setRetroData(page.props.retros);
                 }
                 toast.success('Retro requests created successfully');
-                /* setActiveTab('list'); */
             },
             onError: (errors) => {
                 if (errors && typeof errors === 'object') {
@@ -60,7 +58,6 @@ const RetroPage = () => {
         router.post(route('retro.updateStatus', id), data, {
             preserveScroll: true,
             onSuccess: (page) => {
-                // Update retros list
                 if (page.props.retros) {
                     setRetroData(page.props.retros);
                 }
@@ -84,11 +81,9 @@ const RetroPage = () => {
             router.delete(route('retro.destroy', id), {
                 preserveScroll: true,
                 onSuccess: (page) => {
-                    // Update retros list
                     if (page.props.retros) {
                         setRetroData(page.props.retros);
                     } else {
-                        // Remove the deleted item from the current state
                         setRetroData(retroData.filter(retro => retro.id !== id));
                     }
                     toast.success('Retro request deleted successfully');
@@ -103,10 +98,8 @@ const RetroPage = () => {
             <Head title="Retro Management" />
             
             <div className="flex min-h-screen bg-gray-50">
-                {/* Include the Sidebar */}
                 <Sidebar />
                 
-                {/* Main Content */}
                 <div className="flex-1 p-8 ml-0">
                     <div className="max-w-7xl mx-auto">
                         <div className="flex items-center justify-between mb-8">
