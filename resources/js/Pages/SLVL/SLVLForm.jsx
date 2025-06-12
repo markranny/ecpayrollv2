@@ -1,9 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { format, addDays, differenceInDays } from 'date-fns';
-import { Upload, X, FileText, AlertCircle } from 'lucide-react';
+import { Upload, X, FileText, AlertCircle, Calendar, Loader } from 'lucide-react';
 
 const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) => {
     const today = format(new Date(), 'yyyy-MM-dd');
+    const currentYear = new Date().getFullYear();
+    
+    // Generate year options (current year ± 3 years)
+    const yearOptions = [];
+    for (let year = currentYear - 3; year <= currentYear + 3; year++) {
+        yearOptions.push(year);
+    }
     
     // Form state
     const [formData, setFormData] = useState({
@@ -15,7 +22,8 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
         am_pm: 'AM',
         pay_type: 'with_pay',
         reason: '',
-        supporting_documents: null
+        supporting_documents: null,
+        bank_year: currentYear // Add bank year selection
     });
     
     // Filtered employees state
@@ -25,6 +33,10 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
     const [selectedEmployee, setSelectedEmployee] = useState(null);
     const [totalDays, setTotalDays] = useState(1);
     const [isSubmitting, setIsSubmitting] = useState(false);
+    
+    // Bank data state
+    const [employeeBankData, setEmployeeBankData] = useState(null);
+    const [loadingBankData, setLoadingBankData] = useState(false);
     
     // File upload state
     const [uploadedFile, setUploadedFile] = useState(null);
@@ -65,6 +77,33 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
         }
     }, [formData.start_date, formData.end_date, formData.half_day]);
     
+    // Fetch bank data when employee or year changes
+    useEffect(() => {
+        if (formData.employee_id && formData.bank_year) {
+            fetchEmployeeBankData(formData.employee_id, formData.bank_year);
+        } else {
+            setEmployeeBankData(null);
+        }
+    }, [formData.employee_id, formData.bank_year]);
+    
+    // Function to fetch employee bank data for specific year
+    const fetchEmployeeBankData = async (employeeId, year) => {
+        setLoadingBankData(true);
+        try {
+            const response = await fetch(`/slvl/bank/${employeeId}?year=${year}`);
+            if (!response.ok) {
+                throw new Error('Failed to fetch bank data');
+            }
+            const data = await response.json();
+            setEmployeeBankData(data);
+        } catch (error) {
+            console.error('Error fetching bank data:', error);
+            setEmployeeBankData(null);
+        } finally {
+            setLoadingBankData(false);
+        }
+    };
+    
     // Handle input changes
     const handleChange = (e) => {
         const { name, value, type, checked } = e.target;
@@ -94,14 +133,14 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
         }
     };
     
-    // Handle file upload - FIXED VERSION
+    // Handle file upload
     const handleFileUpload = (e) => {
         const file = e.target.files[0];
         if (file) {
             // Validate file size (5MB max)
             if (file.size > 5 * 1024 * 1024) {
                 alert('File size must be less than 5MB');
-                e.target.value = ''; // Clear the input
+                e.target.value = '';
                 return;
             }
             
@@ -109,7 +148,7 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
             const allowedTypes = ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'image/jpeg', 'image/png', 'image/jpg'];
             if (!allowedTypes.includes(file.type)) {
                 alert('Only PDF, DOC, DOCX, JPG, JPEG, and PNG files are allowed');
-                e.target.value = ''; // Clear the input
+                e.target.value = '';
                 return;
             }
             
@@ -138,7 +177,6 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
             ...formData,
             supporting_documents: null
         });
-        // Reset the file input
         const fileInput = document.getElementById('supporting_documents');
         if (fileInput) {
             fileInput.value = '';
@@ -160,7 +198,20 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
         return selectedLeaveType ? selectedLeaveType.requires_documents : false;
     };
     
-    // Handle form submission - FIXED VERSION
+    // Get available days for the selected leave type and year
+    const getAvailableDays = () => {
+        if (!employeeBankData || !formData.type) return 0;
+        
+        if (formData.type === 'sick') {
+            return employeeBankData.slvl_banks?.sick?.remaining_days || 0;
+        } else if (formData.type === 'vacation') {
+            return employeeBankData.slvl_banks?.vacation?.remaining_days || 0;
+        }
+        
+        return 0;
+    };
+    
+    // Handle form submission
     const handleSubmit = (e) => {
         e.preventDefault();
         
@@ -199,25 +250,19 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
         }
         
         // Check available leave days for sick and vacation leave (only for with_pay)
-        if (selectedEmployee && ['sick', 'vacation'].includes(formData.type) && formData.pay_type === 'with_pay') {
-            const availableDays = formData.type === 'sick' 
-                ? selectedEmployee.sick_leave_days 
-                : selectedEmployee.vacation_leave_days;
+        if (['sick', 'vacation'].includes(formData.type) && formData.pay_type === 'with_pay') {
+            const availableDays = getAvailableDays();
                 
             if (totalDays > availableDays) {
-                alert(`Insufficient ${formData.type} leave days. Employee only has ${availableDays} days available.`);
+                alert(`Insufficient ${formData.type} leave days for ${formData.bank_year}. Employee only has ${availableDays} days available.`);
                 return;
             }
         }
         
         setIsSubmitting(true);
         
-        // Log form data for debugging
-        console.log('Form data before submission:', formData);
-        console.log('Uploaded file:', uploadedFile);
-        
         try {
-            // Create FormData for file upload - FIXED APPROACH
+            // Create FormData for file upload
             const submitData = new FormData();
             
             // Add all form fields explicitly with proper type conversion
@@ -225,22 +270,17 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
             submitData.append('type', formData.type);
             submitData.append('start_date', formData.start_date);
             submitData.append('end_date', formData.end_date);
-            submitData.append('half_day', formData.half_day ? '1' : '0'); // Convert boolean to string
+            submitData.append('half_day', formData.half_day ? '1' : '0');
             if (formData.am_pm) {
                 submitData.append('am_pm', formData.am_pm);
             }
             submitData.append('pay_type', formData.pay_type);
             submitData.append('reason', formData.reason);
+            submitData.append('bank_year', formData.bank_year); // Include bank year
             
             // Add file if exists
             if (uploadedFile) {
                 submitData.append('supporting_documents', uploadedFile);
-            }
-            
-            // Log FormData contents for debugging
-            console.log('FormData contents:');
-            for (let pair of submitData.entries()) {
-                console.log(pair[0] + ': ' + pair[1]);
             }
             
             // Call the onSubmit prop with the form data
@@ -256,13 +296,15 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
                 am_pm: 'AM',
                 pay_type: 'with_pay',
                 reason: '',
-                supporting_documents: null
+                supporting_documents: null,
+                bank_year: currentYear
             });
             setSelectedEmployee(null);
             setSearchTerm('');
             setSelectedDepartment('');
             setUploadedFile(null);
             setFilePreview(null);
+            setEmployeeBankData(null);
             
             // Clear file input
             const fileInput = document.getElementById('supporting_documents');
@@ -287,6 +329,41 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
             
             <form onSubmit={handleSubmit} encType="multipart/form-data">
                 <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
+                    {/* Bank Year Selection */}
+                    <div className="md:col-span-2 bg-blue-50 p-4 rounded-lg border border-blue-200">
+                        <div className="flex items-center mb-3">
+                            <Calendar className="w-5 h-5 text-blue-600 mr-2" />
+                            <h4 className="font-medium text-blue-800">Leave Bank Year Selection</h4>
+                        </div>
+                        <div className="flex items-center space-x-4">
+                            <div className="flex-1">
+                                <label htmlFor="bank_year" className="block text-sm font-medium text-blue-700 mb-1">
+                                    Select Bank Year <span className="text-red-600">*</span>
+                                </label>
+                                <select
+                                    id="bank_year"
+                                    name="bank_year"
+                                    className="w-full rounded-md border-blue-300 shadow-sm focus:border-blue-500 focus:ring focus:ring-blue-200 focus:ring-opacity-50"
+                                    value={formData.bank_year}
+                                    onChange={handleChange}
+                                    required
+                                >
+                                    {yearOptions.map(year => (
+                                        <option key={year} value={year}>
+                                            {year} {year === currentYear && '(Current)'}
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="flex-2">
+                                <div className="text-sm text-blue-700">
+                                    <p className="font-medium">Selected Year: {formData.bank_year}</p>
+                                    <p className="text-xs mt-1">Leave days will be deducted from this year's bank</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     {/* Employee Selection Section */}
                     <div className="md:col-span-2 bg-gray-50 p-4 rounded-lg">
                         <h4 className="font-medium mb-3">Select Employee</h4>
@@ -332,19 +409,13 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
                                         <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                             Position
                                         </th>
-                                        <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                            Sick Leave
-                                        </th>
-                                        <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                            Vacation Leave
-                                        </th>
                                     </tr>
                                 </thead>
                                 
                                 <tbody className="bg-white divide-y divide-gray-200">
                                     {filteredEmployees.length === 0 ? (
                                         <tr>
-                                            <td colSpan="6" className="px-4 py-3 text-center text-sm text-gray-500">
+                                            <td colSpan="4" className="px-4 py-3 text-center text-sm text-gray-500">
                                                 No employees match your search criteria
                                             </td>
                                         </tr>
@@ -371,16 +442,6 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
                                                 <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
                                                     {employee.position}
                                                 </td>
-                                                <td className="px-4 py-2 whitespace-nowrap text-sm text-right">
-                                                    <span className={`font-medium ${employee.sick_leave_days > 0 ? 'text-green-600' : 'text-gray-600'}`}>
-                                                        {employee.sick_leave_days} days
-                                                    </span>
-                                                </td>
-                                                <td className="px-4 py-2 whitespace-nowrap text-sm text-right">
-                                                    <span className={`font-medium ${employee.vacation_leave_days > 0 ? 'text-green-600' : 'text-gray-600'}`}>
-                                                        {employee.vacation_leave_days} days
-                                                    </span>
-                                                </td>
                                             </tr>
                                         ))
                                     )}
@@ -388,27 +449,55 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
                             </table>
                         </div>
                         
-                        <div className="mt-2 text-sm text-gray-600">
+                        {/* Employee Selection Summary with Bank Data */}
+                        <div className="mt-3">
                             {selectedEmployee ? (
-                                <div className="flex justify-between">
-                                    <span className="font-medium">Selected: {selectedEmployee.name}</span>
-                                    <div className="flex space-x-4">
-                                        <span className="font-medium">
-                                            Sick Leave: 
-                                            <span className={`ml-1 ${selectedEmployee.sick_leave_days > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                {selectedEmployee.sick_leave_days} days
-                                            </span>
-                                        </span>
-                                        <span className="font-medium">
-                                            Vacation Leave: 
-                                            <span className={`ml-1 ${selectedEmployee.vacation_leave_days > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                                                {selectedEmployee.vacation_leave_days} days
-                                            </span>
-                                        </span>
+                                <div className="bg-white border border-gray-200 rounded-md p-3">
+                                    <div className="flex justify-between items-start">
+                                        <div>
+                                            <span className="font-medium text-gray-900">Selected: {selectedEmployee.name}</span>
+                                            <div className="text-sm text-gray-500 mt-1">
+                                                Employee ID: {selectedEmployee.idno} • Department: {selectedEmployee.department}
+                                            </div>
+                                        </div>
+                                        
+                                        <div className="text-right">
+                                            {loadingBankData ? (
+                                                <div className="flex items-center space-x-2">
+                                                    <Loader className="w-4 h-4 animate-spin text-blue-500" />
+                                                    <span className="text-sm text-gray-500">Loading bank data...</span>
+                                                </div>
+                                            ) : employeeBankData ? (
+                                                <div className="space-y-1">
+                                                    <div className="text-sm">
+                                                        <span className="font-medium text-blue-600">
+                                                            Sick Leave ({formData.bank_year}): 
+                                                        </span>
+                                                        <span className={`ml-1 font-bold ${employeeBankData.slvl_banks?.sick?.remaining_days > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                            {employeeBankData.slvl_banks?.sick?.remaining_days || 0} days
+                                                        </span>
+                                                    </div>
+                                                    <div className="text-sm">
+                                                        <span className="font-medium text-green-600">
+                                                            Vacation Leave ({formData.bank_year}): 
+                                                        </span>
+                                                        <span className={`ml-1 font-bold ${employeeBankData.slvl_banks?.vacation?.remaining_days > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                                                            {employeeBankData.slvl_banks?.vacation?.remaining_days || 0} days
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <div className="text-sm text-gray-500">
+                                                    No bank data available for {formData.bank_year}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
                                 </div>
                             ) : (
-                                <span className="text-yellow-600">No employee selected</span>
+                                <div className="text-sm text-yellow-600 bg-yellow-50 border border-yellow-200 rounded-md p-2">
+                                    No employee selected
+                                </div>
                             )}
                         </div>
                     </div>
@@ -540,19 +629,36 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
                                 )}
                             </div>
                             
-                            <div className="bg-blue-50 p-3 rounded-md">
-                                <div className="text-sm font-medium text-blue-800">
-                                    Total Days: {totalDays} {totalDays === 1 ? 'day' : 'days'}
+                            {/* Enhanced Days Summary */}
+                            <div className="bg-blue-50 p-3 rounded-md border border-blue-200">
+                                <div className="text-sm font-medium text-blue-800 mb-2">
+                                    Leave Request Summary
                                 </div>
-                                {selectedEmployee && ['sick', 'vacation'].includes(formData.type) && formData.pay_type === 'with_pay' && (
-                                    <div className="text-xs text-blue-700 mt-1">
-                                        Available {formData.type} days: {
-                                            formData.type === 'sick' 
-                                                ? selectedEmployee.sick_leave_days 
-                                                : selectedEmployee.vacation_leave_days
-                                        }
+                                <div className="space-y-1">
+                                    <div className="flex justify-between">
+                                        <span className="text-sm text-blue-700">Total Days:</span>
+                                        <span className="text-sm font-medium text-blue-900">
+                                            {totalDays} {totalDays === 1 ? 'day' : 'days'}
+                                        </span>
                                     </div>
-                                )}
+                                    <div className="flex justify-between">
+                                        <span className="text-sm text-blue-700">Bank Year:</span>
+                                        <span className="text-sm font-medium text-blue-900">{formData.bank_year}</span>
+                                    </div>
+                                    {selectedEmployee && ['sick', 'vacation'].includes(formData.type) && formData.pay_type === 'with_pay' && (
+                                        <div className="flex justify-between">
+                                            <span className="text-sm text-blue-700">Available {formData.type} days:</span>
+                                            <span className={`text-sm font-medium ${getAvailableDays() >= totalDays ? 'text-green-700' : 'text-red-700'}`}>
+                                                {getAvailableDays()} days
+                                            </span>
+                                        </div>
+                                    )}
+                                    {selectedEmployee && ['sick', 'vacation'].includes(formData.type) && formData.pay_type === 'with_pay' && totalDays > getAvailableDays() && (
+                                        <div className="mt-2 text-xs text-red-700 bg-red-100 p-2 rounded border border-red-200">
+                                            ⚠️ Insufficient leave days available for {formData.bank_year}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -578,7 +684,7 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
                                 ></textarea>
                             </div>
                             
-                            {/* File Upload Section - FIXED */}
+                            {/* File Upload Section */}
                             <div>
                                 <label htmlFor="supporting_documents" className="block text-sm font-medium text-gray-700 mb-1">
                                     Supporting Documents {requiresDocuments() && <span className="text-red-600">*</span>}
@@ -601,7 +707,6 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
                                                         className="sr-only"
                                                         accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
                                                         onChange={handleFileUpload}
-                                                        // Remove value prop for file inputs - THIS IS CRITICAL
                                                     />
                                                 </label>
                                                 <p className="pl-1">or drag and drop</p>
