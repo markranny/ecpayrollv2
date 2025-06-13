@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Link, usePage } from '@inertiajs/react';
+import { Link, usePage, router } from '@inertiajs/react';
 import { 
     LayoutDashboard, 
     Users, 
@@ -20,43 +20,75 @@ import {
 } from 'lucide-react';
 import '../../css/sidebar.css'; // Fixed CSS import path
 
-const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels, isLive }) => {
-    const [isSubmenuOpen, setIsSubmenuOpen] = useState(false);
+const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels, isLive, openMenus, setOpenMenus }) => {
+    // Use parent state to manage dropdown open/close
+    const isSubmenuOpen = openMenus[label] || false;
     
     // Handle hover for collapsed menu items with submenus
     const [isHovering, setIsHovering] = useState(false);
 
-    if (path) {
-        // Check if it's an external link (starts with http or https)
-        const isExternalLink = path.startsWith('http');
+    const toggleSubmenu = () => {
+        if (!isCollapsed) {
+            setOpenMenus(prev => ({
+                ...prev,
+                [label]: !prev[label]
+            }));
+        }
+    };
 
-        return (
-            <a 
-                href={path}
-                className="block mb-1 group"
-                target={isExternalLink || isLive ? "_blank" : "_self"} // Open in new tab if it's an external link or LIVE
-                rel={isExternalLink || isLive ? "noopener noreferrer" : ""}
-            >
-                <div className={`flex items-center px-4 py-2.5 text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all duration-200 menu-item ${isLive ? 'bg-red-50 text-red-600' : ''}`}>
-                    {Icon && <Icon className={`w-5 h-5 mr-3 ${isLive ? 'text-red-600 animate-pulse' : ''}`} />}
-                    {(!isCollapsed && showLabels) && (
-                        <div className="flex items-center">
-                            <span className={`flex-1 font-medium ${isLive ? 'text-red-600' : ''}`}>{label}</span>
-                            {isLive && (
-                                <span className="ml-2 px-2 py-0.5 text-xs font-bold bg-red-600 text-white rounded-full animate-pulse">
-                                    LIVE
-                                </span>
-                            )}
-                        </div>
-                    )}
-                    {(isCollapsed && isLive) && (
-                        <span className="absolute left-12 top-2 px-2 py-0.5 text-xs font-bold bg-red-600 text-white rounded-full animate-pulse">
-                            LIVE
-                        </span>
-                    )}
-                </div>
-            </a>
-        );
+    // Helper function to determine if a path is external
+    const isExternalPath = (url) => {
+        return url && (url.startsWith('http://') || url.startsWith('https://'));
+    };
+
+    if (path) {
+        const isExternalLink = isExternalPath(path);
+
+        if (isExternalLink || isLive) {
+            // Use regular anchor tag for external links
+            return (
+                <a 
+                    href={path}
+                    className="block mb-1 group"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                >
+                    <div className={`flex items-center px-4 py-2.5 text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all duration-200 menu-item ${isLive ? 'bg-red-50 text-red-600' : ''}`}>
+                        {Icon && <Icon className={`w-5 h-5 mr-3 ${isLive ? 'text-red-600 animate-pulse' : ''}`} />}
+                        {(!isCollapsed && showLabels) && (
+                            <div className="flex items-center">
+                                <span className={`flex-1 font-medium ${isLive ? 'text-red-600' : ''}`}>{label}</span>
+                                {isLive && (
+                                    <span className="ml-2 px-2 py-0.5 text-xs font-bold bg-red-600 text-white rounded-full animate-pulse">
+                                        LIVE
+                                    </span>
+                                )}
+                            </div>
+                        )}
+                        {(isCollapsed && isLive) && (
+                            <span className="absolute left-12 top-2 px-2 py-0.5 text-xs font-bold bg-red-600 text-white rounded-full animate-pulse">
+                                LIVE
+                            </span>
+                        )}
+                    </div>
+                </a>
+            );
+        } else {
+            // Use Inertia Link for internal routes
+            return (
+                <Link 
+                    href={path}
+                    className="block mb-1 group"
+                >
+                    <div className="flex items-center px-4 py-2.5 text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all duration-200 menu-item">
+                        {Icon && <Icon className="w-5 h-5 mr-3" />}
+                        {(!isCollapsed && showLabels) && (
+                            <span className="flex-1 font-medium">{label}</span>
+                        )}
+                    </div>
+                </Link>
+            );
+        }
     }
 
     return (
@@ -67,7 +99,7 @@ const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels, isL
         >
             <div 
                 className={`flex items-center px-4 py-2.5 text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg cursor-pointer transition-all duration-200 menu-item ${isSubmenuOpen ? 'bg-indigo-50 text-indigo-600' : ''}`}
-                onClick={() => !isCollapsed && setIsSubmenuOpen(!isSubmenuOpen)}
+                onClick={toggleSubmenu}
             >
                 {Icon && <Icon className="w-5 h-5 mr-3" />}
                 {(!isCollapsed && showLabels) && (
@@ -85,8 +117,7 @@ const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels, isL
                         {label}
                     </div>
                     {items.map((subItem, index) => {
-                        // Check if it's an external link
-                        const isExternalLink = subItem.path.startsWith('http');
+                        const isExternalLink = isExternalPath(subItem.path);
                         
                         return isExternalLink ? (
                             <a
@@ -115,8 +146,7 @@ const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels, isL
             {isSubmenuOpen && !isCollapsed && items && (
                 <div className="ml-6 mt-1 space-y-1">
                     {items.map((subItem, index) => {
-                        // Check if it's an external link
-                        const isExternalLink = subItem.path.startsWith('http');
+                        const isExternalLink = isExternalPath(subItem.path);
                         
                         return isExternalLink ? (
                             <a
@@ -133,6 +163,10 @@ const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels, isL
                                 key={index}
                                 href={subItem.path}
                                 className="block px-4 py-2 text-sm text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all duration-200"
+                                onClick={(e) => {
+                                    // Prevent event bubbling to parent elements
+                                    e.stopPropagation();
+                                }}
                             >
                                 {subItem.label}
                             </Link>
@@ -150,6 +184,7 @@ const Sidebar = ({ showSidebar = true }) => {
     const [showLabels, setShowLabels] = useState(true);
     const [userRole, setUserRole] = useState('No Role Assigned');
     const [userRoles, setUserRoles] = useState([]);
+    const [openMenus, setOpenMenus] = useState({}); // State to track which menus are open
     
     // Debug and process roles on component mount
     useEffect(() => {
@@ -409,6 +444,8 @@ const Sidebar = ({ showSidebar = true }) => {
                                     isCollapsed={isCollapsed}
                                     showLabels={showLabels}
                                     isLive={item.isLive}
+                                    openMenus={openMenus}
+                                    setOpenMenus={setOpenMenus}
                                 />
                             ))}
                     </nav>
