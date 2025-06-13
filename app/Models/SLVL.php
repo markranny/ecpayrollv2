@@ -21,8 +21,9 @@ class SLVL extends Model
         'am_pm',
         'total_days',
         'with_pay',
-        'pay_type', // New field for pay type
+        'pay_type', 
         'reason',
+        'bank_year',
         'documents_path',
         'status',
         'created_by',

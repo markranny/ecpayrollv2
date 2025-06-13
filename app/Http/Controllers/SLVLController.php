@@ -198,7 +198,8 @@ class SLVLController extends Controller
             'all_data' => $request->all(),
             'files' => $request->allFiles(),
             'method' => $request->method(),
-            'content_type' => $request->header('Content-Type')
+            'content_type' => $request->header('Content-Type'),
+            'bank_year_from_request' => $request->input('bank_year') // Specific log for bank_year
         ]);
 
         // Define which leave types require supporting documents
@@ -237,7 +238,10 @@ class SLVLController extends Controller
 
         try {
             $validated = $request->validate($validationRules);
-            Log::info('SLVL Validation passed:', $validated);
+            Log::info('SLVL Validation passed:', [
+                'validated_data' => $validated,
+                'validated_bank_year' => $validated['bank_year'] ?? 'MISSING'
+            ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
             Log::error('SLVL Validation failed:', [
                 'errors' => $e->errors(),
@@ -287,8 +291,16 @@ class SLVLController extends Controller
             return back()->with('error', 'Leave request overlaps with existing leave period.');
         }
         
-        // Use the selected bank year
-        $selectedBankYear = $validated['bank_year'];
+        // Use the selected bank year - WITH ADDITIONAL VALIDATION
+        $selectedBankYear = intval($validated['bank_year']); // Ensure it's an integer
+        
+        // Log bank year processing
+        Log::info('SLVL Bank Year Processing:', [
+            'raw_bank_year' => $validated['bank_year'],
+            'selected_bank_year' => $selectedBankYear,
+            'current_year' => $currentYear,
+            'start_date_year' => $startDate->year
+        ]);
         
         // IMPROVED: Check available leave days for sick and vacation leave
         if (in_array($validated['type'], ['sick', 'vacation']) && $validated['pay_type'] === 'with_pay') {
@@ -309,7 +321,12 @@ class SLVLController extends Controller
                     'created_by' => $user->id,
                     'notes' => "Auto-created default bank for year {$selectedBankYear}"
                 ]);
-                Log::info('Created default SLVL bank:', ['bank_id' => $bank->id, 'year' => $selectedBankYear]);
+                Log::info('Created default SLVL bank:', [
+                    'bank_id' => $bank->id, 
+                    'year' => $selectedBankYear,
+                    'employee_id' => $validated['employee_id'],
+                    'leave_type' => $validated['type']
+                ]);
             }
             
             // Check if sufficient days are available
@@ -346,7 +363,7 @@ class SLVLController extends Controller
                 Log::info('File uploaded successfully:', ['path' => $documentsPath]);
             }
             
-            // Create SLVL record with bank_year field
+            // Create SLVL record with bank_year field - CRITICAL: Store the actual selected year
             $slvlData = [
                 'employee_id' => $validated['employee_id'],
                 'type' => $validated['type'],
@@ -361,10 +378,13 @@ class SLVLController extends Controller
                 'documents_path' => $documentsPath,
                 'status' => 'pending',
                 'created_by' => $user->id,
-                'bank_year' => $selectedBankYear, // Store the selected bank year
+                'bank_year' => $selectedBankYear, // Store the SELECTED bank year, not calculated
             ];
 
-            Log::info('Creating SLVL record with data:', $slvlData);
+            Log::info('Creating SLVL record with data:', [
+                'slvl_data' => $slvlData,
+                'bank_year_being_stored' => $selectedBankYear
+            ]);
             
             $slvl = SLVL::create($slvlData);
             
@@ -372,7 +392,24 @@ class SLVLController extends Controller
                 throw new \Exception('Failed to create SLVL record');
             }
             
-            Log::info('SLVL record created successfully:', ['slvl_id' => $slvl->id, 'bank_year' => $selectedBankYear]);
+            // Verify the created record has the correct bank_year
+            $createdSlvl = SLVL::find($slvl->id);
+            Log::info('SLVL record created successfully:', [
+                'slvl_id' => $slvl->id, 
+                'stored_bank_year' => $createdSlvl->bank_year,
+                'selected_bank_year' => $selectedBankYear,
+                'start_date' => $createdSlvl->start_date,
+                'employee_id' => $createdSlvl->employee_id
+            ]);
+            
+            // Additional verification
+            if ($createdSlvl->bank_year != $selectedBankYear) {
+                Log::error('CRITICAL: Bank year mismatch after creation!', [
+                    'expected_bank_year' => $selectedBankYear,
+                    'actual_bank_year' => $createdSlvl->bank_year,
+                    'slvl_id' => $slvl->id
+                ]);
+            }
             
             DB::commit();
             
@@ -384,7 +421,8 @@ class SLVLController extends Controller
                 'type' => $validated['type'],
                 'pay_type' => $validated['pay_type'],
                 'total_days' => $totalDays,
-                'bank_year' => $selectedBankYear
+                'bank_year' => $selectedBankYear,
+                'final_stored_bank_year' => $createdSlvl->bank_year
             ]);
             
             // Redirect back with success message
@@ -407,7 +445,8 @@ class SLVLController extends Controller
                 'trace' => $e->getTraceAsString(),
                 'user_id' => $user->id,
                 'employee_id' => $validated['employee_id'] ?? null,
-                'validated_data' => $validated
+                'validated_data' => $validated,
+                'selected_bank_year' => $selectedBankYear
             ]);
             
             return back()->with('error', 'Error creating SLVL request: ' . $e->getMessage());
@@ -513,6 +552,16 @@ class SLVLController extends Controller
             
             // Get the bank year from the SLVL record or use the year from start_date
             $bankYear = $slvl->bank_year ?? Carbon::parse($slvl->start_date)->year;
+            
+            // Log the bank year being used for approval
+            Log::info('SLVL status update - bank year determination:', [
+                'slvl_id' => $slvl->id,
+                'stored_bank_year' => $slvl->bank_year,
+                'start_date_year' => Carbon::parse($slvl->start_date)->year,
+                'final_bank_year' => $bankYear,
+                'old_status' => $oldStatus,
+                'new_status' => $validated['status']
+            ]);
             
             // Update SLVL bank if approved and with_pay
             if ($slvl->status === 'approved' && $oldStatus !== 'approved' && $slvl->with_pay) {
@@ -1072,6 +1121,21 @@ public function initializeBanksForYear(Request $request)
             // Fall back to start_date year only if bank_year is not set
             $bankYear = $slvl->bank_year ?? Carbon::parse($slvl->start_date)->year;
             
+            // ENHANCED LOGGING for debugging
+            \Log::info("Force approved SLVL #{$slvlId} - Bank Year Details", [
+                'slvl_id' => $slvlId,
+                'admin_id' => $user->id,
+                'previous_status' => $oldStatus,
+                'stored_bank_year' => $slvl->bank_year,
+                'start_date' => $slvl->start_date,
+                'start_date_year' => Carbon::parse($slvl->start_date)->year,
+                'final_bank_year' => $bankYear,
+                'employee_id' => $slvl->employee_id,
+                'leave_type' => $slvl->type,
+                'pay_type' => $slvl->pay_type,
+                'with_pay' => $slvl->with_pay
+            ]);
+            
             // Update SLVL bank only for with_pay requests
             if ($oldStatus !== 'approved' && $slvl->with_pay && in_array($slvl->type, ['sick', 'vacation'])) {
                 $bank = SLVLBank::where('employee_id', $slvl->employee_id)
@@ -1088,6 +1152,14 @@ public function initializeBanksForYear(Request $request)
                         'year' => $bankYear,
                         'created_by' => $user->id,
                         'notes' => "Auto-created bank for year {$bankYear} (force approved)"
+                    ]);
+                    
+                    \Log::info("Created new SLVL bank during force approval", [
+                        'bank_id' => $bank->id,
+                        'employee_id' => $slvl->employee_id,
+                        'leave_type' => $slvl->type,
+                        'year' => $bankYear,
+                        'total_days' => $bank->total_days
                     ]);
                 }
                 
@@ -1107,16 +1179,16 @@ public function initializeBanksForYear(Request $request)
                 $bank->used_days += $slvl->total_days;
                 $bank->notes = "Used for SLVL ID {$slvl->id} (force approved for year {$bankYear})";
                 $bank->save();
+                
+                \Log::info("Updated SLVL bank during force approval", [
+                    'bank_id' => $bank->id,
+                    'used_days' => $bank->used_days,
+                    'remaining_days' => $bank->remaining_days,
+                    'total_days_used' => $slvl->total_days
+                ]);
             }
             
             $successCount++;
-            
-            \Log::info("Force approved SLVL #{$slvlId}", [
-                'admin_id' => $user->id,
-                'slvl_id' => $slvlId,
-                'previous_status' => $oldStatus,
-                'bank_year' => $bankYear
-            ]);
         }
         
         DB::commit();

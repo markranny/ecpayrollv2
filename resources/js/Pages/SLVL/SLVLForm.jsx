@@ -12,7 +12,7 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
         yearOptions.push(year);
     }
     
-    // Form state
+    // Form state - Initialize with current year but allow user to change
     const [formData, setFormData] = useState({
         employee_id: '',
         type: '',
@@ -23,7 +23,7 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
         pay_type: 'with_pay',
         reason: '',
         supporting_documents: null,
-        bank_year: currentYear // Add bank year selection
+        bank_year: currentYear // Initialize with current year
     });
     
     // Filtered employees state
@@ -107,7 +107,13 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
     // Handle input changes
     const handleChange = (e) => {
         const { name, value, type, checked } = e.target;
-        const newValue = type === 'checkbox' ? checked : value;
+        let newValue = type === 'checkbox' ? checked : value;
+        
+        // Convert bank_year to integer to ensure proper handling
+        if (name === 'bank_year') {
+            newValue = parseInt(value, 10);
+            console.log('Bank year changed to:', newValue); // Debug log
+        }
         
         setFormData({
             ...formData,
@@ -276,12 +282,17 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
             }
             submitData.append('pay_type', formData.pay_type);
             submitData.append('reason', formData.reason);
-            submitData.append('bank_year', formData.bank_year); // Include bank year
+            
+            // Ensure bank_year is sent as integer
+            submitData.append('bank_year', parseInt(formData.bank_year, 10));
             
             // Add file if exists
             if (uploadedFile) {
                 submitData.append('supporting_documents', uploadedFile);
             }
+            
+            // Debug log before submission
+            console.log('Submitting form with bank_year:', formData.bank_year);
             
             // Call the onSubmit prop with the form data
             onSubmit(submitData);
@@ -297,7 +308,7 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
                 pay_type: 'with_pay',
                 reason: '',
                 supporting_documents: null,
-                bank_year: currentYear
+                bank_year: currentYear // Reset to current year
             });
             setSelectedEmployee(null);
             setSearchTerm('');
