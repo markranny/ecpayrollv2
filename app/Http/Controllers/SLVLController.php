@@ -109,21 +109,22 @@ class SLVLController extends Controller
         
         // Get the list of SLVL requests
         $slvls = $slvlQuery->get()->map(function ($slvl) {
-            // Get the employee's remaining leave days
+            // Get the employee's remaining leave days for the bank year used
             $employee = $slvl->employee;
-            $currentYear = now()->year;
+            $bankYear = $slvl->bank_year ?? Carbon::parse($slvl->start_date)->year;
             $remainingDays = 0;
             
             if ($employee) {
                 $bank = $employee->slvlBanks()
                     ->where('leave_type', $slvl->type)
-                    ->where('year', $currentYear)
+                    ->where('year', $bankYear)
                     ->first();
                 $remainingDays = $bank ? $bank->remaining_days : 0;
             }
             
             return array_merge($slvl->toArray(), [
-                'employee_remaining_days' => $remainingDays
+                'employee_remaining_days' => $remainingDays,
+                'bank_year' => $bankYear
             ]);
         });
         
@@ -169,7 +170,6 @@ class SLVLController extends Controller
         return $userRoles;
     }
 
-
     /**
      * Store a newly created SLVL request.
      */
@@ -196,7 +196,7 @@ class SLVLController extends Controller
             }
         }
 
-        // Base validation rules
+        // Base validation rules - ADD bank_year validation
         $validationRules = [
             'employee_id' => 'required|integer|exists:employees,id',
             'type' => 'required|string|in:sick,vacation,emergency,bereavement,maternity,paternity,personal,study',
@@ -206,6 +206,7 @@ class SLVLController extends Controller
             'am_pm' => 'nullable|string|in:AM,PM',
             'pay_type' => 'required|string|in:with_pay,non_pay',
             'reason' => 'required|string|max:1000',
+            'bank_year' => 'required|integer|min:2020|max:2030', // ADD bank year validation
         ];
 
         // Add conditional validation for supporting documents
@@ -267,26 +268,28 @@ class SLVLController extends Controller
             return back()->with('error', 'Leave request overlaps with existing leave period.');
         }
         
+        // Use the selected bank year instead of current year
+        $selectedBankYear = $validated['bank_year'];
+        
         // Check available leave days for sick and vacation leave (only for with_pay requests)
         if (in_array($validated['type'], ['sick', 'vacation']) && $validated['pay_type'] === 'with_pay') {
-            $currentYear = now()->year;
             $bank = SLVLBank::where('employee_id', $validated['employee_id'])
                 ->where('leave_type', $validated['type'])
-                ->where('year', $currentYear)
+                ->where('year', $selectedBankYear) // Use selected bank year
                 ->first();
                 
             if (!$bank) {
-                // Create default bank if it doesn't exist
+                // Create default bank if it doesn't exist for the selected year
                 $bank = SLVLBank::create([
                     'employee_id' => $validated['employee_id'],
                     'leave_type' => $validated['type'],
                     'total_days' => $validated['type'] === 'sick' ? 15 : 15, // Default days
                     'used_days' => 0,
-                    'year' => $currentYear,
+                    'year' => $selectedBankYear, // Use selected bank year
                     'created_by' => $user->id,
-                    'notes' => 'Auto-created default bank'
+                    'notes' => "Auto-created default bank for year {$selectedBankYear}"
                 ]);
-                Log::info('Created default SLVL bank:', ['bank_id' => $bank->id]);
+                Log::info('Created default SLVL bank:', ['bank_id' => $bank->id, 'year' => $selectedBankYear]);
             }
             
             if ($bank->remaining_days < $totalDays) {
@@ -294,9 +297,10 @@ class SLVLController extends Controller
                     'employee_id' => $validated['employee_id'],
                     'type' => $validated['type'],
                     'required_days' => $totalDays,
-                    'available_days' => $bank->remaining_days
+                    'available_days' => $bank->remaining_days,
+                    'bank_year' => $selectedBankYear
                 ]);
-                return back()->with('error', "Insufficient {$validated['type']} leave days. Employee only has {$bank->remaining_days} days available.");
+                return back()->with('error', "Insufficient {$validated['type']} leave days for year {$selectedBankYear}. Employee only has {$bank->remaining_days} days available.");
             }
         }
         
@@ -319,7 +323,7 @@ class SLVLController extends Controller
                 Log::info('File uploaded successfully:', ['path' => $documentsPath]);
             }
             
-            // Create SLVL record
+            // Create SLVL record - ADD bank_year field
             $slvlData = [
                 'employee_id' => $validated['employee_id'],
                 'type' => $validated['type'],
@@ -334,6 +338,7 @@ class SLVLController extends Controller
                 'documents_path' => $documentsPath,
                 'status' => 'pending',
                 'created_by' => $user->id,
+                'bank_year' => $selectedBankYear, // Store the selected bank year
             ];
 
             Log::info('Creating SLVL record with data:', $slvlData);
@@ -344,7 +349,7 @@ class SLVLController extends Controller
                 throw new \Exception('Failed to create SLVL record');
             }
             
-            Log::info('SLVL record created successfully:', ['slvl_id' => $slvl->id]);
+            Log::info('SLVL record created successfully:', ['slvl_id' => $slvl->id, 'bank_year' => $selectedBankYear]);
             
             DB::commit();
             
@@ -355,7 +360,8 @@ class SLVLController extends Controller
                 'user_id' => $user->id,
                 'type' => $validated['type'],
                 'pay_type' => $validated['pay_type'],
-                'total_days' => $totalDays
+                'total_days' => $totalDays,
+                'bank_year' => $selectedBankYear
             ]);
             
             // Get fresh data for redirect
@@ -364,7 +370,7 @@ class SLVLController extends Controller
             
             // Redirect back with success message and fresh data
             return redirect()->route('slvl.index')->with([
-                'message' => 'SLVL request created successfully',
+                'message' => "SLVL request created successfully for year {$selectedBankYear}",
                 'slvls' => $slvls
             ]);
             
@@ -390,157 +396,156 @@ class SLVLController extends Controller
         }
     }
 
-
     /**
- * Update the status of an SLVL request.
- */
-public function updateStatus(Request $request, $id)
-{
-    $user = Auth::user();
-    $slvl = SLVL::findOrFail($id);
-    
-    $validated = $request->validate([
-        'status' => 'required|in:approved,rejected,force_approved',
-        'remarks' => 'nullable|string|max:500',
-    ]);
+     * Update the status of an SLVL request.
+     */
+    public function updateStatus(Request $request, $id)
+    {
+        $user = Auth::user();
+        $slvl = SLVL::findOrFail($id);
+        
+        $validated = $request->validate([
+            'status' => 'required|in:approved,rejected,force_approved',
+            'remarks' => 'nullable|string|max:500',
+        ]);
 
-    // Check permission
-    $canUpdate = false;
-    $isForceApproval = $validated['status'] === 'force_approved';
-    
-    $userRoles = $this->getUserRoles($user);
-    
-    // Only superadmin can force approve
-    if ($isForceApproval && $userRoles['isSuperAdmin']) {
-        $canUpdate = true;
-        $validated['status'] = 'approved';
-    }
-    // Department manager can approve/reject for their department
-    elseif ($userRoles['isDepartmentManager'] && 
-        in_array($slvl->employee->Department, $userRoles['managedDepartments']) &&
-        !$isForceApproval) {
-        $canUpdate = true;
-    }
-    // HRD manager or superadmin can approve/reject any request
-    elseif (($userRoles['isHrdManager'] || $userRoles['isSuperAdmin']) && !$isForceApproval) {
-        $canUpdate = true;
-    }
-
-    if (!$canUpdate) {
-        return redirect()->back()->with('error', 'You are not authorized to update this SLVL request.');
-    }
-
-    DB::beginTransaction();
-    
-    try {
-        if ($isForceApproval) {
-            $slvl->remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
-        } else {
-            $slvl->remarks = $validated['remarks'];
+        // Check permission
+        $canUpdate = false;
+        $isForceApproval = $validated['status'] === 'force_approved';
+        
+        $userRoles = $this->getUserRoles($user);
+        
+        // Only superadmin can force approve
+        if ($isForceApproval && $userRoles['isSuperAdmin']) {
+            $canUpdate = true;
+            $validated['status'] = 'approved';
         }
+        // Department manager can approve/reject for their department
+        elseif ($userRoles['isDepartmentManager'] && 
+            in_array($slvl->employee->Department, $userRoles['managedDepartments']) &&
+            !$isForceApproval) {
+            $canUpdate = true;
+        }
+        // HRD manager or superadmin can approve/reject any request
+        elseif (($userRoles['isHrdManager'] || $userRoles['isSuperAdmin']) && !$isForceApproval) {
+            $canUpdate = true;
+        }
+
+        if (!$canUpdate) {
+            return redirect()->back()->with('error', 'You are not authorized to update this SLVL request.');
+        }
+
+        DB::beginTransaction();
         
-        $oldStatus = $slvl->status;
-        $slvl->status = $validated['status'];
-        $slvl->approved_by = $user->id;
-        $slvl->approved_at = now();
-        $slvl->save();
-        
-        // Update SLVL bank if approved and with_pay
-        if ($slvl->status === 'approved' && $oldStatus !== 'approved' && $slvl->with_pay) {
-            if (in_array($slvl->type, ['sick', 'vacation'])) {
-                $currentYear = now()->year;
-                $bank = SLVLBank::where('employee_id', $slvl->employee_id)
-                    ->where('leave_type', $slvl->type)
-                    ->where('year', $currentYear)
-                    ->first();
-                
-                if (!$bank) {
-                    $bank = SLVLBank::create([
-                        'employee_id' => $slvl->employee_id,
-                        'leave_type' => $slvl->type,
-                        'total_days' => $slvl->type === 'sick' ? 15 : 15,
-                        'used_days' => 0,
-                        'year' => $currentYear,
-                        'created_by' => $user->id,
-                        'notes' => 'Auto-created bank'
-                    ]);
-                }
-                
-                if ($bank->remaining_days < $slvl->total_days) {
-                    DB::rollBack();
-                    return redirect()->back()->with('error', 'Insufficient days in SLVL bank. Employee only has ' . $bank->remaining_days . ' days available.');
-                }
-                
-                $bank->used_days += $slvl->total_days;
-                $bank->save();
+        try {
+            if ($isForceApproval) {
+                $slvl->remarks = 'Administrative override: ' . ($validated['remarks'] ?? 'Force approved by admin');
+            } else {
+                $slvl->remarks = $validated['remarks'];
             }
-        }
-        
-        // Undo bank update if status changed from approved to something else
-        if ($oldStatus === 'approved' && $slvl->status !== 'approved' && $slvl->with_pay) {
-            if (in_array($slvl->type, ['sick', 'vacation'])) {
-                $currentYear = now()->year;
-                $bank = SLVLBank::where('employee_id', $slvl->employee_id)
-                    ->where('leave_type', $slvl->type)
-                    ->where('year', $currentYear)
-                    ->first();
-                
-                if ($bank) {
-                    $bank->used_days -= $slvl->total_days;
+            
+            $oldStatus = $slvl->status;
+            $slvl->status = $validated['status'];
+            $slvl->approved_by = $user->id;
+            $slvl->approved_at = now();
+            $slvl->save();
+            
+            // Get the bank year from the SLVL record or use the year from start_date
+            $bankYear = $slvl->bank_year ?? Carbon::parse($slvl->start_date)->year;
+            
+            // Update SLVL bank if approved and with_pay
+            if ($slvl->status === 'approved' && $oldStatus !== 'approved' && $slvl->with_pay) {
+                if (in_array($slvl->type, ['sick', 'vacation'])) {
+                    $bank = SLVLBank::where('employee_id', $slvl->employee_id)
+                        ->where('leave_type', $slvl->type)
+                        ->where('year', $bankYear) // Use the correct bank year
+                        ->first();
+                    
+                    if (!$bank) {
+                        $bank = SLVLBank::create([
+                            'employee_id' => $slvl->employee_id,
+                            'leave_type' => $slvl->type,
+                            'total_days' => $slvl->type === 'sick' ? 15 : 15,
+                            'used_days' => 0,
+                            'year' => $bankYear, // Use the correct bank year
+                            'created_by' => $user->id,
+                            'notes' => "Auto-created bank for year {$bankYear}"
+                        ]);
+                    }
+                    
+                    if ($bank->remaining_days < $slvl->total_days) {
+                        DB::rollBack();
+                        return redirect()->back()->with('error', "Insufficient days in SLVL bank for year {$bankYear}. Employee only has " . $bank->remaining_days . " days available.");
+                    }
+                    
+                    $bank->used_days += $slvl->total_days;
                     $bank->save();
                 }
             }
-        }
-
-        DB::commit();
-        
-        return redirect()->back()->with('message', 'SLVL status updated successfully.');
-        
-    } catch (\Exception $e) {
-        DB::rollBack();
-        return redirect()->back()->with('error', 'Failed to update SLVL status: ' . $e->getMessage());
-    }
-}
-
-
-/**
- * Get employees with SLVL bank data for a specific year
- */
-public function getEmployeesWithBankData(Request $request)
-{
-    $year = $request->input('year', now()->year);
-    
-    // Get active employees
-    $employees = Employee::where('JobStatus', 'Active')
-        ->orderBy('Lname')
-        ->get()
-        ->map(function ($employee) use ($year) {
-            // Get SLVL bank info for specified year
-            $sickBank = $employee->slvlBanks()
-                ->where('leave_type', 'sick')
-                ->where('year', $year)
-                ->first();
-            $vacationBank = $employee->slvlBanks()
-                ->where('leave_type', 'vacation')
-                ->where('year', $year)
-                ->first();
             
-            return [
-                'id' => $employee->id,
-                'idno' => $employee->idno,
-                'name' => "{$employee->Lname}, {$employee->Fname} {$employee->MName}",
-                'department' => $employee->Department,
-                'position' => $employee->Jobtitle,
-                'sick_leave_days' => $sickBank ? $sickBank->remaining_days : 0,
-                'vacation_leave_days' => $vacationBank ? $vacationBank->remaining_days : 0,
-            ];
-        });
+            // Undo bank update if status changed from approved to something else
+            if ($oldStatus === 'approved' && $slvl->status !== 'approved' && $slvl->with_pay) {
+                if (in_array($slvl->type, ['sick', 'vacation'])) {
+                    $bank = SLVLBank::where('employee_id', $slvl->employee_id)
+                        ->where('leave_type', $slvl->type)
+                        ->where('year', $bankYear) // Use the correct bank year
+                        ->first();
+                    
+                    if ($bank) {
+                        $bank->used_days -= $slvl->total_days;
+                        $bank->save();
+                    }
+                }
+            }
+
+            DB::commit();
+            
+            return redirect()->back()->with('message', 'SLVL status updated successfully.');
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return redirect()->back()->with('error', 'Failed to update SLVL status: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get employees with SLVL bank data for a specific year
+     */
+    public function getEmployeesWithBankData(Request $request)
+    {
+        $year = $request->input('year', now()->year);
         
-    return response()->json([
-        'employees' => $employees,
-        'year' => $year
-    ]);
-}
+        // Get active employees
+        $employees = Employee::where('JobStatus', 'Active')
+            ->orderBy('Lname')
+            ->get()
+            ->map(function ($employee) use ($year) {
+                // Get SLVL bank info for specified year
+                $sickBank = $employee->slvlBanks()
+                    ->where('leave_type', 'sick')
+                    ->where('year', $year)
+                    ->first();
+                $vacationBank = $employee->slvlBanks()
+                    ->where('leave_type', 'vacation')
+                    ->where('year', $year)
+                    ->first();
+                
+                return [
+                    'id' => $employee->id,
+                    'idno' => $employee->idno,
+                    'name' => "{$employee->Lname}, {$employee->Fname} {$employee->MName}",
+                    'department' => $employee->Department,
+                    'position' => $employee->Jobtitle,
+                    'sick_leave_days' => $sickBank ? $sickBank->remaining_days : 0,
+                    'vacation_leave_days' => $vacationBank ? $vacationBank->remaining_days : 0,
+                ];
+            });
+            
+        return response()->json([
+            'employees' => $employees,
+            'year' => $year
+        ]);
+    }
 
     /**
      * Bulk update the status of multiple SLVL requests.
@@ -600,13 +605,15 @@ public function getEmployeesWithBankData(Request $request)
                 $slvl->approved_at = now();
                 $slvl->save();
                 
+                // Get the bank year from the SLVL record or use the year from start_date
+                $bankYear = $slvl->bank_year ?? Carbon::parse($slvl->start_date)->year;
+                
                 // Update SLVL bank if approved and with_pay
                 if ($slvl->status === 'approved' && $oldStatus !== 'approved' && $slvl->with_pay) {
                     if (in_array($slvl->type, ['sick', 'vacation'])) {
-                        $currentYear = now()->year;
                         $bank = SLVLBank::where('employee_id', $slvl->employee_id)
                             ->where('leave_type', $slvl->type)
-                            ->where('year', $currentYear)
+                            ->where('year', $bankYear) // Use the correct bank year
                             ->first();
                         
                         if (!$bank) {
@@ -615,14 +622,14 @@ public function getEmployeesWithBankData(Request $request)
                                 'leave_type' => $slvl->type,
                                 'total_days' => $slvl->type === 'sick' ? 15 : 15,
                                 'used_days' => 0,
-                                'year' => $currentYear,
+                                'year' => $bankYear, // Use the correct bank year
                                 'created_by' => $user->id,
-                                'notes' => 'Auto-created bank'
+                                'notes' => "Auto-created bank for year {$bankYear}"
                             ]);
                         }
                         
                         if ($bank->remaining_days < $slvl->total_days) {
-                            $errors[] = "SLVL #{$slvlId}: Insufficient days in SLVL bank. Employee only has " . $bank->remaining_days . " days available.";
+                            $errors[] = "SLVL #{$slvlId}: Insufficient days in SLVL bank for year {$bankYear}. Employee only has " . $bank->remaining_days . " days available.";
                             $failCount++;
                             continue;
                         }
@@ -680,19 +687,20 @@ public function getEmployeesWithBankData(Request $request)
         // Add remaining days to each SLVL
         return $slvls->map(function ($slvl) {
             $employee = $slvl->employee;
-            $currentYear = now()->year;
+            $bankYear = $slvl->bank_year ?? Carbon::parse($slvl->start_date)->year;
             $remainingDays = 0;
             
             if ($employee && in_array($slvl->type, ['sick', 'vacation'])) {
                 $bank = $employee->slvlBanks()
                     ->where('leave_type', $slvl->type)
-                    ->where('year', $currentYear)
+                    ->where('year', $bankYear) // Use the correct bank year
                     ->first();
                 $remainingDays = $bank ? $bank->remaining_days : 0;
             }
             
             return array_merge($slvl->toArray(), [
-                'employee_remaining_days' => $remainingDays
+                'employee_remaining_days' => $remainingDays,
+                'bank_year' => $bankYear
             ]);
         });
     }
@@ -808,16 +816,19 @@ public function getEmployeesWithBankData(Request $request)
         $sheet->setCellValue('I1', 'Half Day');
         $sheet->setCellValue('J1', 'AM/PM');
         $sheet->setCellValue('K1', 'Pay Type');
-        $sheet->setCellValue('L1', 'Reason');
-        $sheet->setCellValue('M1', 'Status');
-        $sheet->setCellValue('N1', 'Approved By');
-        $sheet->setCellValue('O1', 'Approved Date');
-        $sheet->setCellValue('P1', 'Remarks');
-        $sheet->setCellValue('Q1', 'Created Date');
+        $sheet->setCellValue('L1', 'Bank Year'); // ADD Bank Year column
+        $sheet->setCellValue('M1', 'Reason');
+        $sheet->setCellValue('N1', 'Status');
+        $sheet->setCellValue('O1', 'Approved By');
+        $sheet->setCellValue('P1', 'Approved Date');
+        $sheet->setCellValue('Q1', 'Remarks');
+        $sheet->setCellValue('R1', 'Created Date');
         
         // Add data
         $row = 2;
         foreach ($slvls as $slvl) {
+            $bankYear = $slvl->bank_year ?? Carbon::parse($slvl->start_date)->year;
+            
             $sheet->setCellValue('A' . $row, $slvl->id);
             $sheet->setCellValue('B' . $row, $slvl->employee ? $slvl->employee->idno : '');
             $sheet->setCellValue('C' . $row, $slvl->employee ? $slvl->employee->Lname . ', ' . $slvl->employee->Fname : '');
@@ -829,17 +840,18 @@ public function getEmployeesWithBankData(Request $request)
             $sheet->setCellValue('I' . $row, $slvl->half_day ? 'Yes' : 'No');
             $sheet->setCellValue('J' . $row, $slvl->am_pm ?? '');
             $sheet->setCellValue('K' . $row, $slvl->pay_type ? ucfirst(str_replace('_', ' ', $slvl->pay_type)) : ($slvl->with_pay ? 'With Pay' : 'Non Pay'));
-            $sheet->setCellValue('L' . $row, $slvl->reason);
-            $sheet->setCellValue('M' . $row, ucfirst($slvl->status));
-            $sheet->setCellValue('N' . $row, $slvl->approver ? $slvl->approver->name : '');
-            $sheet->setCellValue('O' . $row, $slvl->approved_at ? Carbon::parse($slvl->approved_at)->format('Y-m-d H:i:s') : '');
-            $sheet->setCellValue('P' . $row, $slvl->remarks);
-            $sheet->setCellValue('Q' . $row, $slvl->created_at ? Carbon::parse($slvl->created_at)->format('Y-m-d H:i:s') : '');
+            $sheet->setCellValue('L' . $row, $bankYear); // ADD Bank Year data
+            $sheet->setCellValue('M' . $row, $slvl->reason);
+            $sheet->setCellValue('N' . $row, ucfirst($slvl->status));
+            $sheet->setCellValue('O' . $row, $slvl->approver ? $slvl->approver->name : '');
+            $sheet->setCellValue('P' . $row, $slvl->approved_at ? Carbon::parse($slvl->approved_at)->format('Y-m-d H:i:s') : '');
+            $sheet->setCellValue('Q' . $row, $slvl->remarks);
+            $sheet->setCellValue('R' . $row, $slvl->created_at ? Carbon::parse($slvl->created_at)->format('Y-m-d H:i:s') : '');
             $row++;
         }
         
         // Auto-size columns
-        foreach (range('A', 'Q') as $column) {
+        foreach (range('A', 'R') as $column) {
             $sheet->getColumnDimension($column)->setAutoSize(true);
         }
         
@@ -902,12 +914,14 @@ public function getEmployeesWithBankData(Request $request)
                 $slvl->remarks = 'Administrative override: ' . $remarks;
                 $slvl->save();
                 
+                // Get the bank year from the SLVL record or use the year from start_date
+                $bankYear = $slvl->bank_year ?? Carbon::parse($slvl->start_date)->year;
+                
                 // Update SLVL bank only for with_pay requests
                 if ($oldStatus !== 'approved' && $slvl->with_pay && in_array($slvl->type, ['sick', 'vacation'])) {
-                    $currentYear = now()->year;
                     $bank = SLVLBank::where('employee_id', $slvl->employee_id)
                         ->where('leave_type', $slvl->type)
-                        ->where('year', $currentYear)
+                        ->where('year', $bankYear) // Use the correct bank year
                         ->first();
                     
                     if (!$bank) {
@@ -916,14 +930,14 @@ public function getEmployeesWithBankData(Request $request)
                             'leave_type' => $slvl->type,
                             'total_days' => $slvl->type === 'sick' ? 15 : 15,
                             'used_days' => 0,
-                            'year' => $currentYear,
+                            'year' => $bankYear, // Use the correct bank year
                             'created_by' => $user->id,
-                            'notes' => 'Auto-created bank (force approved)'
+                            'notes' => "Auto-created bank for year {$bankYear} (force approved)"
                         ]);
                     }
                     
                     if ($bank->remaining_days < $slvl->total_days) {
-                        $errors[] = "SLVL #{$slvlId}: Insufficient days in SLVL bank. Employee only has " . $bank->remaining_days . " days available.";
+                        $errors[] = "SLVL #{$slvlId}: Insufficient days in SLVL bank for year {$bankYear}. Employee only has " . $bank->remaining_days . " days available.";
                         
                         $slvl->status = $oldStatus;
                         $slvl->approved_by = null;
@@ -936,7 +950,7 @@ public function getEmployeesWithBankData(Request $request)
                     }
                     
                     $bank->used_days += $slvl->total_days;
-                    $bank->notes = "Used for SLVL ID {$slvl->id} (force approved)";
+                    $bank->notes = "Used for SLVL ID {$slvl->id} (force approved for year {$bankYear})";
                     $bank->save();
                 }
                 
@@ -945,7 +959,8 @@ public function getEmployeesWithBankData(Request $request)
                 \Log::info("Force approved SLVL #{$slvlId}", [
                     'admin_id' => $user->id,
                     'slvl_id' => $slvlId,
-                    'previous_status' => $oldStatus
+                    'previous_status' => $oldStatus,
+                    'bank_year' => $bankYear
                 ]);
             }
             
