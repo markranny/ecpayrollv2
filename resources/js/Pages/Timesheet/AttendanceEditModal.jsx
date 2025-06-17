@@ -849,25 +849,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
 
           <div className="bg-gray-50 p-4 -mx-6 -mb-6 mt-6 flex justify-between items-center border-t">
             <div className="flex space-x-2">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={handleSync}
-                disabled={syncLoading}
-                className="text-green-600 border-green-300 hover:bg-green-50"
-              >
-                {syncLoading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Syncing...
-                  </>
-                ) : (
-                  <>
-                    <RotateCcw className="h-4 w-4 mr-2" />
-                    Sync
-                  </>
-                )}
-              </Button>
+              
               <Button
                 type="button"
                 variant="outline"

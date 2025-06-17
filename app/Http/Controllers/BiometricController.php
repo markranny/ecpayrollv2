@@ -1947,12 +1947,24 @@ private function extractLogDetails($log)
         ->orderBy('Fname')
         ->get();
 
-    // Get unique departments for filtering
+    // Get unique departments for filtering - handle null/empty values properly
     $departments = \App\Models\Employee::whereNotNull('Department')
         ->where('Department', '!=', '')
+        ->where('Department', '!=', 'NULL')
+        ->where('JobStatus', 'Active')
         ->distinct()
         ->orderBy('Department')
         ->pluck('Department')
+        ->filter() // Remove any null/empty values
+        ->unique() // Ensure uniqueness
+        ->values() // Reset array keys
+        ->map(function($dept, $index) {
+            return [
+                'id' => $index + 1, // Use index + 1 as unique ID
+                'name' => trim($dept), // Trim whitespace
+                'value' => trim($dept) // Use for option value
+            ];
+        })
         ->toArray();
 
     return Inertia::render('Timesheet/ManualAttendance', [

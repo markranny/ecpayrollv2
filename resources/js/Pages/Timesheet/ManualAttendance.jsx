@@ -38,7 +38,10 @@ const ManualAttendance = ({ auth, employees = [], departments = [] }) => {
         let partialSearchMatches = [];       // Priority 5: Not selected + Partial match
         let otherEmployees = [];             // Priority 6: Everything else
         
-        employees.forEach(employee => {
+        // Ensure employees is an array and filter out any invalid entries
+        const validEmployees = Array.isArray(employees) ? employees.filter(emp => emp && emp.id) : [];
+        
+        validEmployees.forEach(employee => {
             const isSelected = formData.employee_ids.includes(employee.id);
             
             // Check search match
@@ -47,14 +50,14 @@ const ManualAttendance = ({ auth, employees = [], departments = [] }) => {
             
             if (searchTerm) {
                 const term = searchTerm.toLowerCase().trim();
-                const fullName = `${employee.Fname} ${employee.Lname}`.toLowerCase();
-                const reverseName = `${employee.Lname} ${employee.Fname}`.toLowerCase();
-                const employeeId = employee.idno?.toString().toLowerCase();
+                const fullName = `${employee.Fname || ''} ${employee.Lname || ''}`.toLowerCase();
+                const reverseName = `${employee.Lname || ''} ${employee.Fname || ''}`.toLowerCase();
+                const employeeId = employee.idno?.toString().toLowerCase() || '';
                 
                 // Check for exact match first
                 if (
-                    employee.Lname.toLowerCase() === term || 
-                    employee.Fname.toLowerCase() === term ||
+                    (employee.Lname || '').toLowerCase() === term || 
+                    (employee.Fname || '').toLowerCase() === term ||
                     fullName === term ||
                     reverseName === term ||
                     employeeId === term
@@ -64,16 +67,16 @@ const ManualAttendance = ({ auth, employees = [], departments = [] }) => {
                 } else {
                     // Check for partial match
                     matchesSearch = 
-                        employee.Fname.toLowerCase().includes(term) || 
-                        employee.Lname.toLowerCase().includes(term) || 
-                        employeeId?.includes(term);
+                        (employee.Fname || '').toLowerCase().includes(term) || 
+                        (employee.Lname || '').toLowerCase().includes(term) || 
+                        employeeId.includes(term);
                 }
             }
             
-            // Check department match
+            // Check department match - fix department access
             let matchesDepartment = true;
             if (selectedDepartment) {
-                const employeeDepartment = employee.department?.name || employee.Department;
+                const employeeDepartment = (employee.Department || '').trim();
                 matchesDepartment = employeeDepartment === selectedDepartment;
             }
             
@@ -101,8 +104,8 @@ const ManualAttendance = ({ auth, employees = [], departments = [] }) => {
         
         // Sort each category alphabetically by last name
         const sortByName = (a, b) => {
-            const aName = `${a.Lname}, ${a.Fname}`.toLowerCase();
-            const bName = `${b.Lname}, ${b.Fname}`.toLowerCase();
+            const aName = `${a.Lname || ''}, ${a.Fname || ''}`.toLowerCase();
+            const bName = `${b.Lname || ''}, ${b.Fname || ''}`.toLowerCase();
             return aName.localeCompare(bName);
         };
         
@@ -313,6 +316,9 @@ const ManualAttendance = ({ auth, employees = [], departments = [] }) => {
     // Get selected employees details for display
     const selectedEmployees = employees.filter(emp => formData.employee_ids.includes(emp.id));
     
+    // Ensure departments is an array and filter out invalid entries
+    const validDepartments = Array.isArray(departments) ? departments.filter(dept => dept && dept.name) : [];
+    
     return (
         <AuthenticatedLayout user={auth.user}>
             <Head title="Manual Attendance Entry" />
@@ -329,8 +335,10 @@ const ManualAttendance = ({ auth, employees = [], departments = [] }) => {
                                     <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded">
                                         <h3 className="text-sm font-medium text-red-800">Validation Errors:</h3>
                                         <ul className="mt-2 text-sm text-red-700">
-                                            {Object.entries(errors).map(([key, messages]) => (
-                                                <li key={key}><strong>{key}:</strong> {messages}</li>
+                                            {Object.entries(errors).map(([key, messages], index) => (
+                                                <li key={`error-${key}-${index}`}>
+                                                    <strong>{key}:</strong> {Array.isArray(messages) ? messages.join(', ') : messages}
+                                                </li>
                                             ))}
                                         </ul>
                                     </div>
@@ -364,8 +372,8 @@ const ManualAttendance = ({ auth, employees = [], departments = [] }) => {
                                                             disabled={isSubmitting}
                                                         >
                                                             <option value="">All Departments</option>
-                                                            {departments.map((department) => (
-                                                                <option key={department.id} value={department.name}>
+                                                            {validDepartments.map((department) => (
+                                                                <option key={`dept-${department.id}`} value={department.value || department.name}>
                                                                     {department.name}
                                                                 </option>
                                                             ))}
@@ -420,7 +428,7 @@ const ManualAttendance = ({ auth, employees = [], departments = [] }) => {
                                                             ) : (
                                                                 displayedEmployees.map(employee => (
                                                                     <tr 
-                                                                        key={employee.id} 
+                                                                        key={`emp-${employee.id}`}
                                                                         className={`hover:bg-gray-50 cursor-pointer ${
                                                                             formData.employee_ids.includes(employee.id) ? 'bg-indigo-50' : ''
                                                                         } ${isSubmitting ? 'opacity-50' : ''}`}
@@ -437,18 +445,18 @@ const ManualAttendance = ({ auth, employees = [], departments = [] }) => {
                                                                             />
                                                                         </td>
                                                                         <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
-                                                                            {employee.idno}
+                                                                            {employee.idno || 'N/A'}
                                                                         </td>
                                                                         <td className="px-4 py-2 whitespace-nowrap">
                                                                             <div className="text-sm font-medium text-gray-900">
-                                                                                {employee.Lname}, {employee.Fname} {employee.MName || ''}
+                                                                                {employee.Lname || ''}, {employee.Fname || ''} {employee.MName || ''}
                                                                             </div>
                                                                         </td>
                                                                         <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
-                                                                            {employee.department?.name || employee.Department || 'No Department'}
+                                                                            {employee.Department || 'No Department'}
                                                                         </td>
                                                                         <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
-                                                                            {employee.Jobtitle}
+                                                                            {employee.Jobtitle || 'No Position'}
                                                                         </td>
                                                                     </tr>
                                                                 ))
@@ -463,7 +471,7 @@ const ManualAttendance = ({ auth, employees = [], departments = [] }) => {
                                                             <span className="font-medium">{formData.employee_ids.length} employee(s) selected</span>
                                                             {formData.employee_ids.length <= 5 && (
                                                                 <span className="ml-2">
-                                                                    ({selectedEmployees.map(emp => emp.Lname).join(', ')})
+                                                                    ({selectedEmployees.map(emp => emp.Lname || 'Unknown').join(', ')})
                                                                 </span>
                                                             )}
                                                         </div>

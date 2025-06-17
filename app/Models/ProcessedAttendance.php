@@ -28,6 +28,7 @@ class ProcessedAttendance extends Model
         'travel_order',
         'retromultiplier',
         'restday',
+        'ob', // Add the missing 'ob' field from migration
         'status',
         'source',
         'remarks',
@@ -51,6 +52,7 @@ class ProcessedAttendance extends Model
         'travel_order' => 'decimal:2',
         'retromultiplier' => 'decimal:2',
         'restday' => 'boolean',
+        'ob' => 'boolean', // Cast the 'ob' field to boolean
         'is_nightshift' => 'boolean',
     ];
 
