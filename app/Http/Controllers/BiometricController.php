@@ -1939,63 +1939,198 @@ private function extractLogDetails($log)
      * Show form for manual attendance entry.
      */
     public function manualEntryForm()
-    {
-        $employees = Employee::select('id', 'Fname', 'Lname', 'idno', 'Department')->orderBy('Fname')->get();
-        
-        return Inertia::render('Timesheet/ManualAttendance', [
-            'employees' => $employees,
-            'auth' => [
-                'user' => auth()->user(),
-            ],
-        ]);
-    }
+{
+    // Get all active employees with required fields
+    $employees = \App\Models\Employee::where('JobStatus', 'Active')
+        ->select('id', 'idno', 'Fname', 'Lname', 'MName', 'Department', 'Jobtitle')
+        ->orderBy('Lname')
+        ->orderBy('Fname')
+        ->get();
+
+    // Get unique departments for filtering
+    $departments = \App\Models\Employee::whereNotNull('Department')
+        ->where('Department', '!=', '')
+        ->distinct()
+        ->orderBy('Department')
+        ->pluck('Department')
+        ->toArray();
+
+    return Inertia::render('Timesheet/ManualAttendance', [
+        'employees' => $employees,
+        'departments' => $departments,
+        'auth' => [
+            'user' => auth()->user()
+        ]
+    ]);
+}
     
     /**
      * Store manual attendance entry.
      */
     public function storeManualEntry(Request $request)
-    {
+{
+    try {
+        \Log::info('Manual attendance entry request:', $request->all());
+
         $validator = Validator::make($request->all(), [
             'employee_id' => 'required|exists:employees,id',
-            'attendance_date' => 'required|date|before_or_equal:today',
+            'attendance_date' => 'required|date',
             'time_in' => 'required|date_format:H:i',
-            'time_out' => 'required|date_format:H:i|after:time_in',
-            'remarks' => 'nullable|string',
+            'time_out' => 'nullable|date_format:H:i',
+            'break_in' => 'nullable|date_format:H:i',
+            'break_out' => 'nullable|date_format:H:i',
+            'next_day_timeout' => 'nullable|date_format:H:i',
+            'is_nightshift' => 'boolean',
+            'remarks' => 'nullable|string|max:500'
         ]);
 
         if ($validator->fails()) {
-            return redirect()->back()->withErrors($validator)->withInput();
+            \Log::warning('Manual attendance validation failed:', $validator->errors()->toArray());
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
         }
 
-        try {
-            $date = Carbon::parse($request->attendance_date)->format('Y-m-d');
-            $timeIn = Carbon::parse($date . ' ' . $request->time_in);
-            $timeOut = Carbon::parse($date . ' ' . $request->time_out);
-            // Calculate hours worked
-            $hoursWorked = $timeIn->floatDiffInHours($timeOut);
+        $validatedData = $validator->validated();
+        
+        // Get employee details
+        $employee = \App\Models\Employee::findOrFail($validatedData['employee_id']);
+
+        // Check if attendance record already exists for this date
+        $existingRecord = \App\Models\ProcessedAttendance::where('employee_id', $validatedData['employee_id'])
+            ->whereDate('attendance_date', $validatedData['attendance_date'])
+            ->first();
+
+        if ($existingRecord) {
+            return response()->json([
+                'success' => false,
+                'message' => "Attendance record already exists for {$employee->Fname} {$employee->Lname} on " . date('Y-m-d', strtotime($validatedData['attendance_date']))
+            ], 422);
+        }
+
+        // Prepare attendance data
+        $attendanceData = [
+            'employee_id' => $validatedData['employee_id'],
+            'attendance_date' => $validatedData['attendance_date'],
+            'day' => date('l', strtotime($validatedData['attendance_date'])), // Day of week
+            'is_nightshift' => $validatedData['is_nightshift'] ?? false,
+            'source' => 'manual',
+            'status' => 'present',
+            'remarks' => $validatedData['remarks'] ?? null
+        ];
+
+        // Handle time fields - convert to full datetime
+        $dateStr = $validatedData['attendance_date'];
+        
+        if ($validatedData['time_in']) {
+            $attendanceData['time_in'] = $dateStr . ' ' . $validatedData['time_in'] . ':00';
+        }
+        
+        if ($validatedData['time_out']) {
+            $attendanceData['time_out'] = $dateStr . ' ' . $validatedData['time_out'] . ':00';
+        }
+        
+        if ($validatedData['break_in']) {
+            $attendanceData['break_in'] = $dateStr . ' ' . $validatedData['break_in'] . ':00';
+        }
+        
+        if ($validatedData['break_out']) {
+            $attendanceData['break_out'] = $dateStr . ' ' . $validatedData['break_out'] . ':00';
+        }
+        
+        // Handle next day timeout for night shifts
+        if ($validatedData['is_nightshift'] && $validatedData['next_day_timeout']) {
+            $nextDay = date('Y-m-d', strtotime($dateStr . ' +1 day'));
+            $attendanceData['next_day_timeout'] = $nextDay . ' ' . $validatedData['next_day_timeout'] . ':00';
+        }
+
+        // Additional validation for break times
+        if ($validatedData['break_out'] && $validatedData['break_in']) {
+            if ($validatedData['break_out'] >= $validatedData['break_in']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Break In time must be after Break Out time'
+                ], 422);
+            }
+        }
+
+        // For non-night shifts, validate time sequence
+        if (!$validatedData['is_nightshift']) {
+            if ($validatedData['time_in'] && $validatedData['time_out']) {
+                if ($validatedData['time_in'] >= $validatedData['time_out']) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Time Out must be after Time In for regular shifts'
+                    ], 422);
+                }
+            }
+        }
+
+        // Create the attendance record
+        $attendance = \App\Models\ProcessedAttendance::create($attendanceData);
+
+        // Calculate hours worked
+        $this->calculateHoursWorked($attendance);
+
+        \Log::info('Manual attendance entry created successfully:', [
+            'id' => $attendance->id,
+            'employee_id' => $attendance->employee_id,
+            'date' => $attendance->attendance_date
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Manual attendance entry created successfully for {$employee->Fname} {$employee->Lname}",
+            'data' => $attendance
+        ]);
+
+    } catch (\Exception $e) {
+        \Log::error('Error creating manual attendance entry: ' . $e->getMessage(), [
+            'exception' => get_class($e),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+            'trace' => $e->getTraceAsString()
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to create attendance entry: ' . $e->getMessage()
+        ], 500);
+    }
+}
+
+
+private function calculateHoursWorked(\App\Models\ProcessedAttendance $attendance)
+{
+    if ($attendance->time_in) {
+        $start = $attendance->time_in;
+        $end = null;
+        
+        // Use next_day_timeout for night shifts, otherwise use time_out
+        if ($attendance->is_nightshift && $attendance->next_day_timeout) {
+            $end = $attendance->next_day_timeout;
+        } else if ($attendance->time_out) {
+            $end = $attendance->time_out;
+        }
+        
+        if ($end) {
+            // Calculate total minutes
+            $totalMinutes = $end->diffInMinutes($start);
             
-            // Create or update processed attendance record
-            $attendance = ProcessedAttendance::updateOrCreate(
-                [
-                    'employee_id' => $request->employee_id,
-                    'attendance_date' => $date,
-                ],
-                [
-                    'time_in' => $timeIn,
-                    'time_out' => $timeOut,
-                    'hours_worked' => $hoursWorked,
-                    'status' => 'present',
-                    'source' => 'manual',
-                    'remarks' => $request->remarks,
-                ]
-            );
+            // Subtract break time if both break_in and break_out are set
+            if ($attendance->break_in && $attendance->break_out) {
+                $breakMinutes = $attendance->break_out->diffInMinutes($attendance->break_in);
+                $totalMinutes -= $breakMinutes;
+            }
             
-            return redirect()->back()->with('success', 'Manual attendance entry saved successfully.');
-        } catch (\Exception $e) {
-            Log::error('Failed to save manual attendance entry: ' . $e->getMessage());
-            return redirect()->back()->with('error', 'Error: ' . $e->getMessage());
+            // Convert minutes to hours with proper rounding
+            $attendance->hours_worked = round($totalMinutes / 60, 2);
+            $attendance->save();
         }
     }
+}
     
     /**
      * Edit an attendance record.
