@@ -177,6 +177,7 @@ const ProcessedAttendanceList = () => {
   };
 
   // Sync attendance data
+  // Sync attendance data
   const handleSync = async () => {
     setSyncing(true);
     setError('');

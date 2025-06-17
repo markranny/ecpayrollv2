@@ -259,6 +259,8 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
         ->name('attendance.update');
     
     // NEW ROUTES: Sync and Delete functionality
+    Route::post('/attendance/sync', [ProcessedAttendanceController::class, 'sync'])
+        ->name('attendance.sync');
     Route::post('/attendance/{id}/sync', [ProcessedAttendanceController::class, 'sync'])
         ->name('attendance.sync');
     Route::delete('/attendance/{id}', [ProcessedAttendanceController::class, 'destroy'])

@@ -627,6 +627,8 @@ public function update(Request $request, $id)
     
     /**
      * Calculate overtime hours for employee on specific date
+     * Formula: total_hours * rate_multiplier
+     * Conditions: approved_by IS NOT NULL AND status = 'approved'
      */
     private function calculateOvertimeHours($employeeId, $attendanceDate)
     {
@@ -645,6 +647,9 @@ public function update(Request $request, $id)
     
     /**
      * Calculate travel order hours for employee on specific date
+     * If is_full_day = 1: output is 8 hours
+     * If is_full_day = 0: calculate difference between departure_time and return_time
+     * Conditions: approved_by IS NOT NULL AND status = 'approved'
      */
     private function calculateTravelOrderHours($employeeId, $attendanceDate)
     {
@@ -664,7 +669,7 @@ public function update(Request $request, $id)
                     $departureTime = \Carbon\Carbon::parse($travelOrder->departure_time);
                     $returnTime = \Carbon\Carbon::parse($travelOrder->return_time);
                     $hours = $returnTime->diffInHours($departureTime);
-                    return $hours;
+                    return (float) $hours;
                 }
             }
         }
@@ -674,6 +679,8 @@ public function update(Request $request, $id)
     
     /**
      * Calculate retro multiplier for employee on specific date
+     * Formula: hours_days * multiplier_rate
+     * Conditions: approved_by IS NOT NULL AND status = 'approved'
      */
     private function calculateRetroMultiplier($employeeId, $attendanceDate)
     {
@@ -692,6 +699,7 @@ public function update(Request $request, $id)
     
     /**
      * Check if employee has approved cancel rest day on specific date
+     * Conditions: approved_by IS NOT NULL AND status = 'approved'
      */
     private function checkCancelRestDay($employeeId, $attendanceDate)
     {
