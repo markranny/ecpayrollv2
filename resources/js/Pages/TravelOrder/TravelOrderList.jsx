@@ -196,8 +196,104 @@ const TravelOrderList = ({
             timerRef.current = setInterval(refreshData, refreshInterval);
         }
     };
+
+// Updated handleDelete function in your TravelOrderList component
+const handleDelete = async (id) => {
+    if (processing || localProcessing || deletingId) return;
     
-    // Fixed handleStatusUpdate function in TravelOrderList.jsx
+    // Confirm deletion
+    if (!window.confirm('Are you sure you want to delete this travel order? This action cannot be undone.')) {
+        return;
+    }
+    
+    setDeletingId(id);
+    setLocalProcessing(true);
+    
+    try {
+        if (typeof onDelete === 'function') {
+            const result = onDelete(id);
+            
+            if (result && typeof result.then === 'function') {
+                await result;
+                
+                // Update local state to remove the deleted item
+                setLocalTravelOrders(prevOrders => 
+                    prevOrders.filter(order => order.id !== id)
+                );
+                setFilteredTravelOrders(prevFiltered => 
+                    prevFiltered.filter(order => order.id !== id)
+                );
+                setSelectedIds(prevIds => prevIds.filter(itemId => itemId !== id));
+                
+                console.log('Travel order deleted successfully');
+            } else {
+                // Update local state for non-promise result
+                setLocalTravelOrders(prevOrders => 
+                    prevOrders.filter(order => order.id !== id)
+                );
+                setFilteredTravelOrders(prevFiltered => 
+                    prevFiltered.filter(order => order.id !== id)
+                );
+                setSelectedIds(prevIds => prevIds.filter(itemId => itemId !== id));
+            }
+        } else {
+            // Use the Laravel DELETE route - try the standard approach first
+            router.delete(route('travel-orders.destroy', id), {
+                preserveScroll: true,
+                onSuccess: () => {
+                    setLocalTravelOrders(prevOrders => 
+                        prevOrders.filter(order => order.id !== id)
+                    );
+                    setFilteredTravelOrders(prevFiltered => 
+                        prevFiltered.filter(order => order.id !== id)
+                    );
+                    setSelectedIds(prevIds => prevIds.filter(itemId => itemId !== id));
+                    
+                    console.log('Travel order deleted successfully');
+                    toast.success('Travel order deleted successfully');
+                },
+                onError: (errors) => {
+                    console.error('Error deleting travel order:', errors);
+                    
+                    // If DELETE method fails, try the POST alternative
+                    if (errors?.message?.includes('Method Not Allowed') || errors?.message?.includes('DELETE')) {
+                        router.post(route('travel-orders.destroy.post', id), {
+                            _method: 'DELETE', // Laravel method spoofing
+                            preserveScroll: true,
+                            onSuccess: () => {
+                                setLocalTravelOrders(prevOrders => 
+                                    prevOrders.filter(order => order.id !== id)
+                                );
+                                setFilteredTravelOrders(prevFiltered => 
+                                    prevFiltered.filter(order => order.id !== id)
+                                );
+                                setSelectedIds(prevIds => prevIds.filter(itemId => itemId !== id));
+                                
+                                console.log('Travel order deleted successfully via POST');
+                                toast.success('Travel order deleted successfully');
+                            },
+                            onError: (postErrors) => {
+                                console.error('Error deleting travel order via POST:', postErrors);
+                                toast.error('Error: Failed to delete travel order. ' + 
+                                    (postErrors?.message || 'Please try again.'));
+                            }
+                        });
+                    } else {
+                        toast.error('Error: Failed to delete travel order. ' + 
+                            (errors?.message || 'Please try again.'));
+                    }
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Error deleting travel order:', error);
+        toast.error('Error: Failed to delete travel order. Please try again.');
+    } finally {
+        setDeletingId(null);
+        setLocalProcessing(false);
+    }
+};
+    
 const handleStatusUpdate = (id, data) => {
     setUpdatingId(id);
     setLocalProcessing(true);

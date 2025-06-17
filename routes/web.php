@@ -41,6 +41,12 @@ use Illuminate\Support\Facades\Route;
 use Illuminate\Support\Facades\Auth;
 use Inertia\Inertia;
 
+/*
+|--------------------------------------------------------------------------
+| Web Routes
+|--------------------------------------------------------------------------
+*/
+
 // Public Routes
 Route::get('/', function () {
     return Inertia::render('Welcome', [
@@ -51,6 +57,7 @@ Route::get('/', function () {
     ]);
 });
 
+// Clear Cache Route
 Route::get('cls', function(){
     Artisan::call('clear-compiled');
     echo "clear-compiled: complete<br>";
@@ -68,7 +75,11 @@ Route::get('cls', function(){
     echo "view:cache: complete<br>";
 });
 
-// Guest Routes (Authentication & Registration)
+/*
+|--------------------------------------------------------------------------
+| Guest Routes (Authentication & Registration)
+|--------------------------------------------------------------------------
+*/
 Route::middleware('guest')->group(function () {
     // Authentication Routes
     Route::get('login', [AuthenticatedSessionController::class, 'create'])
@@ -86,23 +97,31 @@ Route::post('logout', [AuthenticatedSessionController::class, 'destroy'])
     ->middleware('auth')
     ->name('logout');
 
-// Authenticated Routes
+/*
+|--------------------------------------------------------------------------
+| Authenticated Routes
+|--------------------------------------------------------------------------
+*/
 Route::middleware(['auth', 'verified'])->group(function () {
+    
+    /*
+    |--------------------------------------------------------------------------
+    | Dashboard Routes
+    |--------------------------------------------------------------------------
+    */
     // Main Dashboard Route - redirects to the appropriate dashboard based on role
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
     
-    // Role-Specific Dashboard Routes (added direct access routes)
+    // Role-Specific Dashboard Routes
     Route::get('/employee/dashboard', function () {
         return Inertia::render('EmployeeDashboard', [
             'auth' => ['user' => auth()->user()]
         ]);
     })->name('employee.dashboard');
 
-    // Direct department manager dashboard access route 
-    // (department managers should come here directly, skipping /dashboard)
     Route::get('/department-manager/dashboard', [DashboardController::class, 'departmentManagerDashboard'])
-    ->middleware('role:department_manager,superadmin')
-    ->name('department_manager.dashboard');
+        ->middleware('role:department_manager,superadmin')
+        ->name('department_manager.dashboard');
 
     Route::get('/superadmin/dashboard', function () {
         return Inertia::render('SuperadminDashboard', [
@@ -110,10 +129,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ]);
     })->middleware('role:superadmin')->name('superadmin.dashboard');
 
-    // HRD Manager Dashboard route - use the controller method for proper data loading
     Route::get('/hrd/dashboard', [DashboardController::class, 'hrdManagerDashboard'])
-    ->middleware('role:hrd_manager,superadmin')
-    ->name('hrd_manager.dashboard');
+        ->middleware('role:hrd_manager,superadmin')
+        ->name('hrd_manager.dashboard');
 
     Route::get('/finance/dashboard', function () {
         return Inertia::render('FinanceDashboard', [
@@ -121,16 +139,46 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ]);
     })->middleware('role:finance,superadmin')->name('finance.dashboard');
 
-    // Department Manager Routes
-    Route::middleware('role:superadmin')->group(function () {
-        Route::post('/department-managers', [DepartmentManagerController::class, 'store'])
-            ->name('department-managers.store');
-        Route::delete('/department-managers/{id}', [DepartmentManagerController::class, 'destroy'])
-            ->name('department-managers.destroy');
-    });
+    /*
+    |--------------------------------------------------------------------------
+    | Profile Routes
+    |--------------------------------------------------------------------------
+    */
+    Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
+    Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
+    Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 
-    // Employee Management Routes
-    Route::middleware('role:hrd_manager,superadmin')
+    /*
+    |--------------------------------------------------------------------------
+    | Reports Routes
+    |--------------------------------------------------------------------------
+    */
+    Route::get('/reports', function () {
+        return Inertia::render('Reports/Index', [
+            'auth' => ['user' => auth()->user()]
+        ]);
+    })->name('reports.index');
+});
+
+/*
+|--------------------------------------------------------------------------
+| SuperAdmin Only Routes
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth', 'verified', 'role:superadmin'])->group(function () {
+    // Department Manager Routes
+    Route::post('/department-managers', [DepartmentManagerController::class, 'store'])
+        ->name('department-managers.store');
+    Route::delete('/department-managers/{id}', [DepartmentManagerController::class, 'destroy'])
+        ->name('department-managers.destroy');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Employee Management Routes
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])
     ->prefix('employees')
     ->group(function () {
         // Import Routes - MUST be defined before the general routes to avoid conflicts
@@ -142,10 +190,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::get('/', [EmployeeController::class, 'index'])->name('employees.index');
         Route::get('/list', [EmployeeController::class, 'index'])->name('employees.list');
         Route::post('/', [EmployeeController::class, 'store'])->name('employees.store');
-        
-        // UPDATE THIS LINE - Add proper PUT route for updating employees
         Route::put('/{id}', [EmployeeController::class, 'update'])->name('employees.update');
-        
         Route::delete('/{id}', [EmployeeController::class, 'destroy'])->name('employees.destroy');
         
         // Employee Status Management
@@ -154,76 +199,77 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::post('/{id}/mark-active', [EmployeeController::class, 'markActive'])->name('employees.markActive');
     });
 
-    // Attendance Routes
-    Route::middleware('role:hrd_manager,superadmin')->group(function () {
-        // Biometric Devices
-        Route::get('/biometric-devices', [BiometricController::class, 'index'])
-            ->name('biometric-devices.index');
-        Route::post('/biometric-devices', [BiometricController::class, 'storeDevice'])
-            ->name('biometric-devices.store');
-        Route::put('/biometric-devices/{id}', [BiometricController::class, 'updateDevice'])
-            ->name('biometric-devices.update');
-        Route::delete('/biometric-devices/{id}', [BiometricController::class, 'deleteDevice'])
-            ->name('biometric-devices.destroy');
-        Route::post('/biometric-devices/test-connection', [BiometricController::class, 'testConnection'])
-            ->name('biometric-devices.test-connection');
-        Route::post('/biometric-devices/fetch-logs', [BiometricController::class, 'fetchLogs'])
-            ->name('biometric-devices.fetch-logs');
-        Route::post('/biometric-devices/diagnostic', [BiometricController::class, 'diagnosticTest'])
-            ->name('biometric-devices.diagnostic');
-        
-        // Attendance Import Routes
-        Route::get('/attendance/import', [AttendanceController::class, 'showImportPage'])
-            ->name('attendance.import');
-        Route::post('/attendance/import', [AttendanceController::class, 'import'])
-            ->name('attendance.import.process');
-        Route::get('/attendance/template/download', [AttendanceController::class, 'downloadTemplate'])
-            ->name('attendance.template.download');
-        
-        // Manual Attendance Entry
-        Route::get('/timesheet/manual-entry', [BiometricController::class, 'manualEntryForm'])
-            ->name('timesheet.manual-entry');
-        Route::post('/attendance/manual', [BiometricController::class, 'storeManualEntry'])
-            ->name('attendance.manual.store');
-        
-        // Attendance Reports
-        Route::get('/timesheet/report', [BiometricController::class, 'getAttendanceReport'])
-            ->name('attendance.report');
-        Route::get('/timesheet/report/data', [BiometricController::class, 'getAttendanceReport'])
-            ->name('attendance.report.data');
-        Route::get('/timesheet/report/export', [BiometricController::class, 'exportAttendanceReport'])
-            ->name('attendance.report.export');
-        
-        // Attendance CRUD Operations
-        Route::get('/timesheet/attendance/{id}/edit', [BiometricController::class, 'editAttendance'])
-            ->name('attendance.edit');
-        Route::put('/timesheet/attendance/{id}', [BiometricController::class, 'updateAttendance'])
-            ->name('attendance.update');
-        Route::delete('/timesheet/attendance/{id}', [BiometricController::class, 'deleteAttendance'])
-            ->name('attendance.delete');
+/*
+|--------------------------------------------------------------------------
+| Attendance Management Routes
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(function () {
+    // Biometric Devices
+    Route::get('/biometric-devices', [BiometricController::class, 'index'])
+        ->name('biometric-devices.index');
+    Route::post('/biometric-devices', [BiometricController::class, 'storeDevice'])
+        ->name('biometric-devices.store');
+    Route::put('/biometric-devices/{id}', [BiometricController::class, 'updateDevice'])
+        ->name('biometric-devices.update');
+    Route::delete('/biometric-devices/{id}', [BiometricController::class, 'deleteDevice'])
+        ->name('biometric-devices.destroy');
+    Route::post('/biometric-devices/test-connection', [BiometricController::class, 'testConnection'])
+        ->name('biometric-devices.test-connection');
+    Route::post('/biometric-devices/fetch-logs', [BiometricController::class, 'fetchLogs'])
+        ->name('biometric-devices.fetch-logs');
+    Route::post('/biometric-devices/diagnostic', [BiometricController::class, 'diagnosticTest'])
+        ->name('biometric-devices.diagnostic');
+    
+    // Attendance Import Routes
+    Route::get('/attendance/import', [AttendanceController::class, 'showImportPage'])
+        ->name('attendance.import');
+    Route::post('/attendance/import', [AttendanceController::class, 'import'])
+        ->name('attendance.import.process');
+    Route::get('/attendance/template/download', [AttendanceController::class, 'downloadTemplate'])
+        ->name('attendance.template.download');
+    
+    // Manual Attendance Entry
+    Route::get('/timesheet/manual-entry', [BiometricController::class, 'manualEntryForm'])
+        ->name('timesheet.manual-entry');
+    Route::post('/attendance/manual', [BiometricController::class, 'storeManualEntry'])
+        ->name('attendance.manual.store');
+    
+    // Attendance Reports
+    Route::get('/timesheet/report', [BiometricController::class, 'getAttendanceReport'])
+        ->name('attendance.report');
+    Route::get('/timesheet/report/data', [BiometricController::class, 'getAttendanceReport'])
+        ->name('attendance.report.data');
+    Route::get('/timesheet/report/export', [BiometricController::class, 'exportAttendanceReport'])
+        ->name('attendance.report.export');
+    
+    // Attendance CRUD Operations
+    Route::get('/timesheet/attendance/{id}/edit', [BiometricController::class, 'editAttendance'])
+        ->name('attendance.edit');
+    Route::put('/timesheet/attendance/{id}', [BiometricController::class, 'updateAttendance'])
+        ->name('attendance.update');
+    Route::delete('/timesheet/attendance/{id}', [BiometricController::class, 'deleteAttendance'])
+        ->name('attendance.delete');
 
-        // Main UI route
-        Route::get('/attendance', [ProcessedAttendanceController::class, 'index'])
-            ->name('attendance.index');
+    // Processed Attendance
+    Route::get('/attendance', [ProcessedAttendanceController::class, 'index'])
+        ->name('attendance.index');
+    Route::get('/attendance/list', [ProcessedAttendanceController::class, 'list'])
+        ->name('attendance.list');
+    Route::put('/attendance/{id}', [ProcessedAttendanceController::class, 'update'])
+        ->name('attendance.update');
+    Route::get('/attendance/departments', [ProcessedAttendanceController::class, 'getDepartments'])
+        ->name('attendance.departments');
+    Route::get('/attendance/export', [ProcessedAttendanceController::class, 'export'])
+        ->name('attendance.export');
+});
 
-        // API endpoint for fetching attendance data
-        Route::get('/attendance/list', [ProcessedAttendanceController::class, 'list'])
-            ->name('attendance.list');
-
-        // Update attendance record
-        Route::put('/attendance/{id}', [ProcessedAttendanceController::class, 'update'])
-            ->name('attendance.update');
-
-        // Get departments for filter dropdown
-        Route::get('/attendance/departments', [ProcessedAttendanceController::class, 'getDepartments'])
-            ->name('attendance.departments');
-
-        // Export attendance data
-        Route::get('/attendance/export', [ProcessedAttendanceController::class, 'export'])
-            ->name('attendance.export');
-    });
-
-    Route::middleware(['auth', 'role:hrd_manager,superadmin'])->group(function () {
+/*
+|--------------------------------------------------------------------------
+| Travel Orders Routes
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(function () {
     // Index route
     Route::get('/travel-orders', [TravelOrderController::class, 'index'])
         ->name('travel-orders.index');
@@ -255,7 +301,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->name('travel-orders.updateStatus')
         ->where(['travelOrder' => '[0-9]+']);
     
-    // DELETE routes - these should be with the same middleware group
+    // DELETE routes
     Route::delete('/travel-orders/{id}', [TravelOrderController::class, 'destroy'])
         ->name('travel-orders.destroy')
         ->where(['id' => '[0-9]+']);
@@ -266,265 +312,225 @@ Route::middleware(['auth', 'verified'])->group(function () {
         ->where(['id' => '[0-9]+']);
 });
 
-    // Overtime Routes - Available to both employees and managers
-    Route::middleware(['auth'])->group(function () {
-        Route::get('/overtimes', [OvertimeController::class, 'index'])
-            ->name('overtimes.index');
-        Route::post('/overtimes', [OvertimeController::class, 'store'])
-            ->name('overtimes.store');
-        Route::post('/overtimes/{overtime}/status', [OvertimeController::class, 'updateStatus'])
-            ->name('overtimes.updateStatus');
-        Route::post('/overtimes/{overtime}/delete', [OvertimeController::class, 'destroy'])
-            ->name('overtimes.destroy.post');
-        Route::get('/overtimes/export', [OvertimeController::class, 'export'])
-            ->name('overtimes.export');
-        Route::post('/overtimes/explain-rate', [OvertimeController::class, 'explainRateCalculation'])
-            ->name('overtimes.explain-rate')
-            ->middleware(['auth']);
+/*
+|--------------------------------------------------------------------------
+| Overtime Routes - Available to all authenticated users
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth', 'verified'])->group(function () {
+    Route::get('/overtimes', [OvertimeController::class, 'index'])
+        ->name('overtimes.index');
+    Route::post('/overtimes', [OvertimeController::class, 'store'])
+        ->name('overtimes.store');
+    Route::post('/overtimes/{overtime}/status', [OvertimeController::class, 'updateStatus'])
+        ->name('overtimes.updateStatus');
+    Route::post('/overtimes/{overtime}/delete', [OvertimeController::class, 'destroy'])
+        ->name('overtimes.destroy.post');
+    Route::get('/overtimes/export', [OvertimeController::class, 'export'])
+        ->name('overtimes.export');
+    Route::post('/overtimes/explain-rate', [OvertimeController::class, 'explainRateCalculation'])
+        ->name('overtimes.explain-rate');
+    
+    // Bulk Actions for managers
+    Route::middleware('role:department_manager,hrd_manager,superadmin')->group(function () {
+        Route::post('/overtimes/bulk-update', [OvertimeController::class, 'bulkUpdateStatus'])
+            ->name('overtimes.bulkUpdateStatus');
         
-        // Bulk Actions for managers
-        Route::middleware('role:department_manager,hrd_manager,superadmin')->group(function () {
-            Route::post('/overtimes/bulk-update', [OvertimeController::class, 'bulkUpdateStatus'])
-                ->name('overtimes.bulkUpdateStatus');
-            
-            // Force approve route (superadmin only)
-            Route::middleware('role:superadmin')->group(function () {
-                Route::post('/overtimes/force-approve', [OvertimeController::class, 'forceApprove'])
-                    ->name('overtimes.force-approve');
-            });
+        // Force approve route (superadmin only)
+        Route::middleware('role:superadmin')->group(function () {
+            Route::post('/overtimes/force-approve', [OvertimeController::class, 'forceApprove'])
+                ->name('overtimes.force-approve');
+        });
+    });
+});
+
+/*
+|--------------------------------------------------------------------------
+| HR-Related Routes
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(function () {
+    
+    // Offsets Routes
+    Route::get('/offsets', [OffsetController::class, 'index'])->name('offsets.index');
+    Route::post('/offsets', [OffsetController::class, 'store'])->name('offsets.store');
+    Route::post('/offsets/{id}/status', [OffsetController::class, 'updateStatus'])->name('offsets.updateStatus');
+    Route::delete('/offsets/{id}', [OffsetController::class, 'destroy'])->name('offsets.destroy');
+    Route::get('/offsets/export', [OffsetController::class, 'export'])->name('offsets.export');
+    Route::get('/offsets/bank/{employeeId}', [OffsetController::class, 'getOffsetBank'])->name('offsets.getOffsetBank');
+    Route::post('/offsets/add-hours-to-bank', [OffsetController::class, 'addHoursToBank'])->name('offsets.addHoursToBank');
+    
+    // Bulk Actions for managers
+    Route::middleware('role:department_manager,hrd_manager,superadmin')->group(function () {
+        Route::post('/offsets/bulk-update', [OffsetController::class, 'bulkUpdateStatus'])
+            ->name('offsets.bulkUpdateStatus');
+        
+        // Force approve route (superadmin only)
+        Route::middleware('role:superadmin')->group(function () {
+            Route::post('/offsets/force-approve', [OffsetController::class, 'forceApprove'])
+                ->name('offsets.force-approve');
         });
     });
 
-    // HR-Related Routes
-    Route::middleware('role:hrd_manager,superadmin')->group(function () {
-        // Offsets Routes
-        Route::get('/offsets', [OffsetController::class, 'index'])
-            ->name('offsets.index');
-        Route::post('/offsets', [OffsetController::class, 'store'])
-            ->name('offsets.store');
-        Route::post('/offsets/{id}/status', [OffsetController::class, 'updateStatus'])
-            ->name('offsets.updateStatus');
-        Route::delete('/offsets/{id}', [OffsetController::class, 'destroy'])
-            ->name('offsets.destroy');
-        Route::get('/offsets/export', [OffsetController::class, 'export'])
-            ->name('offsets.export');
-        Route::get('/offsets/bank/{employeeId}', [OffsetController::class, 'getOffsetBank'])
-            ->name('offsets.getOffsetBank');
-        
-        // Bulk Actions for managers
-        Route::middleware('role:department_manager,hrd_manager,superadmin')->group(function () {
-            Route::post('/offsets/bulk-update', [OffsetController::class, 'bulkUpdateStatus'])
-                ->name('offsets.bulkUpdateStatus');
-            
-            // Force approve route (superadmin only)
-            Route::middleware('role:superadmin')->group(function () {
-                Route::post('/offsets/force-approve', [OffsetController::class, 'forceApprove'])
-                    ->name('offsets.force-approve');
-            });
-        });
-        
-        // Add hours to bank (HRD manager and superadmin only)
-        Route::post('/offsets/add-hours-to-bank', [OffsetController::class, 'addHoursToBank'])
-            ->name('offsets.addHoursToBank');
-
-        // Change Off Schedule Routes
-        Route::get('/change-off-schedules', [ChangeOffScheduleController::class, 'index'])
-            ->name('change-off-schedules.index');
-        Route::post('/change-off-schedules', [ChangeOffScheduleController::class, 'store'])
-            ->name('change-off-schedules.store');
-        Route::post('/change-off-schedules/{id}/status', [ChangeOffScheduleController::class, 'updateStatus'])
-            ->name('change-off-schedules.updateStatus');
-        Route::delete('/change-off-schedules/{id}', [ChangeOffScheduleController::class, 'destroy'])
-            ->name('change-off-schedules.destroy');
-        Route::post('/change-off-schedules/{id}/delete', [ChangeOffScheduleController::class, 'destroy'])
-            ->name('change-off-schedules.destroy-post');
-        Route::get('/change-off-schedules/export', [ChangeOffScheduleController::class, 'export'])
-            ->name('change-off-schedules.export');
-        
-        // Add this bulk update route for Change Off Schedule
-        Route::post('/change-off-schedules/bulk-update', [ChangeOffScheduleController::class, 'bulkUpdateStatus'])
-            ->name('change-off-schedules.bulkUpdateStatus');
-        
-        // Force approve route (superadmin only)
-        Route::middleware('role:superadmin')->group(function () {
-            Route::post('/change-off-schedules/force-approve', [ChangeOffScheduleController::class, 'forceApprove'])
-                ->name('change-off-schedules.force-approve');
-        });
-
-        // Time Schedule Routes
-        Route::get('/time-schedules', [TimeScheduleController::class, 'index'])
-            ->name('time-schedules.index');
-        Route::post('/time-schedules', [TimeScheduleController::class, 'store'])
-            ->name('time-schedules.store');
-        Route::post('/time-schedules/{id}/status', [TimeScheduleController::class, 'updateStatus'])
-            ->name('time-schedules.updateStatus');
-        Route::delete('/time-schedules/{id}', [TimeScheduleController::class, 'destroy'])
-            ->name('time-schedules.destroy');
-        Route::post('/time-schedules/{id}/delete', [TimeScheduleController::class, 'destroy'])
-            ->name('time-schedules.destroy-post');
-        Route::get('/time-schedules/export', [TimeScheduleController::class, 'export'])
-            ->name('time-schedules.export');
-        
-        // Add this bulk update route for Time Schedule
-        Route::post('/time-schedules/bulk-update', [TimeScheduleController::class, 'bulkUpdateStatus'])
-            ->name('time-schedules.bulkUpdateStatus');
-        
-        // Force approve route (superadmin only)
-        Route::middleware('role:superadmin')->group(function () {
-            Route::post('/time-schedules/force-approve', [TimeScheduleController::class, 'forceApprove'])
-                ->name('time-schedules.force-approve');
-        });
-
-        // Official Business Routes
-        Route::get('/official-business', [OfficialBusinessController::class, 'index'])
-            ->name('official-business.index');
-        Route::post('/official-business', [OfficialBusinessController::class, 'store'])
-            ->name('official-business.store');
-        Route::post('/official-business/{id}/status', [OfficialBusinessController::class, 'updateStatus'])
-            ->name('official-business.updateStatus');
-        Route::delete('/official-business/{id}', [OfficialBusinessController::class, 'destroy'])
-            ->name('official-business.destroy');
-        Route::get('/official-business/export', [OfficialBusinessController::class, 'export'])
-            ->name('official-business.export');
-
-        // Main CRUD routes
-    Route::get('/retro', [RetroController::class, 'index'])->name('retro.index');
-    Route::post('/retro', [RetroController::class, 'store'])->name('retro.store');
-    
-    // Export route (must be before parameterized routes)
-    Route::get('/retro/export', [RetroController::class, 'export'])->name('retro.export');
-    
-    // Bulk operations (must be before parameterized routes)
-    Route::post('/retro/bulk-update-status', [RetroController::class, 'bulkUpdateStatus'])
-        ->name('retro.bulkUpdateStatus');
+    // Change Off Schedule Routes
+    Route::get('/change-off-schedules', [ChangeOffScheduleController::class, 'index'])->name('change-off-schedules.index');
+    Route::post('/change-off-schedules', [ChangeOffScheduleController::class, 'store'])->name('change-off-schedules.store');
+    Route::post('/change-off-schedules/{id}/status', [ChangeOffScheduleController::class, 'updateStatus'])->name('change-off-schedules.updateStatus');
+    Route::delete('/change-off-schedules/{id}', [ChangeOffScheduleController::class, 'destroy'])->name('change-off-schedules.destroy');
+    Route::post('/change-off-schedules/{id}/delete', [ChangeOffScheduleController::class, 'destroy'])->name('change-off-schedules.destroy-post');
+    Route::get('/change-off-schedules/export', [ChangeOffScheduleController::class, 'export'])->name('change-off-schedules.export');
+    Route::post('/change-off-schedules/bulk-update', [ChangeOffScheduleController::class, 'bulkUpdateStatus'])->name('change-off-schedules.bulkUpdateStatus');
     
     // Force approve route (superadmin only)
+    Route::middleware('role:superadmin')->group(function () {
+        Route::post('/change-off-schedules/force-approve', [ChangeOffScheduleController::class, 'forceApprove'])
+            ->name('change-off-schedules.force-approve');
+    });
+
+    // Time Schedule Routes
+    Route::get('/time-schedules', [TimeScheduleController::class, 'index'])->name('time-schedules.index');
+    Route::post('/time-schedules', [TimeScheduleController::class, 'store'])->name('time-schedules.store');
+    Route::post('/time-schedules/{id}/status', [TimeScheduleController::class, 'updateStatus'])->name('time-schedules.updateStatus');
+    Route::delete('/time-schedules/{id}', [TimeScheduleController::class, 'destroy'])->name('time-schedules.destroy');
+    Route::post('/time-schedules/{id}/delete', [TimeScheduleController::class, 'destroy'])->name('time-schedules.destroy-post');
+    Route::get('/time-schedules/export', [TimeScheduleController::class, 'export'])->name('time-schedules.export');
+    Route::post('/time-schedules/bulk-update', [TimeScheduleController::class, 'bulkUpdateStatus'])->name('time-schedules.bulkUpdateStatus');
+    
+    // Force approve route (superadmin only)
+    Route::middleware('role:superadmin')->group(function () {
+        Route::post('/time-schedules/force-approve', [TimeScheduleController::class, 'forceApprove'])
+            ->name('time-schedules.force-approve');
+    });
+
+    // Official Business Routes
+    Route::get('/official-business', [OfficialBusinessController::class, 'index'])->name('official-business.index');
+    Route::post('/official-business', [OfficialBusinessController::class, 'store'])->name('official-business.store');
+    Route::post('/official-business/{id}/status', [OfficialBusinessController::class, 'updateStatus'])->name('official-business.updateStatus');
+    Route::delete('/official-business/{id}', [OfficialBusinessController::class, 'destroy'])->name('official-business.destroy');
+    Route::get('/official-business/export', [OfficialBusinessController::class, 'export'])->name('official-business.export');
+
+    // Retro Routes
+    Route::get('/retro', [RetroController::class, 'index'])->name('retro.index');
+    Route::post('/retro', [RetroController::class, 'store'])->name('retro.store');
+    Route::get('/retro/export', [RetroController::class, 'export'])->name('retro.export');
+    Route::post('/retro/bulk-update-status', [RetroController::class, 'bulkUpdateStatus'])->name('retro.bulkUpdateStatus');
     Route::post('/retro/force-approve', [RetroController::class, 'forceApprove'])
         ->middleware('role:superadmin')
         ->name('retro.force-approve');
-    
-    // Parameterized routes (must be last)
     Route::post('/retro/{id}/status', [RetroController::class, 'updateStatus'])
         ->name('retro.updateStatus')
         ->where('id', '[0-9]+');
-    
     Route::delete('/retro/{id}', [RetroController::class, 'destroy'])
         ->name('retro.destroy')
         ->where('id', '[0-9]+');
-    
-    // Alternative POST delete route for browsers that don't support DELETE
     Route::post('/retro/{id}/delete', [RetroController::class, 'destroy'])
         ->name('retro.destroy.post')
         ->where('id', '[0-9]+');
 
-        // SLVL (Sick Leave/Vacation Leave) Routes
-        Route::get('/slvl', [SLVLController::class, 'index'])
-            ->name('slvl.index');
-        Route::post('/slvl', [SLVLController::class, 'store'])
-            ->name('slvl.store');
-        Route::post('/slvl/{id}/status', [SLVLController::class, 'updateStatus'])
-            ->name('slvl.updateStatus');
-        Route::delete('/slvl/{id}', [SLVLController::class, 'destroy'])
-            ->name('slvl.destroy');
-        Route::get('/slvl/export', [SLVLController::class, 'export'])
-            ->name('slvl.export');
-        Route::get('/slvl/bank/{employeeId}', [SLVLController::class, 'getSLVLBank'])
-            ->name('slvl.getSLVLBank');
-
-        Route::get('/slvl/employees-bank-data', [SLVLController::class, 'getEmployeesWithBankData'])->name('slvl.getEmployeesWithBankData');
-
-        Route::post('/slvl/add-days-to-bank', [SLVLController::class, 'addDaysToBank'])
-            ->name('slvl.addDaysToBank');
-            
-        // Add this new route for bulk adding days
-        Route::post('/slvl/bulk-add-days-to-bank', [SLVLController::class, 'bulkAddDaysToBank'])
-            ->name('slvl.bulkAddDaysToBank');
+    // SLVL (Sick Leave/Vacation Leave) Routes
+    Route::get('/slvl', [SLVLController::class, 'index'])->name('slvl.index');
+    Route::post('/slvl', [SLVLController::class, 'store'])->name('slvl.store');
+    Route::post('/slvl/{id}/status', [SLVLController::class, 'updateStatus'])->name('slvl.updateStatus');
+    Route::delete('/slvl/{id}', [SLVLController::class, 'destroy'])->name('slvl.destroy');
+    Route::get('/slvl/export', [SLVLController::class, 'export'])->name('slvl.export');
+    Route::get('/slvl/bank/{employeeId}', [SLVLController::class, 'getSLVLBank'])->name('slvl.getSLVLBank');
+    Route::get('/slvl/employees-bank-data', [SLVLController::class, 'getEmployeesWithBankData'])->name('slvl.getEmployeesWithBankData');
+    Route::post('/slvl/add-days-to-bank', [SLVLController::class, 'addDaysToBank'])->name('slvl.addDaysToBank');
+    Route::post('/slvl/bulk-add-days-to-bank', [SLVLController::class, 'bulkAddDaysToBank'])->name('slvl.bulkAddDaysToBank');
+    
+    // Bulk Actions for managers
+    Route::middleware('role:department_manager,hrd_manager,superadmin')->group(function () {
+        Route::post('/slvl/bulk-update', [SLVLController::class, 'bulkUpdateStatus'])
+            ->name('slvl.bulkUpdateStatus');
         
-        // Bulk Actions for managers
-        Route::middleware('role:department_manager,hrd_manager,superadmin')->group(function () {
-            Route::post('/slvl/bulk-update', [SLVLController::class, 'bulkUpdateStatus'])
-                ->name('slvl.bulkUpdateStatus');
-            
-            // Force approve route (superadmin only)
-            Route::middleware('role:superadmin')->group(function () {
-                Route::post('/slvl/force-approve', [SLVLController::class, 'forceApprove'])
-                    ->name('slvl.force-approve');
-            });
+        // Force approve route (superadmin only)
+        Route::middleware('role:superadmin')->group(function () {
+            Route::post('/slvl/force-approve', [SLVLController::class, 'forceApprove'])
+                ->name('slvl.force-approve');
         });
     });
 
-    // Finance Routes
-    Route::middleware('role:finance,superadmin')->group(function () {
-        Route::get('/benefits', [BenefitController::class, 'index'])->name('benefits.index');
-        Route::post('/benefits', [BenefitController::class, 'store'])->name('benefits.store');
-        Route::patch('/benefits/{id}', [BenefitController::class, 'update'])->name('benefits.update');
-        Route::patch('/benefits/{id}/field', [BenefitController::class, 'updateField'])->name('benefits.update-field');
-        Route::post('/benefits/{id}/post', [BenefitController::class, 'postBenefit'])->name('benefits.post');
-        Route::post('/benefits/{id}/set-default', [BenefitController::class, 'setDefault'])->name('benefits.set-default');
-        Route::post('/benefits/post-all', [BenefitController::class, 'postAll'])->name('benefits.post-all');
-        Route::post('/benefits/bulk-post', [BenefitController::class, 'bulkPost'])->name('benefits.bulk-post');
-        Route::post('/benefits/bulk-set-default', [BenefitController::class, 'bulkSetDefault'])->name('benefits.bulk-set-default');
-        Route::post('/benefits/create-from-default', [BenefitController::class, 'createFromDefault'])->name('benefits.create-from-default');
-        Route::post('/benefits/bulk-create', [BenefitController::class, 'bulkCreateFromDefault'])->name('benefits.bulk-create');
-        
-        Route::get('/api/employee-defaults', [BenefitController::class, 'getEmployeeDefaults']);
-
-        Route::get('/employee-defaults', [BenefitController::class, 'showEmployeeDefaultsPage'])
-            ->name('employee-defaults.index');
+    // Cancel Rest Day Routes
+    Route::get('/cancel-rest-days', [CancelRestDayController::class, 'index'])->name('cancel-rest-days.index');
+    Route::post('/cancel-rest-days', [CancelRestDayController::class, 'store'])->name('cancel-rest-days.store');
+    Route::post('/cancel-rest-days/{id}/status', [CancelRestDayController::class, 'updateStatus'])
+        ->name('cancel-rest-days.updateStatus')
+        ->where(['id' => '[0-9]+']);
+    Route::post('/cancel-rest-days/bulk-update', [CancelRestDayController::class, 'bulkUpdateStatus'])
+        ->name('cancel-rest-days.bulkUpdateStatus');
+    Route::get('/cancel-rest-days/export', [CancelRestDayController::class, 'export'])
+        ->name('cancel-rest-days.export');
+    Route::delete('/cancel-rest-days/{id}', [CancelRestDayController::class, 'destroy'])
+        ->name('cancel-rest-days.destroy')
+        ->where(['id' => '[0-9]+']);
+    Route::post('/cancel-rest-days/{id}/delete', [CancelRestDayController::class, 'destroy'])
+        ->name('cancel-rest-days.destroy.post')
+        ->where(['id' => '[0-9]+']);
+    
+    // Force approve route (superadmin only)
+    Route::middleware('role:superadmin')->group(function () {
+        Route::post('/cancel-rest-days/force-approve', [CancelRestDayController::class, 'forceApprove'])
+            ->name('cancel-rest-days.force-approve');
     });
-
-    // Reports Routes
-    Route::get('/reports', function () {
-        return Inertia::render('Reports/Index', [
-            'auth' => ['user' => auth()->user()]
-        ]);
-    })->name('reports.index');
-
-    // Profile Routes
-    Route::get('/profile', [ProfileController::class, 'edit'])
-        ->name('profile.edit');
-    Route::patch('/profile', [ProfileController::class, 'update'])
-        ->name('profile.update');
-    Route::delete('/profile', [ProfileController::class, 'destroy'])
-        ->name('profile.destroy');
 });
 
-// Management Routes
-Route::middleware(['role:superadmin,hrd'])->prefix('manage')->group(function () {
+/*
+|--------------------------------------------------------------------------
+| Finance Routes
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth', 'verified', 'role:finance,superadmin'])->group(function () {
+    Route::get('/benefits', [BenefitController::class, 'index'])->name('benefits.index');
+    Route::post('/benefits', [BenefitController::class, 'store'])->name('benefits.store');
+    Route::patch('/benefits/{id}', [BenefitController::class, 'update'])->name('benefits.update');
+    Route::patch('/benefits/{id}/field', [BenefitController::class, 'updateField'])->name('benefits.update-field');
+    Route::post('/benefits/{id}/post', [BenefitController::class, 'postBenefit'])->name('benefits.post');
+    Route::post('/benefits/{id}/set-default', [BenefitController::class, 'setDefault'])->name('benefits.set-default');
+    Route::post('/benefits/post-all', [BenefitController::class, 'postAll'])->name('benefits.post-all');
+    Route::post('/benefits/bulk-post', [BenefitController::class, 'bulkPost'])->name('benefits.bulk-post');
+    Route::post('/benefits/bulk-set-default', [BenefitController::class, 'bulkSetDefault'])->name('benefits.bulk-set-default');
+    Route::post('/benefits/create-from-default', [BenefitController::class, 'createFromDefault'])->name('benefits.create-from-default');
+    Route::post('/benefits/bulk-create', [BenefitController::class, 'bulkCreateFromDefault'])->name('benefits.bulk-create');
+    Route::get('/api/employee-defaults', [BenefitController::class, 'getEmployeeDefaults']);
+    Route::get('/employee-defaults', [BenefitController::class, 'showEmployeeDefaultsPage'])->name('employee-defaults.index');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Management Routes
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth', 'verified', 'role:superadmin,hrd_manager'])->prefix('manage')->group(function () {
     Route::get('/departments', function () {
         return Inertia::render('Manage/Departments', [
-            'auth' => [
-                'user' => Auth::user()
-            ]
+            'auth' => ['user' => Auth::user()]
         ]);
     })->name('manage.departments');
     
     Route::get('/lines-sections', function () {
         return Inertia::render('Manage/LineAndSection', [
-            'auth' => [
-                'user' => Auth::user()
-            ]
+            'auth' => ['user' => Auth::user()]
         ]);
     })->name('manage.lines-sections');
     
     Route::get('/line-section', function () {
         return Inertia::render('Manage/LineAndSection', [
-            'auth' => [
-                'user' => Auth::user()
-            ]
+            'auth' => ['user' => Auth::user()]
         ]);
     })->name('manage.line-section');
     
-    // Add the new route for roles access
     Route::get('/roles', function () {
         return Inertia::render('Manage/RolesAndAccess', [
-            'auth' => [
-                'user' => Auth::user()
-            ]
+            'auth' => ['user' => Auth::user()]
         ]);
     })->name('manage.roles');
 });
 
+/*
+|--------------------------------------------------------------------------
+| API Routes for Management
+|--------------------------------------------------------------------------
+*/
 Route::middleware(['auth:sanctum'])->group(function () {
     // Department routes
     Route::get('/departments', [DepartmentController::class, 'index']);
@@ -548,8 +554,12 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::patch('/sections/{id}/toggle-active', [SectionController::class, 'toggleActive']);
 });
 
-// CoreHR Routes
-Route::middleware(['role:superadmin,hrd'])->group(function () {
+/*
+|--------------------------------------------------------------------------
+| CoreHR Routes
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth', 'verified', 'role:superadmin,hrd_manager'])->group(function () {
     // Promotion Routes
     Route::get('/core-hr/promotion', function () {
         return Inertia::render('CoreHR/Promotion', [
@@ -638,60 +648,15 @@ Route::middleware(['role:superadmin,hrd'])->group(function () {
     Route::post('/terminations/{id}/status', [TerminationController::class, 'updateStatus'])->name('terminations.updateStatus');
     Route::delete('/terminations/{id}', [TerminationController::class, 'destroy'])->name('terminations.destroy');
     Route::get('/terminations/export', [TerminationController::class, 'export'])->name('terminations.export');
-
-    // Travel Routes (different from travel orders)
-    Route::get('/core-hr/travel', function () {
-        return Inertia::render('CoreHR/Travel', [
-            'auth' => ['user' => Auth::user()]
-        ]);
-    })->name('travel.page');
-    Route::get('/travel/list', [TravelOrderController::class, 'list'])->name('travel.list');
-    Route::post('/travel', [TravelOrderController::class, 'store'])->name('travel.store');
-    Route::put('/travel/{id}', [TravelOrderController::class, 'update'])->name('travel.update');
-    Route::post('/travel/{id}/status', [TravelOrderController::class, 'updateStatus'])->name('travel.updateStatus');
-    Route::delete('/travel/{id}', [TravelOrderController::class, 'destroy'])->name('travel.destroy');
-    Route::get('/travel/export', [TravelOrderController::class, 'export'])->name('travel.export');
-
-    // Index route
-    Route::get('/cancel-rest-days', [CancelRestDayController::class, 'index'])
-        ->name('cancel-rest-days.index');
-    
-    // Store route
-    Route::post('/cancel-rest-days', [CancelRestDayController::class, 'store'])
-        ->name('cancel-rest-days.store');
-    
-    // Status update route
-    Route::post('/cancel-rest-days/{id}/status', [CancelRestDayController::class, 'updateStatus'])
-        ->name('cancel-rest-days.updateStatus')
-        ->where(['id' => '[0-9]+']);
-    
-    // Bulk update route
-    Route::post('/cancel-rest-days/bulk-update', [CancelRestDayController::class, 'bulkUpdateStatus'])
-        ->name('cancel-rest-days.bulkUpdateStatus');
-    
-    // Export route
-    Route::get('/cancel-rest-days/export', [CancelRestDayController::class, 'export'])
-        ->name('cancel-rest-days.export');
-    
-    // DELETE routes
-    Route::delete('/cancel-rest-days/{id}', [CancelRestDayController::class, 'destroy'])
-        ->name('cancel-rest-days.destroy')
-        ->where(['id' => '[0-9]+']);
-    
-    // Alternative POST delete route for browsers that don't support DELETE
-    Route::post('/cancel-rest-days/{id}/delete', [CancelRestDayController::class, 'destroy'])
-        ->name('cancel-rest-days.destroy.post')
-        ->where(['id' => '[0-9]+']);
-    
-    // Force approve route (superadmin only)
-    Route::middleware('role:superadmin')->group(function () {
-        Route::post('/cancel-rest-days/force-approve', [CancelRestDayController::class, 'forceApprove'])
-            ->name('cancel-rest-days.force-approve');
-    });
 });
 
-// Meetings and Events Routes
-Route::middleware(['auth', 'verified', 'role:superadmin,hrd'])->group(function () {
+/*
+|--------------------------------------------------------------------------
+| Meetings and Events Routes
+|--------------------------------------------------------------------------
+*/
+Route::middleware(['auth', 'verified', 'role:superadmin,hrd_manager'])->group(function () {
+    // Meetings Routes
     Route::get('/meetings', function () {
         $status = request()->input('status', 'all');
         
@@ -721,26 +686,16 @@ Route::middleware(['auth', 'verified', 'role:superadmin,hrd'])->group(function (
     })->name('meetings.index');
     
     // API routes for Meetings
-    Route::post('/meetings/{id}/reschedule', [MeetingsController::class, 'reschedule'])
-        ->name('meetings.reschedule');
-    Route::get('/meetings/list', [MeetingsController::class, 'list'])
-        ->name('meetings.list');
-    Route::post('/meetings', [MeetingsController::class, 'store'])
-        ->name('meetings.store');
-    Route::put('/meetings/{id}', [MeetingsController::class, 'update'])
-        ->name('meetings.update');
-    Route::delete('/meetings/{id}', [MeetingsController::class, 'destroy'])
-        ->name('meetings.destroy');
-    Route::post('/meetings/{id}/mark-completed', [MeetingsController::class, 'markCompleted'])
-        ->name('meetings.mark-completed');
-    Route::post('/meetings/{id}/mark-cancelled', [MeetingsController::class, 'markCancelled'])
-        ->name('meetings.mark-cancelled');
-    Route::post('/meetings/{id}/mark-scheduled', [MeetingsController::class, 'markScheduled'])
-        ->name('meetings.mark-scheduled');
-    Route::get('/meetings/export', [MeetingsController::class, 'export'])
-        ->name('meetings.export');
-    Route::get('/api/employees', [EmployeeController::class, 'getEmployeesForSelect'])
-        ->name('api.employees');
+    Route::post('/meetings/{id}/reschedule', [MeetingsController::class, 'reschedule'])->name('meetings.reschedule');
+    Route::get('/meetings/list', [MeetingsController::class, 'list'])->name('meetings.list');
+    Route::post('/meetings', [MeetingsController::class, 'store'])->name('meetings.store');
+    Route::put('/meetings/{id}', [MeetingsController::class, 'update'])->name('meetings.update');
+    Route::delete('/meetings/{id}', [MeetingsController::class, 'destroy'])->name('meetings.destroy');
+    Route::post('/meetings/{id}/mark-completed', [MeetingsController::class, 'markCompleted'])->name('meetings.mark-completed');
+    Route::post('/meetings/{id}/mark-cancelled', [MeetingsController::class, 'markCancelled'])->name('meetings.mark-cancelled');
+    Route::post('/meetings/{id}/mark-scheduled', [MeetingsController::class, 'markScheduled'])->name('meetings.mark-scheduled');
+    Route::get('/meetings/export', [MeetingsController::class, 'export'])->name('meetings.export');
+    Route::get('/api/employees', [EmployeeController::class, 'getEmployeesForSelect'])->name('api.employees');
 
     // Events Routes
     Route::get('/events', [EventsController::class, 'index'])->name('events.index');
@@ -751,8 +706,7 @@ Route::middleware(['auth', 'verified', 'role:superadmin,hrd'])->group(function (
     Route::delete('/events/{id}', [EventsController::class, 'destroy'])->name('events.destroy');
     Route::post('/events/{id}/status', [EventsController::class, 'updateStatus'])->name('events.updateStatus');
     Route::get('/events/export', [EventsController::class, 'export'])->name('events.export');
-    Route::put('/events/{id}/reschedule', [EventsController::class, 'reschedule'])
-        ->name('events.reschedule');
+    Route::put('/events/{id}/reschedule', [EventsController::class, 'reschedule'])->name('events.reschedule');
 
     // HR Calendar routes
     Route::get('/hr-calendar', function () {
@@ -762,10 +716,9 @@ Route::middleware(['auth', 'verified', 'role:superadmin,hrd'])->group(function (
     })->name('hr-calendar.index');
 
     // API endpoints for HR Calendar
-    Route::get('/hr-calendar/data', [HrCalendarController::class, 'getData'])
-        ->name('hr-calendar.data');
-    Route::get('/hr-calendar/departments', [HrCalendarController::class, 'getDepartments'])
-        ->name('hr-calendar.departments');
+    Route::get('/hr-calendar/data', [HrCalendarController::class, 'getData'])->name('hr-calendar.data');
+    Route::get('/hr-calendar/departments', [HrCalendarController::class, 'getDepartments'])->name('hr-calendar.departments');
 });
 
+// Include auth routes
 require __DIR__.'/auth.php';

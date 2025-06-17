@@ -87,7 +87,6 @@ class SLVLController extends Controller
                     'department' => $employee->Department,
                     'position' => $employee->Jobtitle,
                     'bank_data' => $bankData,
-                    // Keep backward compatibility
                     'sick_leave_days' => $bankData[$currentYear]['sick_leave_days'],
                     'vacation_leave_days' => $bankData[$currentYear]['vacation_leave_days'],
                 ];
