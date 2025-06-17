@@ -15,7 +15,7 @@ const RetroPage = () => {
     
     // State to manage component data
     const [retroData, setRetroData] = useState(retros);
-    const [activeTab, setActiveTab] = useState('list'); // Start with list view instead of create
+    const [activeTab, setActiveTab] = useState('create'); // Start with list view instead of create
     const [processing, setProcessing] = useState(false);
     
     // Display flash messages
@@ -150,7 +150,8 @@ const RetroPage = () => {
                         <div className="flex items-center justify-between mb-8">
                             <div>
                                 <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                                    <DollarSign className="inline-block w-7 h-7 mr-2 text-indigo-600" />
+                                    {/* <DollarSign className="inline-block w-7 h-7 mr-2 text-indigo-600" /> */}
+                                    ₱
                                     Retro Management
                                 </h1>
                                 <p className="text-gray-600">
@@ -166,17 +167,6 @@ const RetroPage = () => {
                                         <nav className="-mb-px flex space-x-8">
                                             <button
                                                 className={`${
-                                                    activeTab === 'list'
-                                                        ? 'border-indigo-500 text-indigo-600'
-                                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                                                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
-                                                onClick={() => setActiveTab('list')}
-                                            >
-                                                <ListFilter className="w-4 h-4 mr-2" />
-                                                View Retro Requests
-                                            </button>
-                                            <button
-                                                className={`${
                                                     activeTab === 'create'
                                                         ? 'border-indigo-500 text-indigo-600'
                                                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
@@ -186,6 +176,22 @@ const RetroPage = () => {
                                                 <Plus className="w-4 h-4 mr-2" />
                                                 New Retro Request
                                             </button>
+
+                                            <button
+                                                className={`${
+                                                    activeTab === 'list'
+                                                        ? 'border-indigo-500 text-indigo-600'
+                                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                                                } whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm flex items-center`}
+                                                onClick={() => setActiveTab('list')}
+                                            >
+                                                <ListFilter className="w-4 h-4 mr-2" />
+                                                View Retro Requests
+                                                <span className="ml-2 bg-gray-100 text-gray-600 py-0.5 px-2 rounded-full text-xs">
+                                                        {retroData.length}
+                                                </span>
+                                            </button>
+                                            
                                         </nav>
                                     </div>
                                 </div>

@@ -1,17 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import { format } from 'date-fns';
+import React, { useState, useEffect, useMemo } from 'react';
 
 const RetroForm = ({ employees, departments, onSubmit }) => {
-    const today = format(new Date(), 'yyyy-MM-dd');
+    const today = new Date().toISOString().split('T')[0]; // Format: YYYY-MM-DD
     
     // Form state
     const [formData, setFormData] = useState({
         employee_ids: [],
-        retro_type: 'salary',
+        retro_type: 'DAYS',
         adjustment_type: 'increase',
         retro_date: today,
-        original_value: '',
-        requested_value: '',
+        hours_days: '',
+        multiplier_rate: '',
+        base_rate: '',
         reason: ''
     });
     
@@ -20,14 +20,13 @@ const RetroForm = ({ employees, departments, onSubmit }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedDepartment, setSelectedDepartment] = useState('');
     
-    // Retro type options
+    // Retro type options with new types
     const retroTypes = [
-        { value: 'salary', label: 'Salary Adjustment' },
-        { value: 'allowance', label: 'Allowance Adjustment' },
-        { value: 'overtime', label: 'Overtime Adjustment' },
-        { value: 'bonus', label: 'Bonus Adjustment' },
-        { value: 'deduction', label: 'Deduction Adjustment' },
-        { value: 'other', label: 'Other Adjustment' }
+        { value: 'DAYS', label: 'Regular Days', defaultMultiplier: 1.0, unit: 'Days' },
+        { value: 'OVERTIME', label: 'Overtime Hours', defaultMultiplier: 1.25, unit: 'Hours' },
+        { value: 'SLVL', label: 'Sick/Vacation Leave', defaultMultiplier: 1.0, unit: 'Days' },
+        { value: 'HOLIDAY', label: 'Holiday Work', defaultMultiplier: 2.0, unit: 'Hours' },
+        { value: 'RD_OT', label: 'Rest Day Overtime', defaultMultiplier: 1.3, unit: 'Hours' }
     ];
     
     // Adjustment type options
@@ -37,6 +36,20 @@ const RetroForm = ({ employees, departments, onSubmit }) => {
         { value: 'correction', label: 'Correction' },
         { value: 'backdated', label: 'Backdated Adjustment' }
     ];
+    
+    // Get current retro type info
+    const currentRetroType = retroTypes.find(type => type.value === formData.retro_type);
+    
+    // Auto-set default multiplier when retro type changes
+    useEffect(() => {
+        const retroType = retroTypes.find(type => type.value === formData.retro_type);
+        if (retroType && !formData.multiplier_rate) {
+            setFormData(prev => ({
+                ...prev,
+                multiplier_rate: retroType.defaultMultiplier.toString()
+            }));
+        }
+    }, [formData.retro_type]);
     
     // Update displayed employees when search or department selection changes
     useEffect(() => {
@@ -74,6 +87,14 @@ const RetroForm = ({ employees, departments, onSubmit }) => {
         setDisplayedEmployees(result);
     }, [searchTerm, selectedDepartment, employees, formData.employee_ids]);
     
+    // Calculate computed amount
+    const computedAmount = useMemo(() => {
+        const hoursDays = parseFloat(formData.hours_days) || 0;
+        const multiplier = parseFloat(formData.multiplier_rate) || 0;
+        const baseRate = parseFloat(formData.base_rate) || 0;
+        return hoursDays * multiplier * baseRate;
+    }, [formData.hours_days, formData.multiplier_rate, formData.base_rate]);
+    
     // Handle input changes
     const handleChange = (e) => {
         const { name, value } = e.target;
@@ -81,6 +102,18 @@ const RetroForm = ({ employees, departments, onSubmit }) => {
             ...formData,
             [name]: value
         });
+    };
+    
+    // Handle retro type change with auto-multiplier setting
+    const handleRetroTypeChange = (e) => {
+        const newRetroType = e.target.value;
+        const retroTypeInfo = retroTypes.find(type => type.value === newRetroType);
+        
+        setFormData(prev => ({
+            ...prev,
+            retro_type: newRetroType,
+            multiplier_rate: retroTypeInfo ? retroTypeInfo.defaultMultiplier.toString() : ''
+        }));
     };
     
     // Handle employee selection
@@ -143,13 +176,18 @@ const RetroForm = ({ employees, departments, onSubmit }) => {
             return;
         }
         
-        if (!formData.original_value || !formData.requested_value) {
-            alert('Please fill in both original and requested values');
+        if (!formData.hours_days || parseFloat(formData.hours_days) <= 0) {
+            alert(`Please enter valid ${currentRetroType?.unit?.toLowerCase() || 'hours/days'}`);
             return;
         }
         
-        if (parseFloat(formData.original_value) < 0 || parseFloat(formData.requested_value) < 0) {
-            alert('Values cannot be negative');
+        if (!formData.multiplier_rate || parseFloat(formData.multiplier_rate) <= 0) {
+            alert('Please enter a valid multiplier rate');
+            return;
+        }
+        
+        if (!formData.base_rate || parseFloat(formData.base_rate) <= 0) {
+            alert('Please enter a valid base rate');
             return;
         }
         
@@ -164,11 +202,12 @@ const RetroForm = ({ employees, departments, onSubmit }) => {
         // Reset form after submission 
         setFormData({
             employee_ids: [],
-            retro_type: 'salary',
+            retro_type: 'DAYS',
             adjustment_type: 'increase',
             retro_date: today,
-            original_value: '',
-            requested_value: '',
+            hours_days: '',
+            multiplier_rate: '',
+            base_rate: '',
             reason: ''
         });
         
@@ -214,6 +253,14 @@ const RetroForm = ({ employees, departments, onSubmit }) => {
     
     // Get selected employees details for display
     const selectedEmployees = employees.filter(emp => formData.employee_ids.includes(emp.id));
+    
+    // Format currency
+    const formatCurrency = (amount) => {
+        return new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'PHP'
+        }).format(amount || 0);
+    };
     
     return (
         <div className="bg-white shadow-md rounded-lg overflow-hidden">
@@ -368,13 +415,16 @@ const RetroForm = ({ employees, departments, onSubmit }) => {
                                     name="retro_type"
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={formData.retro_type}
-                                    onChange={handleChange}
+                                    onChange={handleRetroTypeChange}
                                     required
                                 >
                                     {retroTypes.map(type => (
                                         <option key={type.value} value={type.value}>{type.label}</option>
                                     ))}
                                 </select>
+                                <p className="mt-1 text-xs text-gray-500">
+                                    Default multiplier: {currentRetroType?.defaultMultiplier}x
+                                </p>
                             </div>
                             
                             <div>
@@ -412,58 +462,84 @@ const RetroForm = ({ employees, departments, onSubmit }) => {
                         </div>
                     </div>
                     
+                    {/* Hours/Days and Rate Information */}
                     <div className="bg-gray-50 p-4 rounded-lg">
-                        <h4 className="font-medium mb-3">Value Information</h4>
+                        <h4 className="font-medium mb-3">Time & Rate Information</h4>
                         
                         <div className="space-y-4">
                             <div>
-                                <label htmlFor="original_value" className="block text-sm font-medium text-gray-700 mb-1">
-                                    Original Value <span className="text-red-600">*</span>
+                                <label htmlFor="hours_days" className="block text-sm font-medium text-gray-700 mb-1">
+                                    {currentRetroType?.unit || 'Hours/Days'} <span className="text-red-600">*</span>
                                 </label>
                                 <input
                                     type="number"
                                     step="0.01"
-                                    min="0"
-                                    id="original_value"
-                                    name="original_value"
+                                    min="0.01"
+                                    id="hours_days"
+                                    name="hours_days"
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                    value={formData.original_value}
+                                    value={formData.hours_days}
                                     onChange={handleChange}
-                                    placeholder="0.00"
+                                    placeholder={`Enter ${currentRetroType?.unit?.toLowerCase() || 'hours/days'}`}
                                     required
                                 />
                             </div>
                             
                             <div>
-                                <label htmlFor="requested_value" className="block text-sm font-medium text-gray-700 mb-1">
-                                    Requested Value <span className="text-red-600">*</span>
+                                <label htmlFor="multiplier_rate" className="block text-sm font-medium text-gray-700 mb-1">
+                                    Multiplier Rate <span className="text-red-600">*</span>
                                 </label>
                                 <input
                                     type="number"
                                     step="0.01"
-                                    min="0"
-                                    id="requested_value"
-                                    name="requested_value"
+                                    min="0.1"
+                                    max="10"
+                                    id="multiplier_rate"
+                                    name="multiplier_rate"
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                    value={formData.requested_value}
+                                    value={formData.multiplier_rate}
                                     onChange={handleChange}
-                                    placeholder="0.00"
+                                    placeholder="e.g., 1.25, 2.0"
+                                    required
+                                />
+                                <p className="mt-1 text-xs text-gray-500">
+                                    Rate multiplier (1.0 = regular rate, 1.25 = overtime rate, etc.)
+                                </p>
+                            </div>
+                            
+                            <div>
+                                <label htmlFor="base_rate" className="block text-sm font-medium text-gray-700 mb-1">
+                                    Base Rate (per {currentRetroType?.unit?.slice(0, -1) || 'Hour/Day'}) <span className="text-red-600">*</span>
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0.01"
+                                    id="base_rate"
+                                    name="base_rate"
+                                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                    value={formData.base_rate}
+                                    onChange={handleChange}
+                                    placeholder="Base hourly/daily rate"
                                     required
                                 />
                             </div>
                             
-                            {formData.original_value && formData.requested_value && (
-                                <div className="p-3 bg-blue-50 rounded-md">
-                                    <p className="text-sm text-blue-700">
-                                        <strong>Difference:</strong> {
-                                            (parseFloat(formData.requested_value) - parseFloat(formData.original_value)).toFixed(2)
-                                        }
-                                    </p>
+                            {formData.hours_days && formData.multiplier_rate && formData.base_rate && (
+                                <div className="p-3 bg-blue-50 rounded-md border border-blue-200">
+                                    <h5 className="text-sm font-medium text-blue-800 mb-2">Calculation Preview:</h5>
+                                    <div className="text-sm text-blue-700 space-y-1">
+                                        <div>{formData.hours_days} {currentRetroType?.unit?.toLowerCase()} × {formData.multiplier_rate} multiplier × {formatCurrency(formData.base_rate)} base rate</div>
+                                        <div className="font-semibold border-t border-blue-300 pt-1">
+                                            = {formatCurrency(computedAmount)}
+                                        </div>
+                                    </div>
                                 </div>
                             )}
                         </div>
                     </div>
                     
+                    {/* Reason Section */}
                     <div className="md:col-span-2 bg-gray-50 p-4 rounded-lg">
                         <h4 className="font-medium mb-3">Reason for Adjustment</h4>
                         

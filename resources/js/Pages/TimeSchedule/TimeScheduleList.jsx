@@ -183,30 +183,44 @@ const TimeScheduleList = ({
     }
     
     // Format date safely
-    const formatDate = (dateString) => {
-        try {
-            return format(new Date(dateString), 'yyyy-MM-dd');
-        } catch (error) {
-            console.error('Error formatting date:', error);
-            return 'Invalid date';
-        }
-    };
-
-    // Format time safely
-    const formatTime = (timeString) => {
-        try {
-            return format(new Date(timeString), 'h:mm a');
-        } catch (error) {
+        const formatDate = (dateString) => {
             try {
-                // Try alternative parsing for time-only strings
-                const today = new Date().toISOString().split('T')[0];
-                return format(new Date(`${today}T${timeString}`), 'h:mm a');
+                return format(new Date(dateString), 'yyyy-MM-dd');
             } catch (error) {
-                console.error('Error formatting time:', error);
-                return timeString || 'N/A';
+                console.error('Error formatting date:', error);
+                return 'Invalid date';
             }
-        }
-    };
+        };
+        
+        const formatTime = (timeString) => {
+            if (!timeString) return '-';
+            
+            try {
+                let timeOnly;
+                // Handle ISO 8601 format
+                if (timeString.includes('T')) {
+                    const [, time] = timeString.split('T');
+                    timeOnly = time.slice(0, 5); // Extract HH:MM
+                } else {
+                    // If the time includes a date (like "2024-04-10 14:30:00"), split and take the time part
+                    const timeParts = timeString.split(' ');
+                    timeOnly = timeParts[timeParts.length - 1].slice(0, 5);
+                }
+                
+                // Parse hours and minutes
+                const [hours, minutes] = timeOnly.split(':');
+                const hourNum = parseInt(hours, 10);
+                
+                // Convert to 12-hour format with AM/PM
+                const ampm = hourNum >= 12 ? 'PM' : 'AM';
+                const formattedHours = hourNum % 12 || 12; // handle midnight and noon
+                
+                return `${formattedHours}:${minutes} ${ampm}`;
+            } catch (error) {
+                console.error('Time formatting error:', error);
+                return '-';
+            }
+        };
 
     // Multiple selection handlers
     const toggleSelectAll = () => {
@@ -471,13 +485,10 @@ const TimeScheduleList = ({
                                 Employee
                             </th>
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Schedule Type
-                            </th>
-                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Effective Date
                             </th>
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                New Schedule
+                                Current Schedule
                             </th>
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Time
@@ -493,7 +504,7 @@ const TimeScheduleList = ({
                     <tbody className="bg-white divide-y divide-gray-200">
                         {filteredTimeSchedules.length === 0 ? (
                             <tr>
-                                <td colSpan={selectableItemsCount > 0 ? "8" : "7"} className="px-6 py-4 text-center text-sm text-gray-500">
+                                <td colSpan={selectableItemsCount > 0 ? "7" : "6"} className="px-6 py-4 text-center text-sm text-gray-500">
                                     No time schedule change records found
                                 </td>
                             </tr>
@@ -520,11 +531,6 @@ const TimeScheduleList = ({
                                         </div>
                                         <div className="text-sm text-gray-500">
                                             {timeSchedule.employee?.idno || 'N/A'}
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="text-sm text-gray-900">
-                                            {timeSchedule.scheduleType?.name || 'N/A'}
                                         </div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">

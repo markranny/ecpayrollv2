@@ -147,17 +147,21 @@ class RetroController extends Controller
         $validated = $request->validate([
             'employee_ids' => 'required|array',
             'employee_ids.*' => 'required|integer|exists:employees,id',
-            'retro_type' => 'required|string|in:salary,allowance,overtime,bonus,deduction,other',
+            'retro_type' => 'required|string|in:DAYS,OVERTIME,SLVL,HOLIDAY,RD_OT',
             'adjustment_type' => 'required|string|in:increase,decrease,correction,backdated',
             'retro_date' => 'required|date',
-            'original_value' => 'required|numeric|min:0',
-            'requested_value' => 'required|numeric|min:0',
+            'hours_days' => 'required|numeric|min:0.01',
+            'multiplier_rate' => 'required|numeric|min:0.1|max:10',
+            'base_rate' => 'required|numeric|min:0.01',
             'reason' => 'required|string|max:1000',
         ]);
         
         $user = Auth::user();
         $successCount = 0;
         $errorMessages = [];
+        
+        // Calculate computed amount
+        $computedAmount = $validated['hours_days'] * $validated['multiplier_rate'] * $validated['base_rate'];
         
         DB::beginTransaction();
         
@@ -188,8 +192,12 @@ class RetroController extends Controller
                 $retro->retro_type = $validated['retro_type'];
                 $retro->adjustment_type = $validated['adjustment_type'];
                 $retro->retro_date = $validated['retro_date'];
-                $retro->original_value = $validated['original_value'];
-                $retro->requested_value = $validated['requested_value'];
+                $retro->hours_days = $validated['hours_days'];
+                $retro->multiplier_rate = $validated['multiplier_rate'];
+                $retro->base_rate = $validated['base_rate'];
+                $retro->computed_amount = $computedAmount;
+                $retro->original_total_amount = 0; // For new requests, original is 0
+                $retro->requested_total_amount = $computedAmount;
                 $retro->reason = $validated['reason'];
                 $retro->status = 'pending';
                 $retro->created_by = $user->id;
@@ -491,14 +499,18 @@ class RetroController extends Controller
         $sheet->setCellValue('E1', 'Retro Type');
         $sheet->setCellValue('F1', 'Adjustment Type');
         $sheet->setCellValue('G1', 'Retro Date');
-        $sheet->setCellValue('H1', 'Original Value');
-        $sheet->setCellValue('I1', 'Requested Value');
-        $sheet->setCellValue('J1', 'Reason');
-        $sheet->setCellValue('K1', 'Status');
-        $sheet->setCellValue('L1', 'Approved By');
-        $sheet->setCellValue('M1', 'Approved Date');
-        $sheet->setCellValue('N1', 'Remarks');
-        $sheet->setCellValue('O1', 'Created Date');
+        $sheet->setCellValue('H1', 'Hours/Days');
+        $sheet->setCellValue('I1', 'Multiplier Rate');
+        $sheet->setCellValue('J1', 'Base Rate');
+        $sheet->setCellValue('K1', 'Computed Amount');
+        $sheet->setCellValue('L1', 'Original Amount');
+        $sheet->setCellValue('M1', 'Requested Amount');
+        $sheet->setCellValue('N1', 'Reason');
+        $sheet->setCellValue('O1', 'Status');
+        $sheet->setCellValue('P1', 'Approved By');
+        $sheet->setCellValue('Q1', 'Approved Date');
+        $sheet->setCellValue('R1', 'Remarks');
+        $sheet->setCellValue('S1', 'Created Date');
         
         // Add data
         $row = 2;
@@ -510,19 +522,23 @@ class RetroController extends Controller
             $sheet->setCellValue('E' . $row, $retro->getRetroTypeLabel());
             $sheet->setCellValue('F' . $row, $retro->getAdjustmentTypeLabel());
             $sheet->setCellValue('G' . $row, $retro->retro_date ? Carbon::parse($retro->retro_date)->format('Y-m-d') : '');
-            $sheet->setCellValue('H' . $row, $retro->original_value);
-            $sheet->setCellValue('I' . $row, $retro->requested_value);
-            $sheet->setCellValue('J' . $row, $retro->reason);
-            $sheet->setCellValue('K' . $row, ucfirst($retro->status));
-            $sheet->setCellValue('L' . $row, $retro->approver ? $retro->approver->name : '');
-            $sheet->setCellValue('M' . $row, $retro->approved_at ? Carbon::parse($retro->approved_at)->format('Y-m-d H:i:s') : '');
-            $sheet->setCellValue('N' . $row, $retro->remarks);
-            $sheet->setCellValue('O' . $row, $retro->created_at ? Carbon::parse($retro->created_at)->format('Y-m-d H:i:s') : '');
+            $sheet->setCellValue('H' . $row, $retro->hours_days ?? '');
+            $sheet->setCellValue('I' . $row, $retro->multiplier_rate ?? '');
+            $sheet->setCellValue('J' . $row, $retro->base_rate ?? '');
+            $sheet->setCellValue('K' . $row, $retro->computed_amount ?? $retro->requested_total_amount ?? '');
+            $sheet->setCellValue('L' . $row, $retro->original_total_amount ?? '');
+            $sheet->setCellValue('M' . $row, $retro->requested_total_amount ?? '');
+            $sheet->setCellValue('N' . $row, $retro->reason);
+            $sheet->setCellValue('O' . $row, ucfirst($retro->status));
+            $sheet->setCellValue('P' . $row, $retro->approver ? $retro->approver->name : '');
+            $sheet->setCellValue('Q' . $row, $retro->approved_at ? Carbon::parse($retro->approved_at)->format('Y-m-d H:i:s') : '');
+            $sheet->setCellValue('R' . $row, $retro->remarks);
+            $sheet->setCellValue('S' . $row, $retro->created_at ? Carbon::parse($retro->created_at)->format('Y-m-d H:i:s') : '');
             $row++;
         }
         
         // Auto-size columns
-        foreach (range('A', 'O') as $column) {
+        foreach (range('A', 'S') as $column) {
             $sheet->getColumnDimension($column)->setAutoSize(true);
         }
         

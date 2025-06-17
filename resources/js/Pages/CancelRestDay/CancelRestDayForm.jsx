@@ -7,8 +7,8 @@ const CancelRestDayForm = ({ employees, departments, onSubmit }) => {
     // Form state
     const [formData, setFormData] = useState({
         employee_ids: [],
-        rest_day_date: '',
-        replacement_work_date: '',
+        rest_day_date: today,
+        replacement_work_date: today,
         reason: ''
     });
     
@@ -17,43 +17,117 @@ const CancelRestDayForm = ({ employees, departments, onSubmit }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedDepartment, setSelectedDepartment] = useState('');
     
-    // Update displayed employees when search or department selection changes
-    useEffect(() => {
-        let result = [...employees];
+    // Enhanced useEffect for CancelRestDayForm employee filtering and sorting
+useEffect(() => {
+    // Define our categories of employees with clear priorities
+    let selectedAndExactMatch = [];      // Priority 1: Selected + Exact match
+    let selectedAndPartialMatch = [];    // Priority 2: Selected + Partial match  
+    let selectedButNotMatched = [];      // Priority 3: Selected but no search match
+    let exactSearchMatches = [];         // Priority 4: Not selected + Exact match
+    let partialSearchMatches = [];       // Priority 5: Not selected + Partial match
+    let otherEmployees = [];             // Priority 6: Everything else
+    
+    employees.forEach(employee => {
+        const isSelected = formData.employee_ids.includes(employee.id);
         
-        // Filter by search term
+        // Check search match
+        let matchesSearch = true;
+        let exactMatch = false;
+        
         if (searchTerm) {
-            const term = searchTerm.toLowerCase();
-            result = result.filter(employee => 
-                // Use the mapped 'name' field or fall back to individual fields
-                (employee.name && employee.name.toLowerCase().includes(term)) ||
-                (employee.Fname && employee.Fname.toLowerCase().includes(term)) || 
-                (employee.Lname && employee.Lname.toLowerCase().includes(term)) || 
-                (employee.idno && employee.idno.toString().includes(term))
-            );
-        }
-        
-        // Filter by department
-        if (selectedDepartment) {
-            result = result.filter(employee => 
-                // Use either 'department' field (from mapping) or 'Department' field (direct)
-                (employee.department === selectedDepartment) ||
-                (employee.Department === selectedDepartment)
-            );
-        }
-        
-        // Sort selected employees to top
-        result.sort((a, b) => {
-            const aSelected = formData.employee_ids.includes(a.id);
-            const bSelected = formData.employee_ids.includes(b.id);
+            const term = searchTerm.toLowerCase().trim();
             
-            if (aSelected && !bSelected) return -1;
-            if (!aSelected && bSelected) return 1;
-            return 0;
-        });
+            // Get employee name parts for comparison
+            const firstName = (employee.Fname || '').toLowerCase();
+            const lastName = (employee.Lname || '').toLowerCase();
+            const middleName = (employee.MName || '').toLowerCase();
+            const fullName = `${firstName} ${lastName}`.trim();
+            const reverseName = `${lastName} ${firstName}`.trim();
+            const employeeId = employee.idno?.toString().toLowerCase();
+            const mappedName = (employee.name || '').toLowerCase();
+            
+            // Check for exact match first
+            if (
+                firstName === term || 
+                lastName === term ||
+                fullName === term ||
+                reverseName === term ||
+                mappedName === term ||
+                employeeId === term
+            ) {
+                exactMatch = true;
+                matchesSearch = true;
+            } else {
+                // Check for partial match
+                matchesSearch = 
+                    firstName.includes(term) || 
+                    lastName.includes(term) || 
+                    middleName.includes(term) ||
+                    mappedName.includes(term) ||
+                    employeeId?.includes(term);
+            }
+        }
         
-        setDisplayedEmployees(result);
-    }, [searchTerm, selectedDepartment, employees, formData.employee_ids]);
+        // Check department match - handle both mapped and direct data
+        let matchesDepartment = true;
+        if (selectedDepartment) {
+            const employeeDepartment = employee.department || employee.Department || '';
+            matchesDepartment = employeeDepartment === selectedDepartment;
+        }
+        
+        // Skip if doesn't match department filter
+        if (!matchesDepartment) {
+            return;
+        }
+        
+        // Categorize based on selection status and search matches
+        if (isSelected && exactMatch) {
+            selectedAndExactMatch.push(employee);
+        } else if (isSelected && matchesSearch) {
+            selectedAndPartialMatch.push(employee);
+        } else if (isSelected) {
+            selectedButNotMatched.push(employee);
+        } else if (exactMatch) {
+            exactSearchMatches.push(employee);
+        } else if (matchesSearch) {
+            partialSearchMatches.push(employee);
+        } else if (!searchTerm) {
+            // Only show non-matching employees when no search term
+            otherEmployees.push(employee);
+        }
+    });
+    
+    // Sort each category alphabetically by name
+    const sortByName = (a, b) => {
+        const getName = (emp) => {
+            if (emp.name) return emp.name.toLowerCase();
+            const lastName = emp.Lname || '';
+            const firstName = emp.Fname || '';
+            return `${lastName}, ${firstName}`.toLowerCase();
+        };
+        
+        return getName(a).localeCompare(getName(b));
+    };
+    
+    selectedAndExactMatch.sort(sortByName);
+    selectedAndPartialMatch.sort(sortByName);
+    selectedButNotMatched.sort(sortByName);
+    exactSearchMatches.sort(sortByName);
+    partialSearchMatches.sort(sortByName);
+    otherEmployees.sort(sortByName);
+    
+    // Combine all categories in priority order
+    const result = [
+        ...selectedAndExactMatch,
+        ...selectedAndPartialMatch,
+        ...selectedButNotMatched,
+        ...exactSearchMatches,
+        ...partialSearchMatches,
+        ...otherEmployees
+    ];
+    
+    setDisplayedEmployees(result);
+}, [searchTerm, selectedDepartment, employees, formData.employee_ids]);
     
     // Handle input changes
     const handleChange = (e) => {

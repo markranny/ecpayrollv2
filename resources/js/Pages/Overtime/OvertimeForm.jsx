@@ -30,87 +30,103 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
     // Rate help modal state
     const [showRateHelpModal, setShowRateHelpModal] = useState(false);
     
-    // Update displayed employees when search or department selection changes
-    useEffect(() => {
-        // Define our categories of employees
-        let exactSearchMatches = [];
-        let partialSearchMatches = [];
-        let selectedButNotMatched = [];
-        let otherEmployees = [];
+    // Enhanced useEffect for employee filtering and sorting
+useEffect(() => {
+    // Define our categories of employees with clear priorities
+    let selectedAndExactMatch = [];      // Priority 1: Selected + Exact match
+    let selectedAndPartialMatch = [];    // Priority 2: Selected + Partial match  
+    let selectedButNotMatched = [];      // Priority 3: Selected but no search match
+    let exactSearchMatches = [];         // Priority 4: Not selected + Exact match
+    let partialSearchMatches = [];       // Priority 5: Not selected + Partial match
+    let otherEmployees = [];             // Priority 6: Everything else
+    
+    employees.forEach(employee => {
+        const isSelected = formData.employee_ids.includes(employee.id);
         
-        employees.forEach(employee => {
-            const isSelected = formData.employee_ids.includes(employee.id);
+        // Check search match
+        let matchesSearch = true;
+        let exactMatch = false;
+        
+        if (searchTerm) {
+            const term = searchTerm.toLowerCase().trim();
+            const fullName = `${employee.Fname} ${employee.Lname}`.toLowerCase();
+            const reverseName = `${employee.Lname} ${employee.Fname}`.toLowerCase();
+            const employeeId = employee.idno?.toString().toLowerCase();
             
-            // Check search match
-            let matchesSearch = true;
-            let exactMatch = false;
-            
-            if (searchTerm) {
-                const term = searchTerm.toLowerCase().trim();
-                const fullName = `${employee.Fname} ${employee.Lname}`.toLowerCase();
-                const reverseName = `${employee.Lname} ${employee.Fname}`.toLowerCase();
-                
-                // Check for exact match first
-                if (
-                    employee.Lname.toLowerCase() === term || 
-                    employee.Fname.toLowerCase() === term ||
-                    fullName === term ||
-                    reverseName === term ||
-                    employee.idno?.toString() === term
-                ) {
-                    exactMatch = true;
-                    matchesSearch = true;
-                } else {
-                    // Check for partial match
-                    matchesSearch = 
-                        employee.Fname.toLowerCase().includes(term) || 
-                        employee.Lname.toLowerCase().includes(term) || 
-                        employee.idno?.toString().includes(term);
-                }
-            }
-            
-            // Check department match - now using proper department relationship
-            let matchesDepartment = true;
-            if (selectedDepartment) {
-                // Check if employee has department relationship
-                const employeeDepartment = employee.department?.name || employee.Department;
-                matchesDepartment = employeeDepartment === selectedDepartment;
-            }
-            
-            // Categorize based on matches and selection status
-            if (exactMatch && matchesDepartment) {
-                exactSearchMatches.push(employee);
-            } else if (matchesSearch && matchesDepartment) {
-                partialSearchMatches.push(employee);
-            } else if (isSelected) {
-                selectedButNotMatched.push(employee);
+            // Check for exact match first
+            if (
+                employee.Lname.toLowerCase() === term || 
+                employee.Fname.toLowerCase() === term ||
+                fullName === term ||
+                reverseName === term ||
+                employeeId === term
+            ) {
+                exactMatch = true;
+                matchesSearch = true;
             } else {
-                otherEmployees.push(employee);
+                // Check for partial match
+                matchesSearch = 
+                    employee.Fname.toLowerCase().includes(term) || 
+                    employee.Lname.toLowerCase().includes(term) || 
+                    employeeId?.includes(term);
             }
-        });
-        
-        // Combine all categories in priority order
-        const result = [
-            ...exactSearchMatches,
-            ...partialSearchMatches,
-            ...selectedButNotMatched,
-            ...otherEmployees
-        ];
-        
-        // When no search/filter applied, move selected to top
-        if (!searchTerm && !selectedDepartment) {
-            result.sort((a, b) => {
-                const aSelected = formData.employee_ids.includes(a.id);
-                const bSelected = formData.employee_ids.includes(b.id);
-                
-                if (aSelected && !bSelected) return -1;
-                if (!aSelected && bSelected) return 1;
-                return 0;
-            });
         }
         
-        setDisplayedEmployees(result);
-    }, [searchTerm, selectedDepartment, employees, formData.employee_ids]);
+        // Check department match - using proper department relationship
+        let matchesDepartment = true;
+        if (selectedDepartment) {
+            const employeeDepartment = employee.department?.name || employee.Department;
+            matchesDepartment = employeeDepartment === selectedDepartment;
+        }
+        
+        // Skip if doesn't match department filter
+        if (!matchesDepartment) {
+            return;
+        }
+        
+        // Categorize based on selection status and search matches
+        if (isSelected && exactMatch) {
+            selectedAndExactMatch.push(employee);
+        } else if (isSelected && matchesSearch) {
+            selectedAndPartialMatch.push(employee);
+        } else if (isSelected) {
+            selectedButNotMatched.push(employee);
+        } else if (exactMatch) {
+            exactSearchMatches.push(employee);
+        } else if (matchesSearch) {
+            partialSearchMatches.push(employee);
+        } else if (!searchTerm) {
+            // Only show non-matching employees when no search term
+            otherEmployees.push(employee);
+        }
+    });
+    
+    // Sort each category alphabetically by last name
+    const sortByName = (a, b) => {
+        const aName = `${a.Lname}, ${a.Fname}`.toLowerCase();
+        const bName = `${b.Lname}, ${b.Fname}`.toLowerCase();
+        return aName.localeCompare(bName);
+    };
+    
+    selectedAndExactMatch.sort(sortByName);
+    selectedAndPartialMatch.sort(sortByName);
+    selectedButNotMatched.sort(sortByName);
+    exactSearchMatches.sort(sortByName);
+    partialSearchMatches.sort(sortByName);
+    otherEmployees.sort(sortByName);
+    
+    // Combine all categories in priority order
+    const result = [
+        ...selectedAndExactMatch,
+        ...selectedAndPartialMatch,
+        ...selectedButNotMatched,
+        ...exactSearchMatches,
+        ...partialSearchMatches,
+        ...otherEmployees
+    ];
+    
+    setDisplayedEmployees(result);
+}, [searchTerm, selectedDepartment, employees, formData.employee_ids]);
     
     // Handle input changes
     const handleChange = (e) => {

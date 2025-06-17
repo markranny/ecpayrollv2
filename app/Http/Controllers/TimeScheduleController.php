@@ -163,7 +163,7 @@ class TimeScheduleController extends Controller
         $validated = $request->validate([
             'employee_ids' => 'required|array',
             'employee_ids.*' => 'required|integer|exists:employees,id',
-            'schedule_type_id' => 'required|exists:schedule_types,id',
+            /* 'schedule_type_id' => 'required|exists:schedule_types,id', */
             'effective_date' => 'required|date',
             'end_date' => 'nullable|date|after_or_equal:effective_date',
             'current_schedule' => 'nullable|string',
@@ -191,7 +191,6 @@ class TimeScheduleController extends Controller
                 // Check for duplicate time schedule entries
                 $existingRequest = TimeSchedule::where('employee_id', $employeeId)
                     ->where('effective_date', $validated['effective_date'])
-                    ->where('schedule_type_id', $validated['schedule_type_id'])
                     ->first();
                 
                 if ($existingRequest) {
@@ -202,7 +201,7 @@ class TimeScheduleController extends Controller
                 
                 $timeSchedule = new TimeSchedule();
                 $timeSchedule->employee_id = $employeeId;
-                $timeSchedule->schedule_type_id = $validated['schedule_type_id'];
+                $timeSchedule->schedule_type_id = 5;
                 $timeSchedule->effective_date = $validated['effective_date'];
                 $timeSchedule->end_date = $validated['end_date'];
                 $timeSchedule->current_schedule = $validated['current_schedule'];

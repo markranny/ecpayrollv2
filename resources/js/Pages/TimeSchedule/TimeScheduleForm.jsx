@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { format } from 'date-fns';
 
-const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) => {
-    const today = format(new Date(), 'yyyy-MM-dd');
+const TimeScheduleForm = ({ employees, departments, onSubmit }) => {
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Format today's date for display (e.g., "2024-12-20 8AM-5PM")
+    const getCurrentScheduleDefault = () => {
+        return `${today} 8AM-5PM`;
+    };
     
     // Form state
     const [formData, setFormData] = useState({
         employee_ids: [],
-        schedule_type_id: '',
         effective_date: today,
-        end_date: '',
-        current_schedule: '',
+        end_date: today,
+        current_schedule: getCurrentScheduleDefault(),
         new_schedule: '',
         new_start_time: '',
         new_end_time: '',
@@ -22,43 +25,117 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedDepartment, setSelectedDepartment] = useState('');
     
-    // Update displayed employees when search or department selection changes
-    useEffect(() => {
-        let result = [...employees];
+    // Enhanced useEffect for CancelRestDayForm employee filtering and sorting
+useEffect(() => {
+    // Define our categories of employees with clear priorities
+    let selectedAndExactMatch = [];      // Priority 1: Selected + Exact match
+    let selectedAndPartialMatch = [];    // Priority 2: Selected + Partial match  
+    let selectedButNotMatched = [];      // Priority 3: Selected but no search match
+    let exactSearchMatches = [];         // Priority 4: Not selected + Exact match
+    let partialSearchMatches = [];       // Priority 5: Not selected + Partial match
+    let otherEmployees = [];             // Priority 6: Everything else
+    
+    employees.forEach(employee => {
+        const isSelected = formData.employee_ids.includes(employee.id);
         
-        // Filter by search term
+        // Check search match
+        let matchesSearch = true;
+        let exactMatch = false;
+        
         if (searchTerm) {
-            const term = searchTerm.toLowerCase();
-            result = result.filter(employee => 
-                // Use the mapped 'name' field or fall back to individual fields
-                (employee.name && employee.name.toLowerCase().includes(term)) ||
-                (employee.Fname && employee.Fname.toLowerCase().includes(term)) || 
-                (employee.Lname && employee.Lname.toLowerCase().includes(term)) || 
-                (employee.idno && employee.idno.toString().includes(term))
-            );
-        }
-        
-        // Filter by department
-        if (selectedDepartment) {
-            result = result.filter(employee => 
-                // Use either 'department' field (from mapping) or 'Department' field (direct)
-                (employee.department === selectedDepartment) ||
-                (employee.Department === selectedDepartment)
-            );
-        }
-        
-        // Sort selected employees to top
-        result.sort((a, b) => {
-            const aSelected = formData.employee_ids.includes(a.id);
-            const bSelected = formData.employee_ids.includes(b.id);
+            const term = searchTerm.toLowerCase().trim();
             
-            if (aSelected && !bSelected) return -1;
-            if (!aSelected && bSelected) return 1;
-            return 0;
-        });
+            // Get employee name parts for comparison
+            const firstName = (employee.Fname || '').toLowerCase();
+            const lastName = (employee.Lname || '').toLowerCase();
+            const middleName = (employee.MName || '').toLowerCase();
+            const fullName = `${firstName} ${lastName}`.trim();
+            const reverseName = `${lastName} ${firstName}`.trim();
+            const employeeId = employee.idno?.toString().toLowerCase();
+            const mappedName = (employee.name || '').toLowerCase();
+            
+            // Check for exact match first
+            if (
+                firstName === term || 
+                lastName === term ||
+                fullName === term ||
+                reverseName === term ||
+                mappedName === term ||
+                employeeId === term
+            ) {
+                exactMatch = true;
+                matchesSearch = true;
+            } else {
+                // Check for partial match
+                matchesSearch = 
+                    firstName.includes(term) || 
+                    lastName.includes(term) || 
+                    middleName.includes(term) ||
+                    mappedName.includes(term) ||
+                    employeeId?.includes(term);
+            }
+        }
         
-        setDisplayedEmployees(result);
-    }, [searchTerm, selectedDepartment, employees, formData.employee_ids]);
+        // Check department match - handle both mapped and direct data
+        let matchesDepartment = true;
+        if (selectedDepartment) {
+            const employeeDepartment = employee.department || employee.Department || '';
+            matchesDepartment = employeeDepartment === selectedDepartment;
+        }
+        
+        // Skip if doesn't match department filter
+        if (!matchesDepartment) {
+            return;
+        }
+        
+        // Categorize based on selection status and search matches
+        if (isSelected && exactMatch) {
+            selectedAndExactMatch.push(employee);
+        } else if (isSelected && matchesSearch) {
+            selectedAndPartialMatch.push(employee);
+        } else if (isSelected) {
+            selectedButNotMatched.push(employee);
+        } else if (exactMatch) {
+            exactSearchMatches.push(employee);
+        } else if (matchesSearch) {
+            partialSearchMatches.push(employee);
+        } else if (!searchTerm) {
+            // Only show non-matching employees when no search term
+            otherEmployees.push(employee);
+        }
+    });
+    
+    // Sort each category alphabetically by name
+    const sortByName = (a, b) => {
+        const getName = (emp) => {
+            if (emp.name) return emp.name.toLowerCase();
+            const lastName = emp.Lname || '';
+            const firstName = emp.Fname || '';
+            return `${lastName}, ${firstName}`.toLowerCase();
+        };
+        
+        return getName(a).localeCompare(getName(b));
+    };
+    
+    selectedAndExactMatch.sort(sortByName);
+    selectedAndPartialMatch.sort(sortByName);
+    selectedButNotMatched.sort(sortByName);
+    exactSearchMatches.sort(sortByName);
+    partialSearchMatches.sort(sortByName);
+    otherEmployees.sort(sortByName);
+    
+    // Combine all categories in priority order
+    const result = [
+        ...selectedAndExactMatch,
+        ...selectedAndPartialMatch,
+        ...selectedButNotMatched,
+        ...exactSearchMatches,
+        ...partialSearchMatches,
+        ...otherEmployees
+    ];
+    
+    setDisplayedEmployees(result);
+}, [searchTerm, selectedDepartment, employees, formData.employee_ids]);
     
     // Handle input changes
     const handleChange = (e) => {
@@ -128,20 +205,15 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
             return;
         }
         
-        if (!formData.schedule_type_id) {
-            alert('Please select a schedule type');
-            return;
-        }
-        
         if (!formData.effective_date) {
             alert('Please provide an effective date');
             return;
         }
         
-        if (!formData.new_schedule.trim()) {
+        /* if (!formData.new_schedule.trim()) {
             alert('Please provide a new schedule name');
             return;
-        }
+        } */
         
         if (!formData.new_start_time || !formData.new_end_time) {
             alert('Please provide both start and end times');
@@ -159,10 +231,9 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
         // Reset form after submission 
         setFormData({
             employee_ids: [],
-            schedule_type_id: '',
             effective_date: today,
-            end_date: '',
-            current_schedule: '',
+            end_date: today,
+            current_schedule: getCurrentScheduleDefault(),
             new_schedule: '',
             new_start_time: '',
             new_end_time: '',
@@ -220,7 +291,7 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
                 <p className="text-sm text-gray-500">Create time schedule change request for one or multiple employees</p>
             </div>
             
-            <form onSubmit={handleSubmit}>
+            <div onSubmit={handleSubmit}>
                 <div className="p-4 grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* Employee Selection Section */}
                     <div className="md:col-span-2 bg-gray-50 p-4 rounded-lg">
@@ -358,25 +429,6 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
                         
                         <div className="space-y-4">
                             <div>
-                                <label htmlFor="schedule_type_id" className="block text-sm font-medium text-gray-700 mb-1">
-                                    Schedule Type <span className="text-red-600">*</span>
-                                </label>
-                                <select
-                                    id="schedule_type_id"
-                                    name="schedule_type_id"
-                                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                    value={formData.schedule_type_id}
-                                    onChange={handleChange}
-                                    required
-                                >
-                                    <option value="">Select Schedule Type</option>
-                                    {scheduleTypes.map(type => (
-                                        <option key={type.id} value={type.id}>{type.name}</option>
-                                    ))}
-                                </select>
-                            </div>
-                            
-                            <div>
                                 <label htmlFor="effective_date" className="block text-sm font-medium text-gray-700 mb-1">
                                     Effective Date <span className="text-red-600">*</span>
                                 </label>
@@ -428,25 +480,13 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
                                     value={formData.current_schedule}
                                     onChange={handleChange}
-                                    placeholder="e.g., Regular 8AM-5PM"
+                                    placeholder="e.g., 2024-12-20 8AM-5PM"
                                 />
+                                <p className="mt-1 text-xs text-gray-500">
+                                    Current date and time schedule (automatically set to today's date)
+                                </p>
                             </div>
                             
-                            <div>
-                                <label htmlFor="new_schedule" className="block text-sm font-medium text-gray-700 mb-1">
-                                    New Schedule <span className="text-red-600">*</span>
-                                </label>
-                                <input
-                                    type="text"
-                                    id="new_schedule"
-                                    name="new_schedule"
-                                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                    value={formData.new_schedule}
-                                    onChange={handleChange}
-                                    placeholder="e.g., Night Shift 10PM-6AM"
-                                    required
-                                />
-                            </div>
                             
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
@@ -505,12 +545,13 @@ const TimeScheduleForm = ({ employees, departments, scheduleTypes, onSubmit }) =
                 <div className="px-4 py-3 bg-gray-50 text-right sm:px-6 border-t">
                     <button
                         type="submit"
+                        onClick={handleSubmit}
                         className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
                     >
                         Submit Time Schedule Change Request
                     </button>
                 </div>
-            </form>
+            </div>
         </div>
     );
 };

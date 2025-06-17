@@ -10,7 +10,7 @@ const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
         employee_id: '',
         offset_type_id: '',
         date: today,
-        workday: '',
+        workday: today,
         hours: '',
         reason: '',
         transaction_type: 'credit'

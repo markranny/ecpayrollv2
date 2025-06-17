@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link, usePage, router } from '@inertiajs/react';
 import { 
     LayoutDashboard, 
@@ -20,27 +20,24 @@ import {
 } from 'lucide-react';
 import '../../css/sidebar.css'; // Fixed CSS import path
 
-const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels, isLive, openMenus, setOpenMenus, currentUrl }) => {
-    // Check if any submenu item is currently active
-    const isSubmenuActive = items && items.some(item => {
-        if (!item.path) return false;
-        // Handle both relative and absolute paths
-        const itemPath = item.path.startsWith('/') ? item.path : `/${item.path}`;
-        return currentUrl === itemPath || currentUrl.startsWith(itemPath);
-    });
-    
-    // Use parent state to manage dropdown open/close, but also consider if submenu is active
-    const isSubmenuOpen = openMenus[label] || isSubmenuActive;
+const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels, isLive, openMenus, setOpenMenus }) => {
+    // Use parent state to manage dropdown open/close
+    const isSubmenuOpen = openMenus[label] || false;
     
     // Handle hover for collapsed menu items with submenus
     const [isHovering, setIsHovering] = useState(false);
 
-    const toggleSubmenu = () => {
+    const toggleSubmenu = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
         if (!isCollapsed) {
-            setOpenMenus(prev => ({
-                ...prev,
-                [label]: !prev[label]
-            }));
+            setOpenMenus(prev => {
+                // Close all other menus and toggle current one
+                const newState = {};
+                newState[label] = !prev[label];
+                return newState;
+            });
         }
     };
 
@@ -49,16 +46,24 @@ const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels, isL
         return url && (url.startsWith('http://') || url.startsWith('https://'));
     };
 
+    // Handle submenu item click - should NOT close the dropdown
+    const handleSubmenuClick = (e) => {
+        // Don't prevent default for navigation, but stop propagation to prevent dropdown toggle
+        e.stopPropagation();
+        // Keep the dropdown open by not modifying openMenus state
+    };
+
     if (path) {
         const isExternalLink = isExternalPath(path);
 
-        if (isExternalLink || isLive) {
-            // Use regular anchor tag for external links but remove target="_blank"
+        if (isExternalLink && isLive) {
+            // Use regular anchor tag for external links (LIVE system opens in new tab)
             return (
                 <a 
                     href={path}
-                    className="block mb-1 group"
-                    // Removed target="_blank" and rel="noopener noreferrer"
+                    className="block mb-1 group relative"
+                    target="_blank"
+                    rel="noopener noreferrer"
                 >
                     <div className={`flex items-center px-4 py-2.5 text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all duration-200 menu-item ${isLive ? 'bg-red-50 text-red-600' : ''}`}>
                         {Icon && <Icon className={`w-5 h-5 mr-3 ${isLive ? 'text-red-600 animate-pulse' : ''}`} />}
@@ -72,25 +77,23 @@ const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels, isL
                                 )}
                             </div>
                         )}
+                        {/* Fixed LIVE indicator for collapsed sidebar */}
                         {(isCollapsed && isLive) && (
-                            <span className="absolute left-12 top-2 px-2 py-0.5 text-xs font-bold bg-red-600 text-white rounded-full animate-pulse">
+                            <div className="absolute left-full ml-2 top-1/2 transform -translate-y-1/2 flex items-center bg-red-600 text-white px-2 py-1 rounded text-xs font-bold whitespace-nowrap z-50 animate-pulse">
                                 LIVE
-                            </span>
+                            </div>
                         )}
                     </div>
                 </a>
             );
         } else {
-            // Check if this menu item is currently active
-            const isActive = currentUrl === path || currentUrl.startsWith(path);
-            
-            // Use Inertia Link for internal routes
+            // Use Inertia Link for internal routes (no new tab)
             return (
                 <Link 
                     href={path}
                     className="block mb-1 group"
                 >
-                    <div className={`flex items-center px-4 py-2.5 text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all duration-200 menu-item ${isActive ? 'bg-indigo-50 text-indigo-600' : ''}`}>
+                    <div className="flex items-center px-4 py-2.5 text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all duration-200 menu-item">
                         {Icon && <Icon className="w-5 h-5 mr-3" />}
                         {(!isCollapsed && showLabels) && (
                             <span className="flex-1 font-medium">{label}</span>
@@ -128,14 +131,18 @@ const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels, isL
                     </div>
                     {items.map((subItem, index) => {
                         const isExternalLink = isExternalPath(subItem.path);
-                        const isSubItemActive = !isExternalLink && (currentUrl === subItem.path || currentUrl.startsWith(subItem.path));
                         
                         return isExternalLink ? (
                             <a
                                 key={index}
                                 href={subItem.path}
                                 className="block px-4 py-2 text-sm text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 transition-all duration-200"
-                                // Removed target="_blank" and rel="noopener noreferrer"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={() => {
+                                    // Hide the hover dropdown after clicking external link
+                                    setIsHovering(false);
+                                }}
                             >
                                 {subItem.label}
                             </a>
@@ -143,7 +150,11 @@ const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels, isL
                             <Link
                                 key={index}
                                 href={subItem.path}
-                                className={`block px-4 py-2 text-sm text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 transition-all duration-200 ${isSubItemActive ? 'bg-indigo-50 text-indigo-600 font-medium' : ''}`}
+                                className="block px-4 py-2 text-sm text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 transition-all duration-200"
+                                onClick={() => {
+                                    // Hide the hover dropdown after clicking internal link
+                                    setIsHovering(false);
+                                }}
                             >
                                 {subItem.label}
                             </Link>
@@ -157,14 +168,15 @@ const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels, isL
                 <div className="ml-6 mt-1 space-y-1">
                     {items.map((subItem, index) => {
                         const isExternalLink = isExternalPath(subItem.path);
-                        const isSubItemActive = !isExternalLink && (currentUrl === subItem.path || currentUrl.startsWith(subItem.path));
                         
                         return isExternalLink ? (
                             <a
                                 key={index}
                                 href={subItem.path}
                                 className="block px-4 py-2 text-sm text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all duration-200"
-                                // Removed target="_blank" and rel="noopener noreferrer"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={handleSubmenuClick}
                             >
                                 {subItem.label}
                             </a>
@@ -172,16 +184,8 @@ const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels, isL
                             <Link
                                 key={index}
                                 href={subItem.path}
-                                className={`block px-4 py-2 text-sm text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all duration-200 ${isSubItemActive ? 'bg-indigo-50 text-indigo-600 font-medium' : ''}`}
-                                onClick={(e) => {
-                                    // Prevent event bubbling to parent elements
-                                    e.stopPropagation();
-                                    // Keep the menu open by setting it in localStorage
-                                    localStorage.setItem('openMenus', JSON.stringify({
-                                        ...JSON.parse(localStorage.getItem('openMenus') || '{}'),
-                                        [label]: true
-                                    }));
-                                }}
+                                className="block px-4 py-2 text-sm text-gray-600 hover:bg-indigo-50 hover:text-indigo-600 rounded-lg transition-all duration-200"
+                                onClick={handleSubmenuClick}
                             >
                                 {subItem.label}
                             </Link>
@@ -194,32 +198,13 @@ const MenuItem = ({ icon: Icon, label, items, path, isCollapsed, showLabels, isL
 };
 
 const Sidebar = ({ showSidebar = true }) => {
-    const { auth, ziggy } = usePage().props;
+    const { auth } = usePage().props;
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [showLabels, setShowLabels] = useState(true);
     const [userRole, setUserRole] = useState('No Role Assigned');
     const [userRoles, setUserRoles] = useState([]);
     const [openMenus, setOpenMenus] = useState({}); // State to track which menus are open
-    
-    // Get current URL
-    const currentUrl = ziggy?.location || window.location.pathname;
-    
-    // Load persisted menu state from localStorage
-    useEffect(() => {
-        const savedOpenMenus = localStorage.getItem('openMenus');
-        if (savedOpenMenus) {
-            try {
-                setOpenMenus(JSON.parse(savedOpenMenus));
-            } catch (e) {
-                console.error('Error parsing saved menu state:', e);
-            }
-        }
-    }, []);
-    
-    // Save menu state to localStorage whenever it changes
-    useEffect(() => {
-        localStorage.setItem('openMenus', JSON.stringify(openMenus));
-    }, [openMenus]);
+    const sidebarRef = useRef(null);
     
     // Debug and process roles on component mount
     useEffect(() => {
@@ -262,6 +247,20 @@ const Sidebar = ({ showSidebar = true }) => {
             }
         }
     }, [auth]);
+
+    // Close dropdowns when clicking outside
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (sidebarRef.current && !sidebarRef.current.contains(event.target)) {
+                setOpenMenus({});
+            }
+        };
+
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => {
+            document.removeEventListener('mousedown', handleClickOutside);
+        };
+    }, []);
 
     const hasAccess = (allowedRoles) => {
         // During development or if roles are missing, show all items by default
@@ -424,12 +423,15 @@ const Sidebar = ({ showSidebar = true }) => {
     ];
 
     return (
-        <aside className={`fixed top-0 left-0 z-30 h-screen transition-all duration-300 ease-in-out shadow-md ${!showSidebar ? 'hidden' : ''}`} 
-               aria-label="Sidebar">
+        <aside 
+            ref={sidebarRef}
+            className={`fixed top-0 left-0 z-50 h-screen transition-all duration-300 ease-in-out shadow-md ${!showSidebar ? 'hidden' : ''}`} 
+            aria-label="Sidebar"
+        >
             <div className={`h-full bg-white border-r border-gray-200 flex flex-col transition-all duration-300 ease-in-out relative overflow-hidden ${isCollapsed ? 'w-20' : 'w-64'}`}>
                 {/* Smoke animation background */}
                 <div className="smoke-animation"></div>
-                <div className="p-4 flex items-center justify-between border-b border-gray-200">
+                <div className="p-4 flex items-center justify-between border-b border-gray-200 relative z-10">
                     {!isCollapsed && (
                         <div>
                             <h2 className="text-xl font-bold text-gray-800 tracking-tight">
@@ -452,8 +454,14 @@ const Sidebar = ({ showSidebar = true }) => {
                             </button>
                         )}
                         <button
-                            onClick={() => setIsCollapsed(!isCollapsed)}
-                            className={`p-2 rounded-lg hover:bg-gray-100 transition-colors duration-200 ${isCollapsed ? 'mx-auto' : ''}`}
+                            onClick={() => {
+                                setIsCollapsed(!isCollapsed);
+                                // Close all dropdowns when collapsing
+                                if (!isCollapsed) {
+                                    setOpenMenus({});
+                                }
+                            }}
+                            className={`p-2 rounded-lg hover:bg-gray-100 transition-colors duration-200 relative z-20 ${isCollapsed ? 'mx-auto' : ''}`}
                             aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
                             title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
                         >
@@ -481,7 +489,6 @@ const Sidebar = ({ showSidebar = true }) => {
                                     isLive={item.isLive}
                                     openMenus={openMenus}
                                     setOpenMenus={setOpenMenus}
-                                    currentUrl={currentUrl}
                                 />
                             ))}
                     </nav>

@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { format } from 'date-fns';
-import { X, User, Calendar, DollarSign, FileText, CheckCircle, XCircle } from 'lucide-react';
+import { X, User, Calendar, DollarSign, FileText, CheckCircle, XCircle, Clock } from 'lucide-react';
 import RetroStatusBadge from './RetroStatusBadge';
 
 const RetroDetailModal = ({ retro, onClose, onStatusUpdate, userRoles = {} }) => {
@@ -47,7 +46,11 @@ const RetroDetailModal = ({ retro, onClose, onStatusUpdate, userRoles = {} }) =>
     // Format date safely
     const formatDate = (dateString) => {
         try {
-            return format(new Date(dateString), 'MMM dd, yyyy');
+            return new Date(dateString).toLocaleDateString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric'
+            });
         } catch (error) {
             return 'Invalid date';
         }
@@ -56,7 +59,13 @@ const RetroDetailModal = ({ retro, onClose, onStatusUpdate, userRoles = {} }) =>
     // Format datetime safely
     const formatDateTime = (dateString) => {
         try {
-            return format(new Date(dateString), 'MMM dd, yyyy HH:mm');
+            return new Date(dateString).toLocaleString('en-US', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
         } catch (error) {
             return 'Invalid date';
         }
@@ -79,12 +88,11 @@ const RetroDetailModal = ({ retro, onClose, onStatusUpdate, userRoles = {} }) =>
     // Get retro type label
     const getRetroTypeLabel = (type) => {
         const types = {
-            'salary': 'Salary Adjustment',
-            'allowance': 'Allowance Adjustment',
-            'overtime': 'Overtime Adjustment',
-            'bonus': 'Bonus Adjustment',
-            'deduction': 'Deduction Adjustment',
-            'other': 'Other Adjustment'
+            'DAYS': 'Regular Days',
+            'OVERTIME': 'Overtime Hours',
+            'SLVL': 'Sick/Vacation Leave',
+            'HOLIDAY': 'Holiday Work',
+            'RD_OT': 'Rest Day Overtime'
         };
         return types[type] || type?.charAt(0).toUpperCase() + type?.slice(1);
     };
@@ -100,14 +108,17 @@ const RetroDetailModal = ({ retro, onClose, onStatusUpdate, userRoles = {} }) =>
         return types[type] || type?.charAt(0).toUpperCase() + type?.slice(1);
     };
 
-    // Calculate difference
-    const calculateDifference = () => {
-        const original = parseFloat(retro.original_value || 0);
-        const requested = parseFloat(retro.requested_value || 0);
-        return requested - original;
+    // Get unit label
+    const getUnitLabel = (retroType) => {
+        const units = {
+            'DAYS': 'Days',
+            'OVERTIME': 'Hours',
+            'SLVL': 'Days',
+            'HOLIDAY': 'Hours',
+            'RD_OT': 'Hours'
+        };
+        return units[retroType] || 'Units';
     };
-
-    const difference = calculateDifference();
 
     return (
         <div className="fixed inset-0 z-50 overflow-y-auto">
@@ -206,6 +217,44 @@ const RetroDetailModal = ({ retro, onClose, onStatusUpdate, userRoles = {} }) =>
                                 </div>
                             </div>
 
+                            {/* Time & Rate Information */}
+                            <div className="bg-gray-50 p-4 rounded-lg">
+                                <h4 className="font-medium text-gray-900 mb-3 flex items-center">
+                                    <Clock className="h-5 w-5 mr-2 text-gray-600" />
+                                    Time & Rate Details
+                                </h4>
+                                <div className="space-y-2">
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-700">
+                                            {getUnitLabel(retro.retro_type)}:
+                                        </span>
+                                        <span className="ml-2 text-sm text-gray-900">
+                                            {retro.hours_days || 'N/A'} {getUnitLabel(retro.retro_type)?.toLowerCase()}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-700">Multiplier Rate:</span>
+                                        <span className="ml-2 text-sm text-gray-900">
+                                            {retro.multiplier_rate ? `${retro.multiplier_rate}x` : 'N/A'}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <span className="text-sm font-medium text-gray-700">Base Rate:</span>
+                                        <span className="ml-2 text-sm text-gray-900">
+                                            {retro.base_rate ? formatCurrency(retro.base_rate) : 'N/A'}
+                                        </span>
+                                    </div>
+                                    {retro.hours_days && retro.multiplier_rate && retro.base_rate && (
+                                        <div className="mt-3 p-2 bg-blue-50 rounded border">
+                                            <div className="text-xs text-blue-600 mb-1">Calculation:</div>
+                                            <div className="text-sm text-blue-800">
+                                                {retro.hours_days} × {retro.multiplier_rate} × {formatCurrency(retro.base_rate)}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+
                             {/* Financial Information */}
                             <div className="bg-gray-50 p-4 rounded-lg">
                                 <h4 className="font-medium text-gray-900 mb-3 flex items-center">
@@ -214,50 +263,53 @@ const RetroDetailModal = ({ retro, onClose, onStatusUpdate, userRoles = {} }) =>
                                 </h4>
                                 <div className="space-y-2">
                                     <div>
-                                        <span className="text-sm font-medium text-gray-700">Original Value:</span>
-                                        <span className="ml-2 text-sm text-gray-900">
-                                            {formatCurrency(retro.original_value)}
+                                        <span className="text-sm font-medium text-gray-700">Computed Amount:</span>
+                                        <span className="ml-2 text-sm text-gray-900 font-semibold">
+                                            {formatCurrency(retro.computed_amount || retro.requested_total_amount)}
                                         </span>
                                     </div>
-                                    <div>
-                                        <span className="text-sm font-medium text-gray-700">Requested Value:</span>
-                                        <span className="ml-2 text-sm text-gray-900">
-                                            {formatCurrency(retro.requested_value)}
-                                        </span>
-                                    </div>
-                                    <div>
-                                        <span className="text-sm font-medium text-gray-700">Difference:</span>
-                                        <span className={`ml-2 text-sm font-medium ${
-                                            difference > 0 ? 'text-green-600' : 
-                                            difference < 0 ? 'text-red-600' : 'text-gray-900'
-                                        }`}>
-                                            {difference > 0 ? '+' : ''}{formatCurrency(difference)}
-                                        </span>
-                                    </div>
+                                    {retro.original_total_amount !== undefined && (
+                                        <div>
+                                            <span className="text-sm font-medium text-gray-700">Original Amount:</span>
+                                            <span className="ml-2 text-sm text-gray-900">
+                                                {formatCurrency(retro.original_total_amount)}
+                                            </span>
+                                        </div>
+                                    )}
+                                    {retro.requested_total_amount !== undefined && (
+                                        <div>
+                                            <span className="text-sm font-medium text-gray-700">Requested Amount:</span>
+                                            <span className="ml-2 text-sm text-gray-900">
+                                                {formatCurrency(retro.requested_total_amount)}
+                                            </span>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
 
                             {/* Approval Information */}
-                            <div className="bg-gray-50 p-4 rounded-lg">
+                            <div className="md:col-span-2 bg-gray-50 p-4 rounded-lg">
                                 <h4 className="font-medium text-gray-900 mb-3 flex items-center">
                                     <CheckCircle className="h-5 w-5 mr-2 text-gray-600" />
                                     Approval Information
                                 </h4>
-                                <div className="space-y-2">
-                                    <div>
-                                        <span className="text-sm font-medium text-gray-700">Created By:</span>
-                                        <span className="ml-2 text-sm text-gray-900">
-                                            {retro.creator?.name || 'System'}
-                                        </span>
-                                    </div>
-                                    <div>
-                                        <span className="text-sm font-medium text-gray-700">Created At:</span>
-                                        <span className="ml-2 text-sm text-gray-900">
-                                            {formatDateTime(retro.created_at)}
-                                        </span>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <div>
+                                            <span className="text-sm font-medium text-gray-700">Created By:</span>
+                                            <span className="ml-2 text-sm text-gray-900">
+                                                {retro.creator?.name || 'System'}
+                                            </span>
+                                        </div>
+                                        <div>
+                                            <span className="text-sm font-medium text-gray-700">Created At:</span>
+                                            <span className="ml-2 text-sm text-gray-900">
+                                                {formatDateTime(retro.created_at)}
+                                            </span>
+                                        </div>
                                     </div>
                                     {retro.approved_by && (
-                                        <>
+                                        <div className="space-y-2">
                                             <div>
                                                 <span className="text-sm font-medium text-gray-700">Approved By:</span>
                                                 <span className="ml-2 text-sm text-gray-900">
@@ -270,7 +322,7 @@ const RetroDetailModal = ({ retro, onClose, onStatusUpdate, userRoles = {} }) =>
                                                     {formatDateTime(retro.approved_at)}
                                                 </span>
                                             </div>
-                                        </>
+                                        </div>
                                     )}
                                 </div>
                             </div>

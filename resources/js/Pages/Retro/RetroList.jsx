@@ -624,7 +624,10 @@ const RetroList = ({
                                 Retro Date
                             </th>
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                Values
+                                Time & Rate
+                            </th>
+                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Amount
                             </th>
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Status
@@ -640,102 +643,140 @@ const RetroList = ({
                     <tbody className="bg-white divide-y divide-gray-200">
                         {filteredRetros.length === 0 ? (
                             <tr>
-                                <td colSpan={selectableItemsCount > 0 ? "8" : "7"} className="px-6 py-4 text-center text-sm text-gray-500">
+                                <td colSpan={selectableItemsCount > 0 ? "9" : "8"} className="px-6 py-4 text-center text-sm text-gray-500">
                                     {processing || localProcessing ? 'Loading retro requests...' : 'No retro records found'}
                                 </td>
                             </tr>
                         ) : (
-                            filteredRetros.map(retro => (
-                                <tr key={retro.id} className={`hover:bg-gray-50 transition-colors duration-200 ${
-                                    (deletingId === retro.id || updatingId === retro.id) ? 'opacity-50' : ''
-                                }`}>
-                                    {selectableItemsCount > 0 && (
-                                        <td className="px-4 py-4">
-                                            {canSelectRetro(retro) && (
-                                                <input
-                                                    type="checkbox"
-                                                    className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                                    checked={selectedIds.includes(retro.id)}
-                                                    onChange={() => toggleSelectItem(retro.id)}
-                                                    disabled={processing || localProcessing || deletingId === retro.id || updatingId === retro.id}
-                                                />
+                            filteredRetros.map(retro => {
+                                // Helper functions for display
+                                const getRetroTypeLabel = (type) => {
+                                    const types = {
+                                        'DAYS': 'Regular Days',
+                                        'OVERTIME': 'Overtime Hours',
+                                        'SLVL': 'Sick/Vacation Leave',
+                                        'HOLIDAY': 'Holiday Work',
+                                        'RD_OT': 'Rest Day Overtime'
+                                    };
+                                    return types[type] || type?.charAt(0).toUpperCase() + type?.slice(1);
+                                };
+
+                                const getUnitLabel = (retroType) => {
+                                    const units = {
+                                        'DAYS': 'Days',
+                                        'OVERTIME': 'Hours',
+                                        'SLVL': 'Days',
+                                        'HOLIDAY': 'Hours',
+                                        'RD_OT': 'Hours'
+                                    };
+                                    return units[retroType] || 'Units';
+                                };
+
+                                return (
+                                    <tr key={retro.id} className={`hover:bg-gray-50 transition-colors duration-200 ${
+                                        (deletingId === retro.id || updatingId === retro.id) ? 'opacity-50' : ''
+                                    }`}>
+                                        {selectableItemsCount > 0 && (
+                                            <td className="px-4 py-4">
+                                                {canSelectRetro(retro) && (
+                                                    <input
+                                                        type="checkbox"
+                                                        className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                                        checked={selectedIds.includes(retro.id)}
+                                                        onChange={() => toggleSelectItem(retro.id)}
+                                                        disabled={processing || localProcessing || deletingId === retro.id || updatingId === retro.id}
+                                                    />
+                                                )}
+                                            </td>
+                                        )}
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="text-sm font-medium text-gray-900">
+                                                {retro.employee ? 
+                                                    `${retro.employee.Lname}, ${retro.employee.Fname}` : 
+                                                    'Unknown employee'}
+                                            </div>
+                                            <div className="text-sm text-gray-500">
+                                                {retro.employee?.idno || 'N/A'}
+                                            </div>
+                                            <div className="text-xs text-gray-400">
+                                                {retro.employee?.Department || 'No Dept'}
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="text-sm text-gray-900">
+                                                {getRetroTypeLabel(retro.retro_type)}
+                                            </div>
+                                            <div className="text-sm text-gray-500">
+                                                {retro.adjustment_type ? retro.adjustment_type.charAt(0).toUpperCase() + retro.adjustment_type.slice(1) : ''}
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="text-sm text-gray-900">
+                                                {retro.retro_date ? formatDate(retro.retro_date) : 'N/A'}
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="text-sm text-gray-900">
+                                                {retro.hours_days ? `${retro.hours_days} ${getUnitLabel(retro.retro_type)?.toLowerCase()}` : 'N/A'}
+                                            </div>
+                                            <div className="text-sm text-gray-500">
+                                                {retro.multiplier_rate ? `${retro.multiplier_rate}x rate` : 'N/A'}
+                                            </div>
+                                            <div className="text-xs text-gray-400">
+                                                {retro.base_rate ? `Base: ${formatCurrency(retro.base_rate)}` : ''}
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <div className="text-sm font-medium text-gray-900">
+                                                {formatCurrency(retro.computed_amount || retro.requested_total_amount || 0)}
+                                            </div>
+                                            {retro.original_total_amount !== undefined && retro.original_total_amount > 0 && (
+                                                <div className="text-sm text-gray-500">
+                                                    Original: {formatCurrency(retro.original_total_amount)}
+                                                </div>
                                             )}
                                         </td>
-                                    )}
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="text-sm font-medium text-gray-900">
-                                            {retro.employee ? 
-                                                `${retro.employee.Lname}, ${retro.employee.Fname}` : 
-                                                'Unknown employee'}
-                                        </div>
-                                        <div className="text-sm text-gray-500">
-                                            {retro.employee?.idno || 'N/A'}
-                                        </div>
-                                        <div className="text-xs text-gray-400">
-                                            {retro.employee?.Department || 'No Dept'}
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="text-sm text-gray-900">
-                                            {retro.retro_type ? retro.retro_type.charAt(0).toUpperCase() + retro.retro_type.slice(1) : 'N/A'}
-                                        </div>
-                                        <div className="text-sm text-gray-500">
-                                            {retro.adjustment_type ? retro.adjustment_type.charAt(0).toUpperCase() + retro.adjustment_type.slice(1) : ''}
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="text-sm text-gray-900">
-                                            {retro.retro_date ? formatDate(retro.retro_date) : 'N/A'}
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <div className="text-sm text-gray-900">
-                                            Original: {formatCurrency(retro.original_value || 0)}
-                                        </div>
-                                        <div className="text-sm text-gray-500">
-                                            Requested: {formatCurrency(retro.requested_value || 0)}
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap">
-                                        <RetroStatusBadge status={retro.status} />
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {retro.approver ? retro.approver.name : 'N/A'}
-                                    </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                        <div className="flex items-center justify-end space-x-2">
-                                            <button
-                                                onClick={() => handleViewDetail(retro)}
-                                                className="text-indigo-600 hover:text-indigo-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
-                                                disabled={processing || localProcessing || updatingId === retro.id}
-                                            >
-                                                View
-                                            </button>
-                                            
-                                            {(retro.status === 'pending' && 
-                                              (userRoles.isSuperAdmin || 
-                                               retro.employee_id === userRoles.employeeId || 
-                                               (userRoles.isDepartmentManager && 
-                                                userRoles.managedDepartments?.includes(retro.employee?.Department)))) && (
+                                        <td className="px-6 py-4 whitespace-nowrap">
+                                            <RetroStatusBadge status={retro.status} />
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                            {retro.approver ? retro.approver.name : 'N/A'}
+                                        </td>
+                                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                            <div className="flex items-center justify-end space-x-2">
                                                 <button
-                                                    onClick={() => handleDelete(retro.id)}
-                                                    className="text-red-600 hover:text-red-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center transition-colors duration-200"
-                                                    disabled={processing || localProcessing || deletingId === retro.id}
+                                                    onClick={() => handleViewDetail(retro)}
+                                                    className="text-indigo-600 hover:text-indigo-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
+                                                    disabled={processing || localProcessing || updatingId === retro.id}
                                                 >
-                                                    {deletingId === retro.id ? (
-                                                        <>
-                                                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                                                            Deleting...
-                                                        </>
-                                                    ) : (
-                                                        'Delete'
-                                                    )}
+                                                    View
                                                 </button>
-                                            )}
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))
+                                                
+                                                {(retro.status === 'pending' && 
+                                                  (userRoles.isSuperAdmin || 
+                                                   retro.employee_id === userRoles.employeeId || 
+                                                   (userRoles.isDepartmentManager && 
+                                                    userRoles.managedDepartments?.includes(retro.employee?.Department)))) && (
+                                                    <button
+                                                        onClick={() => handleDelete(retro.id)}
+                                                        className="text-red-600 hover:text-red-900 disabled:opacity-50 disabled:cursor-not-allowed flex items-center transition-colors duration-200"
+                                                        disabled={processing || localProcessing || deletingId === retro.id}
+                                                    >
+                                                        {deletingId === retro.id ? (
+                                                            <>
+                                                                <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                                                                Deleting...
+                                                            </>
+                                                        ) : (
+                                                            'Delete'
+                                                        )}
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                );
+                            })
                         )}
                     </tbody>
                 </table>
