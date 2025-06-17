@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Head, usePage } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
-import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle } from 'lucide-react';
+import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, Sync, CheckCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,6 +12,7 @@ const ProcessedAttendanceList = () => {
   const { auth, attendances: initialAttendances = [], pagination = {} } = usePage().props;
   const [attendances, setAttendances] = useState(initialAttendances);
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   
@@ -175,6 +176,64 @@ const ProcessedAttendanceList = () => {
     }
   };
 
+  // Sync attendance data
+  const handleSync = async () => {
+    setSyncing(true);
+    setError('');
+    setSuccess('');
+    
+    try {
+      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+      
+      // Get date range for sync (current month by default)
+      const startDate = new Date();
+      startDate.setDate(1); // First day of current month
+      const endDate = new Date();
+      endDate.setMonth(endDate.getMonth() + 1, 0); // Last day of current month
+      
+      const response = await fetch('/attendance/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          start_date: startDate.toISOString().split('T')[0],
+          end_date: endDate.toISOString().split('T')[0]
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setSuccess(data.message);
+        
+        // Show detailed information if available
+        if (data.details) {
+          const details = data.details;
+          let detailedMessage = `Sync completed: ${details.synced_count} records updated`;
+          if (details.error_count > 0) {
+            detailedMessage += `, ${details.error_count} errors occurred`;
+          }
+          detailedMessage += ` (Total processed: ${details.total_processed})`;
+          setSuccess(detailedMessage);
+        }
+        
+        // Reload the current page to show updated data
+        await loadAttendanceData();
+      } else {
+        setError('Sync failed: ' + (data.message || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Error syncing attendance data:', err);
+      setError('Error syncing attendance data: ' + (err.message || 'Unknown error'));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   // Initial data load
   useEffect(() => {
     // Process initial data to ensure employee, dept and day fields
@@ -298,6 +357,22 @@ const ProcessedAttendanceList = () => {
                   View and manage processed attendance records with edit history tracking.
                 </p>
               </div>
+              
+              {/* Sync Button */}
+              <div className="flex items-center space-x-3">
+                <Button
+                  onClick={handleSync}
+                  disabled={syncing}
+                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  {syncing ? (
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Sync className="h-4 w-4 mr-2" />
+                  )}
+                  {syncing ? 'Syncing...' : 'Sync Data'}
+                </Button>
+              </div>
             </div>
 
             {error && (
@@ -308,8 +383,9 @@ const ProcessedAttendanceList = () => {
             )}
 
             {success && (
-              <Alert className="mb-4">
-                <AlertDescription>{success}</AlertDescription>
+              <Alert className="mb-4 border-green-200 bg-green-50">
+                <CheckCircle className="h-4 w-4 mr-2 text-green-600" />
+                <AlertDescription className="text-green-800">{success}</AlertDescription>
               </Alert>
             )}
 
@@ -402,6 +478,10 @@ const ProcessedAttendanceList = () => {
                         <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time Out</th>
                         <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Next Day</th>
                         <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hours</th>
+                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT</th>
+                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Travel</th>
+                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Retro</th>
+                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rest</th>
                         <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
                         <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                       </tr>
@@ -450,6 +530,22 @@ const ProcessedAttendanceList = () => {
                           <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
                             {attendance.hours_worked ? attendance.hours_worked.toFixed(2) : 
                               calculateDuration(attendance.time_in, attendance.time_out)}
+                          </td>
+                          <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {attendance.overtime ? attendance.overtime.toFixed(2) : '-'}
+                          </td>
+                          <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {attendance.travel_order ? attendance.travel_order.toFixed(2) : '-'}
+                          </td>
+                          <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {attendance.retromultiplier ? attendance.retromultiplier.toFixed(2) : '-'}
+                          </td>
+                          <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {attendance.restday ? (
+                              <span className="text-green-600 font-medium">Yes</span>
+                            ) : (
+                              <span className="text-gray-400">No</span>
+                            )}
                           </td>
                           <td className="px-2 py-4 whitespace-nowrap">
                             <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${

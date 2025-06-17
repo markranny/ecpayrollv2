@@ -24,6 +24,10 @@ class ProcessedAttendance extends Model
         'break_out',
         'next_day_timeout',
         'hours_worked',
+        'overtime',
+        'travel_order',
+        'retromultiplier',
+        'restday',
         'status',
         'source',
         'remarks',
@@ -43,6 +47,10 @@ class ProcessedAttendance extends Model
         'break_out' => 'datetime',
         'next_day_timeout' => 'datetime',
         'hours_worked' => 'float',
+        'overtime' => 'decimal:2',
+        'travel_order' => 'decimal:2',
+        'retromultiplier' => 'decimal:2',
+        'restday' => 'boolean',
         'is_nightshift' => 'boolean',
     ];
 

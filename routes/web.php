@@ -251,13 +251,20 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
     Route::delete('/timesheet/attendance/{id}', [BiometricController::class, 'deleteAttendance'])
         ->name('attendance.delete');
 
-    // Processed Attendance
     Route::get('/attendance', [ProcessedAttendanceController::class, 'index'])
         ->name('attendance.index');
     Route::get('/attendance/list', [ProcessedAttendanceController::class, 'list'])
         ->name('attendance.list');
     Route::put('/attendance/{id}', [ProcessedAttendanceController::class, 'update'])
         ->name('attendance.update');
+    
+    // NEW ROUTES: Sync and Delete functionality
+    Route::post('/attendance/{id}/sync', [ProcessedAttendanceController::class, 'sync'])
+        ->name('attendance.sync');
+    Route::delete('/attendance/{id}', [ProcessedAttendanceController::class, 'destroy'])
+        ->name('attendance.destroy');
+    
+    // Existing routes continue...
     Route::get('/attendance/departments', [ProcessedAttendanceController::class, 'getDepartments'])
         ->name('attendance.departments');
     Route::get('/attendance/export', [ProcessedAttendanceController::class, 'export'])

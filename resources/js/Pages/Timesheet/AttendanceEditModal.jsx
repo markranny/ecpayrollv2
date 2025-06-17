@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Clock, AlertTriangle } from 'lucide-react';
+import { X, Save, Clock, AlertTriangle, RotateCcw, Trash2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
@@ -272,7 +272,7 @@ const TimePicker = ({ value, onChange, name, placeholder, required }) => {
   );
 };
 
-const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave }) => {
+const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, onSync }) => {
   const [formData, setFormData] = useState({
     id: '',
     time_in: '',
@@ -284,6 +284,10 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave }) => {
   });
   
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [syncLoading, setSyncLoading] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Add the missing formatTimeForInput function
   const formatTimeForInput = (timeString) => {
@@ -449,10 +453,97 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave }) => {
     }));
   };
 
+  // Handle sync action
+  const handleSync = async () => {
+    if (!attendance?.id) return;
+    
+    setSyncLoading(true);
+    setError('');
+    
+    try {
+      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+      
+      const response = await fetch(`/attendance/${attendance.id}/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        }
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        if (onSync) {
+          onSync(data.data);
+        }
+        // Update form data with synced values
+        setFormData({
+          id: data.data.id,
+          time_in: formatTimeForInput(data.data.time_in),
+          time_out: formatTimeForInput(data.data.time_out),
+          break_in: formatTimeForInput(data.data.break_in),
+          break_out: formatTimeForInput(data.data.break_out),
+          next_day_timeout: formatTimeForInput(data.data.next_day_timeout),
+          is_nightshift: data.data.is_nightshift || false
+        });
+      } else {
+        setError('Failed to sync attendance: ' + (data.message || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Error syncing attendance:', err);
+      setError('Error syncing attendance: ' + (err.message || 'Unknown error'));
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
+  // Handle delete action
+  const handleDelete = async () => {
+    if (!attendance?.id) return;
+    
+    setDeleteLoading(true);
+    setError('');
+    
+    try {
+      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+      
+      const response = await fetch(`/attendance/${attendance.id}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        }
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        if (onDelete) {
+          onDelete(attendance.id);
+        }
+        onClose();
+      } else {
+        setError('Failed to delete attendance: ' + (data.message || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Error deleting attendance:', err);
+      setError('Error deleting attendance: ' + (err.message || 'Unknown error'));
+    } finally {
+      setDeleteLoading(false);
+      setShowDeleteConfirm(false);
+    }
+  };
+
   // Handle form submission with improved validation
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
     
     try {
       console.log('Form submission - Current data:', formData);
@@ -544,6 +635,8 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave }) => {
     } catch (error) {
       console.error('Error in form submission:', error);
       setError('An error occurred while processing the form. Please check all entries and try again.');
+    } finally {
+      setLoading(false);
     }
   };
   
@@ -593,6 +686,9 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave }) => {
             </div>
             <div className="text-sm text-gray-500">
               Date: {attendance?.attendance_date ? new Date(attendance.attendance_date).toLocaleDateString() : 'N/A'}
+            </div>
+            <div className="text-sm text-gray-500">
+              Hours Worked: {attendance?.hours_worked || 'N/A'}
             </div>
           </div>
 
@@ -706,21 +802,109 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave }) => {
             )}
           </div>
 
-          <div className="bg-gray-50 p-4 -mx-6 -mb-6 mt-6 flex justify-end space-x-3 border-t">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={onClose}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="submit"
-              className="bg-blue-600 hover:bg-blue-700"
-            >
-              <Save className="h-4 w-4 mr-2" />
-              Save Changes
-            </Button>
+          {/* Delete Confirmation Dialog */}
+          {showDeleteConfirm && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mt-4">
+              <div className="flex items-start">
+                <AlertTriangle className="h-5 w-5 text-red-400 mt-0.5 mr-2" />
+                <div className="flex-1">
+                  <h3 className="text-sm font-medium text-red-800">Confirm Deletion</h3>
+                  <p className="text-sm text-red-700 mt-1">
+                    Are you sure you want to delete this attendance record? This action cannot be undone.
+                  </p>
+                  <div className="flex space-x-2 mt-3">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setShowDeleteConfirm(false)}
+                      className="text-red-600 border-red-300 hover:bg-red-50"
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={handleDelete}
+                      disabled={deleteLoading}
+                      className="bg-red-600 hover:bg-red-700 text-white"
+                    >
+                      {deleteLoading ? (
+                        <>
+                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          Deleting...
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="h-4 w-4 mr-2" />
+                          Delete
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          <div className="bg-gray-50 p-4 -mx-6 -mb-6 mt-6 flex justify-between items-center border-t">
+            <div className="flex space-x-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleSync}
+                disabled={syncLoading}
+                className="text-green-600 border-green-300 hover:bg-green-50"
+              >
+                {syncLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Syncing...
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Sync
+                  </>
+                )}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setShowDeleteConfirm(true)}
+                disabled={deleteLoading}
+                className="text-red-600 border-red-300 hover:bg-red-50"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete
+              </Button>
+            </div>
+            <div className="flex space-x-3">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onClose}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={loading}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4 mr-2" />
+                    Save Changes
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </form>
       </div>

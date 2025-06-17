@@ -318,6 +318,54 @@ public function update(Request $request, $id)
         ], 500);
     }
 }
+
+    /**
+     * Delete processed attendance record
+     */
+    public function destroy($id)
+    {
+        try {
+            Log::info('Attendance delete request for ID: ' . $id);
+
+            // Find the attendance record
+            $attendance = ProcessedAttendance::findOrFail($id);
+            
+            // Log the record being deleted
+            Log::info('Deleting attendance record', [
+                'id' => $attendance->id,
+                'employee_id' => $attendance->employee_id,
+                'attendance_date' => $attendance->attendance_date
+            ]);
+            
+            // Store employee info for response
+            $employee = $attendance->employee;
+            $employeeName = $employee ? trim($employee->Fname . ' ' . $employee->Lname) : 'Unknown Employee';
+            $attendanceDate = $attendance->attendance_date->format('Y-m-d');
+            
+            // Delete the record
+            $attendance->delete();
+            
+            Log::info('Attendance record deleted successfully', ['id' => $id]);
+            
+            return response()->json([
+                'success' => true,
+                'message' => "Attendance record for {$employeeName} on {$attendanceDate} has been deleted successfully."
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error deleting attendance: ' . $e->getMessage(), [
+                'id' => $id,
+                'exception' => get_class($e),
+                'file' => $e->getFile(),
+                'line' => $e->getLine()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to delete attendance record: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
     
     /**
      * Calculate hours worked for an attendance record
@@ -462,5 +510,197 @@ public function update(Request $request, $id)
                 'message' => 'Failed to export attendance data: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Sync processed attendance with overtime, travel orders, retros, and cancel rest days
+     */
+    public function sync(Request $request)
+    {
+        try {
+            Log::info('Starting attendance sync process');
+            
+            $syncedCount = 0;
+            $errorCount = 0;
+            $errors = [];
+            
+            // Get date range for sync - default to current month if not provided
+            $startDate = $request->input('start_date', now()->startOfMonth()->format('Y-m-d'));
+            $endDate = $request->input('end_date', now()->endOfMonth()->format('Y-m-d'));
+            
+            Log::info("Syncing attendance data from {$startDate} to {$endDate}");
+            
+            // Get all processed attendance records within the date range
+            $attendances = ProcessedAttendance::whereBetween('attendance_date', [$startDate, $endDate])
+                ->with('employee')
+                ->get();
+            
+            foreach ($attendances as $attendance) {
+                try {
+                    $updated = false;
+                    $employeeId = $attendance->employee_id;
+                    $attendanceDate = $attendance->attendance_date;
+                    
+                    // 1. Sync Overtime Data
+                    $overtimeHours = $this->calculateOvertimeHours($employeeId, $attendanceDate);
+                    if ($attendance->overtime != $overtimeHours) {
+                        $attendance->overtime = $overtimeHours;
+                        $updated = true;
+                    }
+                    
+                    // 2. Sync Travel Order Data
+                    $travelOrderHours = $this->calculateTravelOrderHours($employeeId, $attendanceDate);
+                    if ($attendance->travel_order != $travelOrderHours) {
+                        $attendance->travel_order = $travelOrderHours;
+                        $updated = true;
+                    }
+                    
+                    // 3. Sync Retro Multiplier Data
+                    $retroMultiplier = $this->calculateRetroMultiplier($employeeId, $attendanceDate);
+                    if ($attendance->retromultiplier != $retroMultiplier) {
+                        $attendance->retromultiplier = $retroMultiplier;
+                        $updated = true;
+                    }
+                    
+                    // 4. Sync Cancel Rest Day Data
+                    $restDay = $this->checkCancelRestDay($employeeId, $attendanceDate);
+                    if ($attendance->restday != $restDay) {
+                        $attendance->restday = $restDay;
+                        $updated = true;
+                    }
+                    
+                    // Save if any changes were made
+                    if ($updated) {
+                        $attendance->save();
+                        $syncedCount++;
+                        
+                        Log::info("Synced attendance for employee {$employeeId} on {$attendanceDate}", [
+                            'overtime' => $overtimeHours,
+                            'travel_order' => $travelOrderHours,
+                            'retromultiplier' => $retroMultiplier,
+                            'restday' => $restDay
+                        ]);
+                    }
+                    
+                } catch (\Exception $e) {
+                    $errorCount++;
+                    $error = "Error syncing attendance ID {$attendance->id}: " . $e->getMessage();
+                    $errors[] = $error;
+                    Log::error($error, ['exception' => $e]);
+                }
+            }
+            
+            Log::info("Attendance sync completed", [
+                'synced_count' => $syncedCount,
+                'error_count' => $errorCount,
+                'total_processed' => $attendances->count()
+            ]);
+            
+            $message = "Sync completed successfully. {$syncedCount} records updated";
+            if ($errorCount > 0) {
+                $message .= ", {$errorCount} errors occurred.";
+            }
+            
+            return response()->json([
+                'success' => true,
+                'message' => $message,
+                'details' => [
+                    'synced_count' => $syncedCount,
+                    'error_count' => $errorCount,
+                    'total_processed' => $attendances->count(),
+                    'errors' => $errorCount > 0 ? array_slice($errors, 0, 10) : [] // Return first 10 errors
+                ]
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('Error in attendance sync process: ' . $e->getMessage(), [
+                'exception' => $e,
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Sync failed: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+    
+    /**
+     * Calculate overtime hours for employee on specific date
+     */
+    private function calculateOvertimeHours($employeeId, $attendanceDate)
+    {
+        $overtime = \App\Models\Overtime::where('employee_id', $employeeId)
+            ->whereDate('date', $attendanceDate)
+            ->whereNotNull('approved_by')
+            ->where('status', 'approved')
+            ->first();
+            
+        if ($overtime) {
+            return $overtime->total_hours * $overtime->rate_multiplier;
+        }
+        
+        return 0.00;
+    }
+    
+    /**
+     * Calculate travel order hours for employee on specific date
+     */
+    private function calculateTravelOrderHours($employeeId, $attendanceDate)
+    {
+        $travelOrder = \App\Models\TravelOrder::where('employee_id', $employeeId)
+            ->where('start_date', '<=', $attendanceDate)
+            ->where('end_date', '>=', $attendanceDate)
+            ->whereNotNull('approved_by')
+            ->where('status', 'approved')
+            ->first();
+            
+        if ($travelOrder) {
+            if ($travelOrder->is_full_day) {
+                return 8.00; // Full day = 8 hours
+            } else {
+                // Calculate hours between departure_time and return_time
+                if ($travelOrder->departure_time && $travelOrder->return_time) {
+                    $departureTime = \Carbon\Carbon::parse($travelOrder->departure_time);
+                    $returnTime = \Carbon\Carbon::parse($travelOrder->return_time);
+                    $hours = $returnTime->diffInHours($departureTime);
+                    return $hours;
+                }
+            }
+        }
+        
+        return 0.00;
+    }
+    
+    /**
+     * Calculate retro multiplier for employee on specific date
+     */
+    private function calculateRetroMultiplier($employeeId, $attendanceDate)
+    {
+        $retro = \App\Models\Retro::where('employee_id', $employeeId)
+            ->whereDate('retro_date', $attendanceDate)
+            ->whereNotNull('approved_by')
+            ->where('status', 'approved')
+            ->first();
+            
+        if ($retro) {
+            return $retro->hours_days * $retro->multiplier_rate;
+        }
+        
+        return 0.00;
+    }
+    
+    /**
+     * Check if employee has approved cancel rest day on specific date
+     */
+    private function checkCancelRestDay($employeeId, $attendanceDate)
+    {
+        $cancelRestDay = \App\Models\CancelRestDay::where('employee_id', $employeeId)
+            ->whereDate('rest_day_date', $attendanceDate)
+            ->whereNotNull('approved_by')
+            ->where('status', 'approved')
+            ->exists();
+            
+        return $cancelRestDay;
     }
 }
