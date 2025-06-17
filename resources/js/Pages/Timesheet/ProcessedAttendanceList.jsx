@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Head, usePage } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
-import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, Sync, CheckCircle } from 'lucide-react';
+import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -177,7 +177,6 @@ const ProcessedAttendanceList = () => {
   };
 
   // Sync attendance data
-  // Sync attendance data
   const handleSync = async () => {
     setSyncing(true);
     setError('');
@@ -299,7 +298,8 @@ const ProcessedAttendanceList = () => {
         break_in: updatedAttendance.break_in,
         break_out: updatedAttendance.break_out,
         time_out: updatedAttendance.time_out,
-        next_day_timeout: updatedAttendance.next_day_timeout
+        next_day_timeout: updatedAttendance.next_day_timeout,
+        is_nightshift: updatedAttendance.is_nightshift
       };
       
       const response = await fetch(`/attendance/${updatedAttendance.id}`, {
@@ -369,7 +369,7 @@ const ProcessedAttendanceList = () => {
                   {syncing ? (
                     <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
                   ) : (
-                    <Sync className="h-4 w-4 mr-2" />
+                    <RefreshCw className="h-4 w-4 mr-2" />
                   )}
                   {syncing ? 'Syncing...' : 'Sync Data'}
                 </Button>
@@ -529,17 +529,17 @@ const ProcessedAttendanceList = () => {
                             )}
                           </td>
                           <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {attendance.hours_worked ? attendance.hours_worked.toFixed(2) : 
+                            {attendance.hours_worked ? Number(attendance.hours_worked).toFixed(2) : 
                               calculateDuration(attendance.time_in, attendance.time_out)}
                           </td>
                           <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {attendance.overtime ? attendance.overtime.toFixed(2) : '-'}
+                            {attendance.overtime && !isNaN(Number(attendance.overtime)) ? Number(attendance.overtime).toFixed(2) : '-'}
                           </td>
                           <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {attendance.travel_order ? attendance.travel_order.toFixed(2) : '-'}
+                            {attendance.travel_order && !isNaN(Number(attendance.travel_order)) ? Number(attendance.travel_order).toFixed(2) : '-'}
                           </td>
                           <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {attendance.retromultiplier ? attendance.retromultiplier.toFixed(2) : '-'}
+                            {attendance.retromultiplier && !isNaN(Number(attendance.retromultiplier)) ? Number(attendance.retromultiplier).toFixed(2) : '-'}
                           </td>
                           <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
                             {attendance.restday ? (

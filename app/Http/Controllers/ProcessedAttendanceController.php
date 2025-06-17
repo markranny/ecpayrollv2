@@ -634,7 +634,7 @@ public function update(Request $request, $id)
     {
         $overtime = \App\Models\Overtime::where('employee_id', $employeeId)
             ->whereDate('date', $attendanceDate)
-            ->whereNotNull('approved_by')
+            /* ->whereNotNull('approved_by') */
             ->where('status', 'approved')
             ->first();
             
@@ -656,7 +656,7 @@ public function update(Request $request, $id)
         $travelOrder = \App\Models\TravelOrder::where('employee_id', $employeeId)
             ->where('start_date', '<=', $attendanceDate)
             ->where('end_date', '>=', $attendanceDate)
-            ->whereNotNull('approved_by')
+            /* ->whereNotNull('approved_by') */
             ->where('status', 'approved')
             ->first();
             
@@ -686,7 +686,7 @@ public function update(Request $request, $id)
     {
         $retro = \App\Models\Retro::where('employee_id', $employeeId)
             ->whereDate('retro_date', $attendanceDate)
-            ->whereNotNull('approved_by')
+            /* ->whereNotNull('approved_by') */
             ->where('status', 'approved')
             ->first();
             
@@ -705,7 +705,7 @@ public function update(Request $request, $id)
     {
         $cancelRestDay = \App\Models\CancelRestDay::where('employee_id', $employeeId)
             ->whereDate('rest_day_date', $attendanceDate)
-            ->whereNotNull('approved_by')
+            /* ->whereNotNull('approved_by') */
             ->where('status', 'approved')
             ->exists();
             
