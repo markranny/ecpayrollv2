@@ -189,36 +189,6 @@ const ManualAttendance = ({ auth, employees = [], departments = [] }) => {
         });
     };
     
-    // Handle department selection for bulk operations
-    const handleSelectByDepartment = (department) => {
-        // Filter employees by department
-        const departmentEmployees = employees.filter(emp => {
-            const employeeDepartment = emp.department?.name || emp.Department;
-            return employeeDepartment === department;
-        });
-        const departmentIds = departmentEmployees.map(emp => emp.id);
-        
-        setFormData(prevData => {
-            // Check if all employees from this department are already selected
-            const allDeptSelected = departmentIds.every(id => prevData.employee_ids.includes(id));
-            
-            if (allDeptSelected) {
-                // If all are selected, deselect them
-                return {
-                    ...prevData,
-                    employee_ids: prevData.employee_ids.filter(id => !departmentIds.includes(id))
-                };
-            } else {
-                // Select all employees from this department
-                const remainingIds = prevData.employee_ids.filter(id => !departmentIds.includes(id));
-                return {
-                    ...prevData,
-                    employee_ids: [...remainingIds, ...departmentIds]
-                };
-            }
-        });
-    };
-    
     // Handle form submission
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -343,21 +313,6 @@ const ManualAttendance = ({ auth, employees = [], departments = [] }) => {
     // Get selected employees details for display
     const selectedEmployees = employees.filter(emp => formData.employee_ids.includes(emp.id));
     
-    // Get department statistics for quick selection
-    const departmentStats = departments.map(dept => {
-        const deptEmployees = employees.filter(emp => {
-            const employeeDepartment = emp.department?.name || emp.Department;
-            return employeeDepartment === dept;
-        });
-        const selectedFromDept = deptEmployees.filter(emp => formData.employee_ids.includes(emp.id));
-        return {
-            name: dept,
-            total: deptEmployees.length,
-            selected: selectedFromDept.length,
-            allSelected: deptEmployees.length > 0 && selectedFromDept.length === deptEmployees.length
-        };
-    });
-    
     return (
         <AuthenticatedLayout user={auth.user}>
             <Head title="Manual Attendance Entry" />
@@ -409,8 +364,10 @@ const ManualAttendance = ({ auth, employees = [], departments = [] }) => {
                                                             disabled={isSubmitting}
                                                         >
                                                             <option value="">All Departments</option>
-                                                            {departments.map((department, index) => (
-                                                                <option key={index} value={department}>{department}</option>
+                                                            {departments.map((department) => (
+                                                                <option key={department.id} value={department.name}>
+                                                                    {department.name}
+                                                                </option>
                                                             ))}
                                                         </select>
                                                     </div>
@@ -430,32 +387,6 @@ const ManualAttendance = ({ auth, employees = [], departments = [] }) => {
                                                         </button>
                                                     </div>
                                                 </div>
-                                                
-                                                {/* Department Quick Selection */}
-                                                {departmentStats.length > 0 && (
-                                                    <div className="mb-4">
-                                                        <div className="text-sm text-gray-600 mb-2">Quick select by department:</div>
-                                                        <div className="flex flex-wrap gap-2">
-                                                            {departmentStats.map(dept => (
-                                                                <button
-                                                                    key={dept.name}
-                                                                    type="button"
-                                                                    onClick={() => handleSelectByDepartment(dept.name)}
-                                                                    className={`px-3 py-1 rounded-full text-xs font-medium ${
-                                                                        dept.allSelected
-                                                                            ? 'bg-indigo-600 text-white'
-                                                                            : dept.selected > 0
-                                                                                ? 'bg-indigo-100 text-indigo-800'
-                                                                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                                                                    }`}
-                                                                    disabled={isSubmitting}
-                                                                >
-                                                                    {dept.name} ({dept.selected}/{dept.total})
-                                                                </button>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                )}
                                                 
                                                 <div className="border rounded-md overflow-hidden max-h-60 overflow-y-auto">
                                                     <table className="min-w-full divide-y divide-gray-200">
@@ -751,7 +682,6 @@ const ManualAttendance = ({ auth, employees = [], departments = [] }) => {
                                                     <li>Filter by department</li>
                                                     <li>Select multiple employees using checkboxes</li>
                                                     <li>Use "Select All" to select all filtered employees</li>
-                                                    <li>Use department buttons for quick selection</li>
                                                 </ul>
                                             </div>
                                             
