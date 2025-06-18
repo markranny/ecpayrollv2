@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\Employee;
+use App\Models\Department;
 use App\Models\ProcessedAttendance;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -140,6 +141,7 @@ private function safeFormatTime($timeValue)
         return null;
     }
 }
+
     /**
      * Build attendance query with filters
      */
@@ -205,11 +207,7 @@ public function update(Request $request, $id)
                 'errors' => $validator->errors()->toArray()
             ]);
             
-            return response()->json([
-                'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()
-            ], 422);
+            return back()->withErrors($validator)->withInput();
         }
 
         // Find the attendance record
@@ -265,57 +263,54 @@ public function update(Request $request, $id)
             'hours_worked' => $attendance->hours_worked
         ]);
         
-        // Get employee data to include in response
-        $employee = $attendance->employee;
+        // Build query for the list page
+        $query = $this->buildAttendanceQuery($request);
+        $perPage = $request->input('per_page', 25);
         
-        // Format response data with proper time formats
-        $responseData = [
-            'id' => $attendance->id,
-            'employee_id' => $attendance->employee_id,
-            'attendance_date' => $attendance->attendance_date->format('Y-m-d'),
-            'attendance_date_formatted' => $attendance->attendance_date->format('Y-m-d'),
-            'time_in' => $attendance->time_in ? $attendance->time_in->format('h:i A') : null,
-            'time_out' => $attendance->time_out ? $attendance->time_out->format('h:i A') : null,
-            'break_in' => $attendance->break_in ? $attendance->break_in->format('h:i A') : null,
-            'break_out' => $attendance->break_out ? $attendance->break_out->format('h:i A') : null,
-            'next_day_timeout' => $attendance->next_day_timeout ? $attendance->next_day_timeout->format('h:i A') : null,
-            'hours_worked' => $attendance->hours_worked,
-            'source' => $attendance->source,
-            'is_nightshift' => (bool)$attendance->is_nightshift,  // Ensure boolean type
-            'day' => $attendance->attendance_date->format('l')
-        ];
+        // Order by date descending and paginate
+        $attendances = $query->orderBy('processed_attendances.attendance_date', 'asc')
+                             ->paginate($perPage);
+
+        // Get query parameters for filtering
+        $searchTerm = $request->input('search');
+        $dateFilter = $request->input('date');
+        $departmentFilter = $request->input('department');
+        $editsOnlyFilter = $request->boolean('edits_only');
         
-        // Add employee information if available
-        if ($employee) {
-            $responseData['idno'] = $employee->idno;
-            $responseData['employee_name'] = trim($employee->Fname . ' ' . $employee->Lname);
-            $responseData['department'] = $employee->Department;
-            $responseData['line'] = $employee->Line;
-        } else {
-            $responseData['idno'] = 'N/A';
-            $responseData['employee_name'] = 'Unknown';
-            $responseData['department'] = 'N/A';
-            $responseData['line'] = 'N/A';
-        }
-        
-        return response()->json([
-            'success' => true,
-            'message' => 'Attendance record updated successfully',
-            'data' => $responseData
+        // Return Inertia view with data and success message
+        return Inertia::render('Timesheet/ProcessedAttendanceList', [
+            'attendances' => $attendances->items(),
+            'pagination' => [
+                'total' => $attendances->total(),
+                'per_page' => $attendances->perPage(),
+                'current_page' => $attendances->currentPage(),
+                'last_page' => $attendances->lastPage()
+            ],
+            'filters' => [
+                'search' => $searchTerm,
+                'date' => $dateFilter,
+                'department' => $departmentFilter,
+                'edits_only' => $editsOnlyFilter
+            ],
+            'auth' => [
+                'user' => auth()->user()
+            ],
+            'flash' => [
+                'success' => 'Attendance record updated successfully'
+            ]
         ]);
+        
     } catch (\Exception $e) {
-        Log::error('Error updating attendance: ' . $e->getMessage(), [
+        /* Log::error('Error updating attendance: ' . $e->getMessage(), [
             'id' => $id,
             'exception' => get_class($e),
             'file' => $e->getFile(),
             'line' => $e->getLine(),
             'trace' => $e->getTraceAsString()
-        ]);
+        ]); */
         
-        return response()->json([
-            'success' => false,
-            'message' => 'Failed to update attendance: ' . $e->getMessage()
-        ], 500);
+        /* return back()->withErrors(['error' => 'Failed to update attendance: ' . $e->getMessage()]); */
+        return back();
     }
 }
 
@@ -366,7 +361,118 @@ public function update(Request $request, $id)
         }
     }
 
-    
+    /**
+ * Bulk delete attendance records
+ */
+public function bulkDestroy(Request $request)
+{
+    try {
+        // First determine if we're deleting by IDs or by date range
+        $hasIds = $request->has('ids') && !empty($request->ids);
+        $hasDateRange = $request->has('start_date') && $request->has('end_date');
+        
+        // Validate based on the mode
+        if ($hasIds) {
+            // Validate for ID-based deletion
+            $validator = Validator::make($request->all(), [
+                'ids' => 'required|array|min:1',
+                'ids.*' => 'integer|exists:processed_attendances,id'
+            ]);
+        } elseif ($hasDateRange) {
+            // Validate for date range deletion
+            $validator = Validator::make($request->all(), [
+                'start_date' => 'required|date',
+                'end_date' => 'required|date|after_or_equal:start_date',
+                'employee_id' => 'nullable|integer|exists:employees,id',
+                'department' => 'nullable|string'
+            ]);
+        } else {
+            // Neither mode is properly set
+            return response()->json([
+                'success' => false,
+                'message' => 'Either IDs or date range must be provided for deletion'
+            ], 422);
+        }
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $deletedCount = 0;
+        $errors = [];
+
+        // Delete by IDs
+        if ($hasIds) {
+            foreach ($request->ids as $id) {
+                try {
+                    $attendance = ProcessedAttendance::findOrFail($id);
+                    $attendance->delete();
+                    $deletedCount++;
+                } catch (\Exception $e) {
+                    $errors[] = "Failed to delete record ID {$id}: " . $e->getMessage();
+                }
+            }
+        }
+        // Delete by date range
+        elseif ($hasDateRange) {
+            $query = ProcessedAttendance::query();
+
+            // Apply date range filter
+            $query->whereBetween('attendance_date', [$request->start_date, $request->end_date]);
+
+            // Apply optional filters
+            if ($request->employee_id) {
+                $query->where('employee_id', $request->employee_id);
+            }
+
+            if ($request->department) {
+                $query->whereHas('employee', function ($q) use ($request) {
+                    $q->where('Department', $request->department);
+                });
+            }
+
+            // Get count before deletion for reporting
+            $deletedCount = $query->count();
+            
+            // Perform the deletion
+            $query->delete();
+        }
+
+        Log::info('Bulk delete completed', [
+            'deleted_count' => $deletedCount,
+            'error_count' => count($errors),
+            'mode' => $hasIds ? 'ids' : 'date_range'
+        ]);
+
+        $message = "Successfully deleted {$deletedCount} attendance record(s)";
+        if (count($errors) > 0) {
+            $message .= ". " . count($errors) . " errors occurred.";
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => $message,
+            'deleted_count' => $deletedCount,
+            'errors' => $errors
+        ]);
+
+    } catch (\Exception $e) {
+        Log::error('Error in bulk delete: ' . $e->getMessage(), [
+            'request_data' => $request->all(),
+            'exception' => $e
+        ]);
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'Bulk delete failed: ' . $e->getMessage()
+        ], 500);
+    }
+}
+
     /**
      * Calculate hours worked for an attendance record
      */
@@ -401,16 +507,15 @@ public function update(Request $request, $id)
     }
 
     /**
-     * Get available departments for filtering
+     * Get available departments for filtering from departments table
      */
     public function getDepartments()
     {
         try {
-            $departments = Employee::select('Department')
-                ->whereNotNull('Department')
-                ->distinct()
-                ->orderBy('Department')
-                ->pluck('Department');
+            $departments = Department::select('name')
+                ->where('is_active', true)
+                ->orderBy('name')
+                ->pluck('name');
                 
             return response()->json([
                 'success' => true,

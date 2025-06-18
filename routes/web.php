@@ -251,6 +251,7 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
     Route::delete('/timesheet/attendance/{id}', [BiometricController::class, 'deleteAttendance'])
         ->name('attendance.delete');
 
+    // Processed Attendance Routes
     Route::get('/attendance', [ProcessedAttendanceController::class, 'index'])
         ->name('attendance.index');
     Route::get('/attendance/list', [ProcessedAttendanceController::class, 'list'])
@@ -258,13 +259,17 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
     Route::put('/attendance/{id}', [ProcessedAttendanceController::class, 'update'])
         ->name('attendance.update');
     
-    // NEW ROUTES: Sync and Delete functionality
+    // Sync and Delete functionality
     Route::post('/attendance/sync', [ProcessedAttendanceController::class, 'sync'])
         ->name('attendance.sync');
     Route::post('/attendance/{id}/sync', [ProcessedAttendanceController::class, 'sync'])
         ->name('attendance.sync');
     Route::delete('/attendance/{id}', [ProcessedAttendanceController::class, 'destroy'])
         ->name('attendance.destroy');
+    
+    // ⭐ ADD THIS MISSING ROUTE ⭐
+    Route::post('/attendance/bulk-delete', [ProcessedAttendanceController::class, 'bulkDestroy'])
+        ->name('attendance.bulk-delete');
     
     // Existing routes continue...
     Route::get('/attendance/departments', [ProcessedAttendanceController::class, 'getDepartments'])

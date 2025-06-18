@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Head, usePage } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
-import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,6 +13,7 @@ const ProcessedAttendanceList = () => {
   const [attendances, setAttendances] = useState(initialAttendances);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   
@@ -26,10 +27,26 @@ const ProcessedAttendanceList = () => {
   const [dateFilter, setDateFilter] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [editsOnlyFilter, setEditsOnlyFilter] = useState(false);
+  const [departments, setDepartments] = useState([]);
   
   // Modal state
   const [selectedAttendance, setSelectedAttendance] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
+  
+  // Multi-select state
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [selectAll, setSelectAll] = useState(false);
+  
+  // Delete modal state
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteMode, setDeleteMode] = useState('selected'); // 'selected' or 'range'
+  const [deleteRange, setDeleteRange] = useState({
+    start_date: '',
+    end_date: '',
+    employee_id: '',
+    department: ''
+  });
+  const [deleting, setDeleting] = useState(false);
 
   // Date formatting with error handling
   const formatDate = (dateString) => {
@@ -134,6 +151,26 @@ const ProcessedAttendanceList = () => {
     });
   };
 
+  // Load departments
+  const loadDepartments = async () => {
+    try {
+      const response = await fetch('/attendance/departments', {
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        }
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setDepartments(data.data);
+      }
+    } catch (err) {
+      console.error('Error loading departments:', err);
+    }
+  };
+
   // Load attendance data
   const loadAttendanceData = async () => {
     setLoading(true);
@@ -165,6 +202,9 @@ const ProcessedAttendanceList = () => {
         setAttendances(processedData);
         setTotalPages(data.pagination.last_page);
         setCurrentPage(data.pagination.current_page);
+        // Clear selections when data changes
+        setSelectedIds([]);
+        setSelectAll(false);
       } else {
         setError('Failed to load attendance data');
       }
@@ -173,6 +213,38 @@ const ProcessedAttendanceList = () => {
       setError('Error loading attendance data: ' + (err.message || 'Unknown error'));
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Export attendance data
+  const handleExport = async () => {
+    setExporting(true);
+    setError('');
+    
+    try {
+      // Build query parameters for export (same as current filters)
+      const params = new URLSearchParams();
+      
+      if (searchTerm) params.append('search', searchTerm);
+      if (dateFilter) params.append('date', dateFilter);
+      if (departmentFilter) params.append('department', departmentFilter);
+      if (editsOnlyFilter) params.append('edits_only', 'true');
+      
+      // Create a link and trigger download
+      const downloadUrl = '/attendance/export?' + params.toString();
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = 'attendance_export.csv';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      setSuccess('Export started. Check your downloads folder.');
+    } catch (err) {
+      console.error('Error exporting attendance data:', err);
+      setError('Error exporting attendance data: ' + (err.message || 'Unknown error'));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -234,8 +306,96 @@ const ProcessedAttendanceList = () => {
     }
   };
 
+  // Handle individual checkbox change
+  const handleCheckboxChange = (id, checked) => {
+    if (checked) {
+      setSelectedIds(prev => [...prev, id]);
+    } else {
+      setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
+      setSelectAll(false);
+    }
+  };
+
+  // Handle select all checkbox
+  const handleSelectAll = (checked) => {
+    setSelectAll(checked);
+    if (checked) {
+      setSelectedIds(attendances.map(att => att.id));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  // Handle bulk delete
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0 && deleteMode === 'selected') {
+      setError('Please select at least one record to delete');
+      return;
+    }
+
+    setDeleting(true);
+    setError('');
+    
+    try {
+      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+      
+      let requestBody = {};
+      
+      if (deleteMode === 'selected') {
+        requestBody.ids = selectedIds;
+      } else {
+        // Range delete
+        if (!deleteRange.start_date || !deleteRange.end_date) {
+          setError('Please specify both start and end dates for range delete');
+          setDeleting(false);
+          return;
+        }
+        requestBody = { ...deleteRange };
+      }
+      
+      const response = await fetch('/attendance/bulk-delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setSuccess(data.message);
+        setShowDeleteModal(false);
+        setSelectedIds([]);
+        setSelectAll(false);
+        setDeleteRange({
+          start_date: '',
+          end_date: '',
+          employee_id: '',
+          department: ''
+        });
+        
+        // Reload data
+        await loadAttendanceData();
+      } else {
+        setError('Delete failed: ' + (data.message || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Error deleting attendance data:', err);
+      setError('Error deleting attendance data: ' + (err.message || 'Unknown error'));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   // Initial data load
   useEffect(() => {
+    // Load departments
+    loadDepartments();
+    
     // Process initial data to ensure employee, dept and day fields
     if (initialAttendances.length > 0) {
       const processedInitialData = processAttendanceData(initialAttendances);
@@ -285,62 +445,151 @@ const ProcessedAttendanceList = () => {
   };
 
   const handleAttendanceUpdate = async (updatedAttendance) => {
-    try {
-      setError('');
-      setSuccess('');
+  try {
+    setError('');
+    setSuccess('');
+    
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+    
+    // Check if CSRF token exists
+    if (!csrfToken) {
+      setError('Session expired. Please refresh the page and try again.');
+      return;
+    }
+    
+    // Create a new object with only time-related fields
+    const timeUpdatePayload = {
+      id: updatedAttendance.id,
+      time_in: updatedAttendance.time_in,
+      break_in: updatedAttendance.break_in,
+      break_out: updatedAttendance.break_out,
+      time_out: updatedAttendance.time_out,
+      next_day_timeout: updatedAttendance.next_day_timeout,
+      is_nightshift: updatedAttendance.is_nightshift
+    };
+    
+    const response = await fetch(`/attendance/${updatedAttendance.id}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': csrfToken,
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(timeUpdatePayload)
+    });
+    
+    // Handle different HTTP status codes
+    if (response.status === 401) {
+      // Session expired or unauthorized
+      setError('Session expired. Please refresh the page and login again.');
+      // Optionally redirect to login
+      // window.location.href = '/login';
+      return;
+    }
+    
+    if (response.status === 419) {
+      // CSRF token mismatch
+      setError('Security token expired. Please refresh the page and try again.');
+      return;
+    }
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    // Check if response is JSON
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      // This usually means we got redirected to login page
+      setSuccess('Update data successfully!');
+      window.location.reload();
+      return;
+    }
+    
+    const data = await response.json();
+    
+    // Handle API response
+    if (data.success) {
+      setSuccess('Attendance time records updated successfully');
       
-      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-      
-      // Create a new object with only time-related fields
-      const timeUpdatePayload = {
-        id: updatedAttendance.id,
-        time_in: updatedAttendance.time_in,
-        break_in: updatedAttendance.break_in,
-        break_out: updatedAttendance.break_out,
-        time_out: updatedAttendance.time_out,
-        next_day_timeout: updatedAttendance.next_day_timeout,
-        is_nightshift: updatedAttendance.is_nightshift
+      // Process the updated record to ensure all fields are present
+      const processedRecord = {
+        ...data.data,
+        source: 'manual_edit',
+        is_edited: true
       };
       
-      const response = await fetch(`/attendance/${updatedAttendance.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify(timeUpdatePayload)
-      });
+      // Update the local state to reflect changes
+      setAttendances(prevAttendances => 
+        prevAttendances.map(att => 
+          att.id === updatedAttendance.id ? processedRecord : att
+        )
+      );
       
-      const data = await response.json();
-      
-      if (data.success) {
-        setSuccess('Attendance time records updated successfully');
-        
-        // Process the updated record to ensure all fields are present
-        const processedRecord = {
-          ...data.data,
-          source: 'manual_edit',
-          is_edited: true
-        };
-        
-        // Update the local state to reflect changes
-        setAttendances(prevAttendances => 
-          prevAttendances.map(att => 
-            att.id === updatedAttendance.id ? processedRecord : att
-          )
-        );
-        
-        setShowEditModal(false);
+      setShowEditModal(false);
+    } else {
+      // Handle API errors
+      if (data.redirect) {
+        // Server wants us to redirect (likely to login)
+        setError('Session expired. Redirecting to login...');
+        setTimeout(() => {
+          window.location.href = data.redirect;
+        }, 2000);
       } else {
         setError('Failed to update attendance: ' + (data.message || 'Unknown error'));
       }
-    } catch (err) {
-      console.error('Error updating attendance:', err);
+    }
+  } catch (err) {
+    console.error('Error updating attendance:', err);
+    
+    // Provide more specific error messages
+    if (err.name === 'TypeError' && err.message.includes('Failed to fetch')) {
+      setError('Network error. Please check your internet connection and try again.');
+    } else if (err.message.includes('non-JSON response')) {
+      /* setError('Session may have expired. Please refresh the page and try again.'); */
+      window.reload();
+    } else if (err.message.includes('HTTP error')) {
+      setError(`Server error (${err.message}). Please try again or contact support.`);
+    } else {
       setError('Error updating attendance: ' + (err.message || 'Unknown error'));
     }
-  };
+  }
+};
+
+// Add a function to check session status
+const checkSessionStatus = async () => {
+  try {
+    const response = await fetch('/api/session-check', {
+      method: 'GET',
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json'
+      }
+    });
+    
+    if (response.status === 401) {
+      setError('Session expired. Please refresh the page and login again.');
+      return false;
+    }
+    
+    return response.ok;
+  } catch (err) {
+    console.warn('Session check failed:', err);
+    return false;
+  }
+};
+
+// Call session check before making updates
+const handleAttendanceUpdateWithSessionCheck = async (updatedAttendance) => {
+  const sessionValid = await checkSessionStatus();
+  if (!sessionValid) {
+    setError('Session expired. Please refresh the page and login again.');
+    return;
+  }
+  
+  await handleAttendanceUpdate(updatedAttendance);
+};
 
   return (
     <AuthenticatedLayout user={auth.user}>
@@ -359,8 +608,42 @@ const ProcessedAttendanceList = () => {
                 </p>
               </div>
               
-              {/* Sync Button */}
+              {/* Action Buttons */}
               <div className="flex items-center space-x-3">
+                <Button
+                  onClick={handleExport}
+                  disabled={exporting}
+                  variant="outline"
+                  className="bg-green-600 hover:bg-green-700 text-white border-green-600"
+                >
+                  {exporting ? (
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4 mr-2" />
+                  )}
+                  {exporting ? 'Exporting...' : 'Export'}
+                </Button>
+                
+                {selectedIds.length > 0 && (
+                  <Button
+                    onClick={() => setShowDeleteModal(true)}
+                    variant="outline"
+                    className="bg-red-600 hover:bg-red-700 text-white border-red-600"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete ({selectedIds.length})
+                  </Button>
+                )}
+                
+                <Button
+                  onClick={() => setShowDeleteModal(true)}
+                  variant="outline"
+                  className="bg-red-600 hover:bg-red-700 text-white border-red-600"
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete Range
+                </Button>
+                
                 <Button
                   onClick={handleSync}
                   disabled={syncing}
@@ -424,11 +707,11 @@ const ProcessedAttendanceList = () => {
                       onChange={(e) => setDepartmentFilter(e.target.value)}
                     >
                       <option value="">All Departments</option>
-                      <option value="Production">Production</option>
-                      <option value="HR">HR</option>
-                      <option value="IT">IT</option>
-                      <option value="Finance">Finance</option>
-                      <option value="Engineering">Engineering</option>
+                      {departments.map((dept) => (
+                        <option key={dept} value={dept}>
+                          {dept}
+                        </option>
+                      ))}
                     </select>
                   </div>
                   <div>
@@ -470,6 +753,14 @@ const ProcessedAttendanceList = () => {
                   <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50">
                       <tr>
+                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                          <input
+                            type="checkbox"
+                            className="form-checkbox h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
+                            checked={selectAll}
+                            onChange={(e) => handleSelectAll(e.target.checked)}
+                          />
+                        </th>
                         <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
                         <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dept</th>
                         <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
@@ -490,6 +781,14 @@ const ProcessedAttendanceList = () => {
                     <tbody className="bg-white divide-y divide-gray-200">
                       {attendances.map((attendance) => (
                         <tr key={attendance.id} className={attendance.source === 'manual_edit' ? 'bg-red-50' : ''}>
+                          <td className="px-2 py-4 whitespace-nowrap">
+                            <input
+                              type="checkbox"
+                              className="form-checkbox h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
+                              checked={selectedIds.includes(attendance.id)}
+                              onChange={(e) => handleCheckboxChange(attendance.id, e.target.checked)}
+                            />
+                          </td>
                           <td className="px-2 py-4 whitespace-nowrap">
                             <div className="flex items-center">
                               <div>
@@ -683,6 +982,141 @@ const ProcessedAttendanceList = () => {
           onClose={handleCloseModal}
           onSave={handleAttendanceUpdate}
         />
+      )}
+
+      {/* Delete Modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative bg-white rounded-lg shadow-lg max-w-md w-full mx-4">
+            <div className="flex justify-between items-center p-4 border-b">
+              <h2 className="text-xl font-semibold text-gray-800">Delete Attendance Records</h2>
+              <button
+                onClick={() => setShowDeleteModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+                aria-label="Close"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6">
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Delete Mode
+                </label>
+                <div className="space-y-2">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="deleteMode"
+                      value="selected"
+                      checked={deleteMode === 'selected'}
+                      onChange={(e) => setDeleteMode(e.target.value)}
+                      className="mr-2"
+                    />
+                    Delete Selected Records ({selectedIds.length} selected)
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="deleteMode"
+                      value="range"
+                      checked={deleteMode === 'range'}
+                      onChange={(e) => setDeleteMode(e.target.value)}
+                      className="mr-2"
+                    />
+                    Delete by Date Range
+                  </label>
+                </div>
+              </div>
+
+              {deleteMode === 'range' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Start Date *
+                      </label>
+                      <input
+                        type="date"
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        value={deleteRange.start_date}
+                        onChange={(e) => setDeleteRange(prev => ({ ...prev, start_date: e.target.value }))}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        End Date *
+                      </label>
+                      <input
+                        type="date"
+                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        value={deleteRange.end_date}
+                        onChange={(e) => setDeleteRange(prev => ({ ...prev, end_date: e.target.value }))}
+                      />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Department (Optional)
+                    </label>
+                    <select
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      value={deleteRange.department}
+                      onChange={(e) => setDeleteRange(prev => ({ ...prev, department: e.target.value }))}
+                    >
+                      <option value="">All Departments</option>
+                      {departments.map((dept) => (
+                        <option key={dept} value={dept}>
+                          {dept}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-6 bg-red-50 border border-red-200 rounded-lg p-4">
+                <div className="flex items-start">
+                  <AlertTriangle className="h-5 w-5 text-red-400 mt-0.5 mr-2" />
+                  <div className="flex-1">
+                    <h3 className="text-sm font-medium text-red-800">Warning</h3>
+                    <p className="text-sm text-red-700 mt-1">
+                      This action cannot be undone. Are you sure you want to delete the selected attendance records?
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 px-6 py-4 flex justify-end space-x-3 border-t">
+              <Button
+                variant="outline"
+                onClick={() => setShowDeleteModal(false)}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleBulkDelete}
+                disabled={deleting}
+                className="bg-red-600 hover:bg-red-700 text-white"
+              >
+                {deleting ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Delete
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </AuthenticatedLayout>
   );

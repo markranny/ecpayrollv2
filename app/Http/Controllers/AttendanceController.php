@@ -28,119 +28,151 @@ class AttendanceController extends Controller
     }
 
     private function mapExcelColumns($headers)
-{
-    // Normalize headers by removing whitespace and converting to lowercase
-    $normalizedHeaders = array_map(function($header) {
-        // Handle null or non-string headers
-        if ($header === null) return '';
-        return strtolower(trim(str_replace(' ', '_', (string)$header)));
-    }, $headers);
-    
-    // For debugging - log the original headers and normalized headers
-    Log::debug('Excel Headers', [
-        'original' => $headers,
-        'normalized' => $normalizedHeaders
-    ]);
-    
-    // Define the column mapping structure
-    $columnMapping = [
-        'employee_no' => null,
-        'date' => null,
-        'day' => null,
-        'time_in' => null,
-        'time_out' => null,
-        'break_in' => null, 
-        'break_out' => null,
-        'next_day_timeout' => null,
-        'hours_work' => null
-    ];
-    
-    // First, handle standard column names and special column names
-    foreach ($normalizedHeaders as $index => $header) {
-        // Match EmployeeDate (contains employee number and date)
-        if (strpos($header, 'employee') !== false && strpos($header, 'date') !== false) {
-            $columnMapping['employee_no'] = $index;
-            $columnMapping['date'] = $index;  // We'll parse this specially
-        }
-        // Match direct employee ID field
-        else if (in_array($header, ['employee_no', 'employee_no.', 'employeeno', 'idno', 'id', 'employee'])) {
-            $columnMapping['employee_no'] = $index;
-        }
-        // Match date field if separate from employee
-        else if (in_array($header, ['date'])) {
-            $columnMapping['date'] = $index;
-        }
-        // Match day field
-        else if (in_array($header, ['day'])) {
-            $columnMapping['day'] = $index;
-        }
-        // Match Next day field
-        else if (in_array($header, ['next_day', 'nextday', 'next']) || $header === 'next_day') {
-            $columnMapping['next_day_timeout'] = $index;
-        }
-        // Match Hours Work field
-        else if (in_array($header, ['hours_work', 'hours', 'work_hours', 'hours_worked'])) {
-            $columnMapping['hours_work'] = $index;
-        }
-    }
-    
-    // Now handle the IN/OUT columns with proper positional mapping
-    // Based on the template, we know:
-    // 1st IN = time_in, 1st OUT = break_out
-    // 2nd IN = break_in, 2nd OUT = time_out
-    $inColumns = [];
-    $outColumns = [];
-    
-    foreach ($normalizedHeaders as $index => $header) {
-        if ($header === 'in') {
-            $inColumns[] = $index;
-        } else if ($header === 'out') {
-            $outColumns[] = $index;
-        }
-    }
-    
-    // Map IN/OUT columns according to the correct order for this specific template
-    if (count($inColumns) > 0) {
-        // First IN column is time_in
-        $columnMapping['time_in'] = $inColumns[0];
+    {
+        // Normalize headers by removing whitespace and converting to lowercase
+        $normalizedHeaders = array_map(function($header) {
+            // Handle null or non-string headers
+            if ($header === null) return '';
+            return strtolower(trim(str_replace(' ', '_', (string)$header)));
+        }, $headers);
         
-        // Second IN column is break_in (if it exists)
-        if (count($inColumns) > 1) {
-            $columnMapping['break_in'] = $inColumns[1];
-        }
-    }
-    
-    if (count($outColumns) > 0) {
-        // First OUT column is time_out for break (break_out)
-        $columnMapping['break_out'] = $outColumns[0];
+        // For debugging - log the original headers and normalized headers
+        Log::debug('Excel Headers', [
+            'original' => $headers,
+            'normalized' => $normalizedHeaders
+        ]);
         
-        // Second OUT column is time_out for the day
-        if (count($outColumns) > 1) {
-            $columnMapping['time_out'] = $outColumns[1];
+        // Define the column mapping structure
+        $columnMapping = [
+            'employee_no' => null,
+            'date' => null,
+            'day' => null,
+            'time_in' => null,
+            'time_out' => null,
+            'break_in' => null, 
+            'break_out' => null,
+            'next_day_timeout' => null,
+            'hours_work' => null
+        ];
+        
+        // First, handle standard column names and special column names
+        foreach ($normalizedHeaders as $index => $header) {
+            // Match EmployeeDate (contains employee number and date)
+            if (strpos($header, 'employee') !== false && strpos($header, 'date') !== false) {
+                $columnMapping['employee_no'] = $index;
+                $columnMapping['date'] = $index;  // We'll parse this specially
+            }
+            // Match direct employee ID field
+            else if (in_array($header, ['employee_no', 'employee_no.', 'employeeno', 'idno', 'id', 'employee', 'bid'])) {
+                $columnMapping['employee_no'] = $index;
+            }
+            // Match date field if separate from employee
+            else if (in_array($header, ['date'])) {
+                $columnMapping['date'] = $index;
+            }
+            // Match day field
+            else if (in_array($header, ['day'])) {
+                $columnMapping['day'] = $index;
+            }
+            // Match Next day field
+            else if (in_array($header, ['next_day', 'nextday', 'next']) || $header === 'next_day') {
+                $columnMapping['next_day_timeout'] = $index;
+            }
+            // Match Hours Work field
+            else if (in_array($header, ['hours_work', 'hours', 'work_hours', 'hours_worked'])) {
+                $columnMapping['hours_work'] = $index;
+            }
         }
-    }
-    
-    // Check for missing required columns
-    $missingColumns = [];
-    $requiredColumns = ['employee_no', 'date'];
-    
-    foreach ($requiredColumns as $column) {
-        if ($columnMapping[$column] === null) {
-            $missingColumns[] = $column;
+        
+        // Now handle the IN/OUT columns with proper positional mapping
+        // Based on the template, we know:
+        // 1st IN = time_in, 1st OUT = break_out
+        // 2nd IN = break_in, 2nd OUT = time_out
+        $inColumns = [];
+        $outColumns = [];
+        
+        foreach ($normalizedHeaders as $index => $header) {
+            if ($header === 'in') {
+                $inColumns[] = $index;
+            } else if ($header === 'out') {
+                $outColumns[] = $index;
+            }
         }
+        
+        // Map IN/OUT columns according to the correct order for this specific template
+        if (count($inColumns) > 0) {
+            // First IN column is time_in
+            $columnMapping['time_in'] = $inColumns[0];
+            
+            // Second IN column is break_in (if it exists)
+            if (count($inColumns) > 1) {
+                $columnMapping['break_in'] = $inColumns[1];
+            }
+        }
+        
+        if (count($outColumns) > 0) {
+            // First OUT column is time_out for break (break_out)
+            $columnMapping['break_out'] = $outColumns[0];
+            
+            // Second OUT column is time_out for the day
+            if (count($outColumns) > 1) {
+                $columnMapping['time_out'] = $outColumns[1];
+            }
+        }
+        
+        // Check for missing required columns
+        $missingColumns = [];
+        $requiredColumns = ['employee_no', 'date'];
+        
+        foreach ($requiredColumns as $column) {
+            if ($columnMapping[$column] === null) {
+                $missingColumns[] = $column;
+            }
+        }
+        
+        // Log the final mapping for debugging
+        Log::debug('Column Mapping', [
+            'mapping' => $columnMapping,
+            'missing' => $missingColumns
+        ]);
+        
+        return [
+            'mapping' => $columnMapping,
+            'missingColumns' => $missingColumns
+        ];
     }
-    
-    // Log the final mapping for debugging
-    Log::debug('Column Mapping', [
-        'mapping' => $columnMapping,
-        'missing' => $missingColumns
-    ]);
-    
-    return [
-        'mapping' => $columnMapping,
-        'missingColumns' => $missingColumns
-    ];
-}
+
+    /**
+     * Find employee by Employee No. - now checks bid field first, then idno as fallback
+     */
+    private function findEmployeeByNumber($employeeNo)
+    {
+        // First try to find by bid field
+        $employee = Employee::where('bid', $employeeNo)->first();
+        
+        if (!$employee) {
+            // Fallback to idno field for backward compatibility
+            $employee = Employee::where('idno', $employeeNo)->first();
+        }
+        
+        // Log which field was used for matching
+        if ($employee) {
+            $matchedBy = $employee->bid == $employeeNo ? 'bid' : 'idno';
+            Log::debug('Employee matched', [
+                'employee_no' => $employeeNo,
+                'matched_by' => $matchedBy,
+                'employee_id' => $employee->id,
+                'employee_name' => $employee->Fname . ' ' . $employee->Lname
+            ]);
+        } else {
+            Log::warning('Employee not found', [
+                'employee_no' => $employeeNo,
+                'searched_fields' => ['bid', 'idno']
+            ]);
+        }
+        
+        return $employee;
+    }
 
     /**
      * Process the imported attendance data
@@ -252,12 +284,12 @@ class AttendanceController extends Controller
                         }
                     }
                     
-                    // Check if employee exists
-                    $employee = Employee::where('idno', $employeeNo)->first();
+                    // Check if employee exists using the new method
+                    $employee = $this->findEmployeeByNumber($employeeNo);
                     if (!$employee) {
                         $failedRows[] = [
                             'row' => $i + 1,
-                            'errors' => ["Employee with ID $employeeNo not found"]
+                            'errors' => ["Employee with ID $employeeNo not found (checked both bid and idno fields)"]
                         ];
                         continue;
                     }
@@ -413,6 +445,8 @@ class AttendanceController extends Controller
                     // For debugging - log the data
                     Log::debug('Attendance data to be saved', [
                         'row' => $i + 1,
+                        'employee_no' => $employeeNo,
+                        'employee_id' => $employee->id,
                         'data' => $attendanceData,
                         'original_time_in' => $timeIn,
                         'original_time_out' => $timeOut,
@@ -436,6 +470,7 @@ class AttendanceController extends Controller
                 } catch (\Exception $e) {
                     Log::error('Error processing attendance row', [
                         'row' => $i + 1,
+                        'employee_no' => $employeeNo ?? 'unknown',
                         'error' => $e->getMessage(),
                         'trace' => $e->getTraceAsString()
                     ]);
@@ -469,47 +504,48 @@ class AttendanceController extends Controller
     }
 
     private function formatTimeFromExcel($excelTime)
-{
-    // Check for zero values which represent empty cells
-    if ($this->isEmptyTimeValue($excelTime)) {
-        return null;
-    }
-    
-    // For string values that might be formatted time
-    if (is_string($excelTime)) {
-        // Check if it's already in a valid time format
-        if (preg_match('/^\d{1,2}:\d{2}(:\d{2})?(\s*[AP]M)?$/i', trim($excelTime))) {
-            return trim($excelTime);
+    {
+        // Check for zero values which represent empty cells
+        if ($this->isEmptyTimeValue($excelTime)) {
+            return null;
         }
         
-        // Try to parse as a time string
-        try {
-            $time = \Carbon\Carbon::parse($excelTime)->format('H:i:s');
-            return $time;
-        } catch (\Exception $e) {
-            // If parsing fails, continue to process as a numeric value
-            if (is_numeric($excelTime)) {
-                $excelTime = (float) $excelTime;
-            } else {
-                Log::warning('Unable to parse time value: ' . $excelTime);
-                return null;
+        // For string values that might be formatted time
+        if (is_string($excelTime)) {
+            // Check if it's already in a valid time format
+            if (preg_match('/^\d{1,2}:\d{2}(:\d{2})?(\s*[AP]M)?$/i', trim($excelTime))) {
+                return trim($excelTime);
+            }
+            
+            // Try to parse as a time string
+            try {
+                $time = \Carbon\Carbon::parse($excelTime)->format('H:i:s');
+                return $time;
+            } catch (\Exception $e) {
+                // If parsing fails, continue to process as a numeric value
+                if (is_numeric($excelTime)) {
+                    $excelTime = (float) $excelTime;
+                } else {
+                    Log::warning('Unable to parse time value: ' . $excelTime);
+                    return null;
+                }
             }
         }
+        
+        // Excel time is a decimal fraction of a 24-hour day
+        if (is_numeric($excelTime)) {
+            $seconds = round($excelTime * 86400); // 86400 = seconds in a day
+            $hours = floor($seconds / 3600);
+            $minutes = floor(($seconds % 3600) / 60);
+            $secs = $seconds % 60;
+            return sprintf('%02d:%02d:%02d', $hours, $minutes, $secs);
+        }
+        
+        // If we get here, we can't parse the time
+        Log::warning('Unparsable time value: ' . $excelTime);
+        return null;
     }
-    
-    // Excel time is a decimal fraction of a 24-hour day
-    if (is_numeric($excelTime)) {
-        $seconds = round($excelTime * 86400); // 86400 = seconds in a day
-        $hours = floor($seconds / 3600);
-        $minutes = floor(($seconds % 3600) / 60);
-        $secs = $seconds % 60;
-        return sprintf('%02d:%02d:%02d', $hours, $minutes, $secs);
-    }
-    
-    // If we get here, we can't parse the time
-    Log::warning('Unparsable time value: ' . $excelTime);
-    return null;
-}
+
     private function isEmptyTimeValue($value) 
     {
         // Basic empty checks
@@ -566,7 +602,7 @@ class AttendanceController extends Controller
         $headers = ['Employee No.', 'Date', 'Day', 'IN', 'OUT', 'IN', 'OUT', 'Next day', 'Hours Work'];
         $sheet->fromArray($headers, null, 'A1');
         
-        // Add sample data
+        // Add sample data - now using bid values instead of idno
         $sampleData = [
             [6839, '16-Jan', 'Thu', '4:59 AM', '9:35 AM', '10:34 AM', '5:00 PM', '', 12.02],
             [6839, '17-Jan', 'Fri', '6:00 AM', '9:37 AM', '10:33 AM', '2:59 PM', '', 8.98],
@@ -632,6 +668,7 @@ class AttendanceController extends Controller
                 $formattedEntry = [
                     'id' => $attendance->id,
                     'idno' => $attendance->employee ? $attendance->employee->idno : 'N/A',
+                    'bid' => $attendance->employee ? $attendance->employee->bid : 'N/A',
                     'employee_name' => $attendance->employee ? 
                         $attendance->employee->Fname . ' ' . $attendance->employee->Lname : 'Unknown',
                     'department' => $attendance->employee ? $attendance->employee->Department : 'N/A',

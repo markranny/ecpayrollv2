@@ -526,6 +526,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
         if (onDelete) {
           onDelete(attendance.id);
         }
+        window.location.reload();
         onClose();
       } else {
         setError('Failed to delete attendance: ' + (data.message || 'Unknown error'));
@@ -539,9 +540,8 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
     }
   };
 
-  // Handle form submission with improved validation
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  // Handle form submission with improved validation and error handling
+  const handleSubmit = async () => {
     setError('');
     setLoading(true);
     
@@ -551,6 +551,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
       // Basic validation - make sure we have at least time in and time out
       if (!formData.time_in || !formData.time_out) {
         setError('Time In and Time Out are required');
+        setLoading(false);
         return;
       }
       
@@ -577,6 +578,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
         
         if (timeOut <= timeIn) {
           setError('Time Out must be after Time In for regular shifts');
+          setLoading(false);
           return;
         }
       }
@@ -595,6 +597,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
             parsedBreakIn: breakIn
           });
           setError('Invalid break time format. Please check your entries.');
+          setLoading(false);
           return;
         }
         
@@ -602,6 +605,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
         // So Break In should be AFTER Break Out
         if (breakOut >= breakIn) {
           setError('Break In must be after Break Out - employee returns from break after leaving for break');
+          setLoading(false);
           return;
         }
       }
@@ -616,6 +620,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
           const breakOut = new Date(submissionData.break_out);
           if (breakOut <= timeIn) {
             setError('Break Out must be after Time In');
+            setLoading(false);
             return;
           }
         }
@@ -625,16 +630,29 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
           const breakIn = new Date(submissionData.break_in);
           if (breakIn >= timeOut) {
             setError('Break In must be before Time Out for regular shifts');
+            setLoading(false);
             return;
           }
         }
       }
       
       // All validations passed, call onSave with the updated data
-      onSave(submissionData);
+      console.log('Calling onSave with data:', submissionData);
+      
+      // Await the onSave call in case it's async
+      if (onSave) {
+        await onSave(submissionData);
+      }
+      
+      // If we reach here, the save was successful
+      console.log('Save completed successfully');
+      
+      // Close the modal after successful save
+      onClose();
+      
     } catch (error) {
       console.error('Error in form submission:', error);
-      setError('An error occurred while processing the form. Please check all entries and try again.');
+      setError('An error occurred while saving the attendance record. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -657,8 +675,8 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
 
   return (
     <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-      <div className="relative bg-white rounded-lg shadow-lg max-w-xl w-full mx-4 md:mx-0">
-        <div className="flex justify-between items-center p-4 border-b">
+      <div className="relative bg-white rounded-lg shadow-lg max-w-4xl w-full mx-4 md:mx-8">
+        <div className="flex justify-between items-center p-6 border-b">
           <h2 className="text-xl font-semibold text-gray-800">Edit Attendance Times</h2>
           <button
             onClick={onClose}
@@ -669,7 +687,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+        <div className="p-6 space-y-6">
           {error && (
             <Alert variant="destructive">
               <AlertTriangle className="h-4 w-4 mr-2" />
@@ -677,24 +695,26 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
             </Alert>
           )}
 
-          <div className="space-y-1 mb-4">
-            <div className="font-medium text-gray-700 mb-2">
+          <div className="space-y-1 mb-6">
+            <div className="font-medium text-gray-700 mb-3">
               {attendance?.employee_name} (ID: {attendance?.idno})
             </div>
-            <div className="text-sm text-gray-500">
-              Department: {attendance?.department || 'N/A'}
-            </div>
-            <div className="text-sm text-gray-500">
-              Date: {attendance?.attendance_date ? new Date(attendance.attendance_date).toLocaleDateString() : 'N/A'}
-            </div>
-            <div className="text-sm text-gray-500">
-              Hours Worked: {attendance?.hours_worked || 'N/A'}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-500">
+              <div>
+                <span className="font-medium">Department:</span> {attendance?.department || 'N/A'}
+              </div>
+              <div>
+                <span className="font-medium">Date:</span> {attendance?.attendance_date ? new Date(attendance.attendance_date).toLocaleDateString() : 'N/A'}
+              </div>
+              <div>
+                <span className="font-medium">Hours Worked:</span> {attendance?.hours_worked || 'N/A'}
+              </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-              <label htmlFor="time_in" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="time_in" className="block text-sm font-medium text-gray-700 mb-2">
                 Time In
               </label>
               <div className="relative">
@@ -712,7 +732,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
             </div>
 
             <div>
-              <label htmlFor="time_out" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="time_out" className="block text-sm font-medium text-gray-700 mb-2">
                 Time Out
               </label>
               <div className="relative">
@@ -730,7 +750,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
             </div>
 
             <div>
-              <label htmlFor="break_out" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="break_out" className="block text-sm font-medium text-gray-700 mb-2">
                 Break Out
               </label>
               <div className="relative">
@@ -747,7 +767,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
             </div>
 
             <div>
-              <label htmlFor="break_in" className="block text-sm font-medium text-gray-700 mb-1">
+              <label htmlFor="break_in" className="block text-sm font-medium text-gray-700 mb-2">
                 Break In
               </label>
               <div className="relative">
@@ -764,7 +784,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
             </div>
           </div>
 
-          <div className="border-t border-gray-200 pt-4 mt-4">
+          <div className="border-t border-gray-200 pt-6 mt-6">
             <div className="flex items-center mb-4">
               <input
                 type="checkbox"
@@ -781,7 +801,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
 
             {formData.is_nightshift && (
               <div>
-                <label htmlFor="next_day_timeout" className="block text-sm font-medium text-gray-700 mb-1">
+                <label htmlFor="next_day_timeout" className="block text-sm font-medium text-gray-700 mb-2">
                   Next Day Timeout
                 </label>
                 <div className="relative">
@@ -795,7 +815,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
                     />
                   </div>
                 </div>
-                <p className="mt-1 text-xs text-gray-500">
+                <p className="mt-2 text-xs text-gray-500">
                   For night shifts, specify when the employee clocked out on the following day.
                 </p>
               </div>
@@ -847,8 +867,46 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
             </div>
           )}
 
-          <div className="bg-gray-50 p-4 -mx-6 -mb-6 mt-6 flex justify-between items-center border-t">
+          <div className="bg-gray-50 p-6 -mx-6 -mb-6 mt-6 flex justify-between items-center border-t">
             <div className="flex space-x-2">
+              {/* <Button
+                type="button"
+                variant="outline"
+                onClick={handleSync}
+                disabled={syncLoading}
+                className="text-blue-600 border-blue-300 hover:bg-blue-50"
+              >
+                {syncLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Syncing...
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Sync
+                  </>
+                )}
+              </Button> */}
+              {/* <Button
+                type="button"
+                variant="outline"
+                onClick={handleSync}
+                disabled={syncLoading}
+                className="text-blue-600 border-blue-300 hover:bg-blue-50"
+              >
+                {syncLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Syncing...
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="h-4 w-4 mr-2" />
+                    Sync
+                  </>
+                )}
+              </Button> */}
               
               <Button
                 type="button"
@@ -870,7 +928,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
                 Cancel
               </Button>
               <Button
-                type="submit"
+                onClick={handleSubmit}
                 disabled={loading}
                 className="bg-blue-600 hover:bg-blue-700"
               >
@@ -888,7 +946,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
               </Button>
             </div>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   );
