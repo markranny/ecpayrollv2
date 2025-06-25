@@ -286,6 +286,9 @@ const ProcessedAttendanceList = () => {
         if (data.details) {
           const details = data.details;
           let detailedMessage = `Sync completed: ${details.synced_count} records updated`;
+          if (details.created_records > 0) {
+            detailedMessage += `, ${details.created_records} new records created`;
+          }
           if (details.error_count > 0) {
             detailedMessage += `, ${details.error_count} errors occurred`;
           }
@@ -445,151 +448,114 @@ const ProcessedAttendanceList = () => {
   };
 
   const handleAttendanceUpdate = async (updatedAttendance) => {
-  try {
-    setError('');
-    setSuccess('');
-    
-    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-    
-    // Check if CSRF token exists
-    if (!csrfToken) {
-      setError('Session expired. Please refresh the page and try again.');
-      return;
-    }
-    
-    // Create a new object with only time-related fields
-    const timeUpdatePayload = {
-      id: updatedAttendance.id,
-      time_in: updatedAttendance.time_in,
-      break_in: updatedAttendance.break_in,
-      break_out: updatedAttendance.break_out,
-      time_out: updatedAttendance.time_out,
-      next_day_timeout: updatedAttendance.next_day_timeout,
-      is_nightshift: updatedAttendance.is_nightshift
-    };
-    
-    const response = await fetch(`/attendance/${updatedAttendance.id}`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRF-TOKEN': csrfToken,
-        'X-Requested-With': 'XMLHttpRequest',
-        'Accept': 'application/json'
-      },
-      body: JSON.stringify(timeUpdatePayload)
-    });
-    
-    // Handle different HTTP status codes
-    if (response.status === 401) {
-      // Session expired or unauthorized
-      setError('Session expired. Please refresh the page and login again.');
-      // Optionally redirect to login
-      // window.location.href = '/login';
-      return;
-    }
-    
-    if (response.status === 419) {
-      // CSRF token mismatch
-      setError('Security token expired. Please refresh the page and try again.');
-      return;
-    }
-    
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    
-    // Check if response is JSON
-    const contentType = response.headers.get('content-type');
-    if (!contentType || !contentType.includes('application/json')) {
-      // This usually means we got redirected to login page
-      setSuccess('Update data successfully!');
-      window.location.reload();
-      return;
-    }
-    
-    const data = await response.json();
-    
-    // Handle API response
-    if (data.success) {
-      setSuccess('Attendance time records updated successfully');
+    try {
+      setError('');
+      setSuccess('');
       
-      // Process the updated record to ensure all fields are present
-      const processedRecord = {
-        ...data.data,
-        source: 'manual_edit',
-        is_edited: true
+      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+      
+      // Check if CSRF token exists
+      if (!csrfToken) {
+        setError('Session expired. Please refresh the page and try again.');
+        return;
+      }
+      
+      // Create a new object with only time-related fields
+      const timeUpdatePayload = {
+        id: updatedAttendance.id,
+        time_in: updatedAttendance.time_in,
+        break_in: updatedAttendance.break_in,
+        break_out: updatedAttendance.break_out,
+        time_out: updatedAttendance.time_out,
+        next_day_timeout: updatedAttendance.next_day_timeout,
+        is_nightshift: updatedAttendance.is_nightshift
       };
       
-      // Update the local state to reflect changes
-      setAttendances(prevAttendances => 
-        prevAttendances.map(att => 
-          att.id === updatedAttendance.id ? processedRecord : att
-        )
-      );
+      const response = await fetch(`/attendance/${updatedAttendance.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(timeUpdatePayload)
+      });
       
-      setShowEditModal(false);
-    } else {
-      // Handle API errors
-      if (data.redirect) {
-        // Server wants us to redirect (likely to login)
-        setError('Session expired. Redirecting to login...');
-        setTimeout(() => {
-          window.location.href = data.redirect;
-        }, 2000);
+      // Handle different HTTP status codes
+      if (response.status === 401) {
+        // Session expired or unauthorized
+        setError('Session expired. Please refresh the page and login again.');
+        return;
+      }
+      
+      if (response.status === 419) {
+        // CSRF token mismatch
+        setError('Security token expired. Please refresh the page and try again.');
+        return;
+      }
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      // Check if response is JSON
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        // This usually means we got redirected to login page
+        setSuccess('Update data successfully!');
+        window.location.reload();
+        return;
+      }
+      
+      const data = await response.json();
+      
+      // Handle API response
+      if (data.success) {
+        setSuccess('Attendance time records updated successfully');
+        
+        // Process the updated record to ensure all fields are present
+        const processedRecord = {
+          ...data.data,
+          source: 'manual_edit',
+          is_edited: true
+        };
+        
+        // Update the local state to reflect changes
+        setAttendances(prevAttendances => 
+          prevAttendances.map(att => 
+            att.id === updatedAttendance.id ? processedRecord : att
+          )
+        );
+        
+        setShowEditModal(false);
       } else {
-        setError('Failed to update attendance: ' + (data.message || 'Unknown error'));
+        // Handle API errors
+        if (data.redirect) {
+          // Server wants us to redirect (likely to login)
+          setError('Session expired. Redirecting to login...');
+          setTimeout(() => {
+            window.location.href = data.redirect;
+          }, 2000);
+        } else {
+          setError('Failed to update attendance: ' + (data.message || 'Unknown error'));
+        }
+      }
+    } catch (err) {
+      console.error('Error updating attendance:', err);
+      
+      // Provide more specific error messages
+      if (err.name === 'TypeError' && err.message.includes('Failed to fetch')) {
+        setError('Network error. Please check your internet connection and try again.');
+      } else if (err.message.includes('non-JSON response')) {
+        window.reload();
+      } else if (err.message.includes('HTTP error')) {
+        setError(`Server error (${err.message}). Please try again or contact support.`);
+      } else {
+        setError('Error updating attendance: ' + (err.message || 'Unknown error'));
       }
     }
-  } catch (err) {
-    console.error('Error updating attendance:', err);
-    
-    // Provide more specific error messages
-    if (err.name === 'TypeError' && err.message.includes('Failed to fetch')) {
-      setError('Network error. Please check your internet connection and try again.');
-    } else if (err.message.includes('non-JSON response')) {
-      /* setError('Session may have expired. Please refresh the page and try again.'); */
-      window.reload();
-    } else if (err.message.includes('HTTP error')) {
-      setError(`Server error (${err.message}). Please try again or contact support.`);
-    } else {
-      setError('Error updating attendance: ' + (err.message || 'Unknown error'));
-    }
-  }
-};
-
-// Add a function to check session status
-const checkSessionStatus = async () => {
-  try {
-    const response = await fetch('/api/session-check', {
-      method: 'GET',
-      headers: {
-        'X-Requested-With': 'XMLHttpRequest',
-        'Accept': 'application/json'
-      }
-    });
-    
-    if (response.status === 401) {
-      setError('Session expired. Please refresh the page and login again.');
-      return false;
-    }
-    
-    return response.ok;
-  } catch (err) {
-    console.warn('Session check failed:', err);
-    return false;
-  }
-};
-
-// Call session check before making updates
-const handleAttendanceUpdateWithSessionCheck = async (updatedAttendance) => {
-  const sessionValid = await checkSessionStatus();
-  if (!sessionValid) {
-    setError('Session expired. Please refresh the page and login again.');
-    return;
-  }
-  
-  await handleAttendanceUpdate(updatedAttendance);
-};
+  };
 
   return (
     <AuthenticatedLayout user={auth.user}>
@@ -776,8 +742,14 @@ const handleAttendanceUpdateWithSessionCheck = async (updatedAttendance) => {
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hours</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Travel</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SLVL</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CT</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CS</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Holiday</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT Reg</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT Spl</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Retro</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rest</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rest Day</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
                             <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                           </tr>
@@ -839,7 +811,37 @@ const handleAttendanceUpdateWithSessionCheck = async (updatedAttendance) => {
                                 {attendance.overtime && !isNaN(Number(attendance.overtime)) ? Number(attendance.overtime).toFixed(2) : '-'}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {attendance.travel_order && !isNaN(Number(attendance.travel_order)) ? Number(attendance.travel_order).toFixed(2) : '-'}
+                                {attendance.travel_order && !isNaN(Number(attendance.travel_order)) ? Number(attendance.travel_order).toFixed(1) : '-'}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {attendance.slvl && !isNaN(Number(attendance.slvl)) ? Number(attendance.slvl).toFixed(1) : '-'}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {attendance.ct ? (
+                                  <span className="text-blue-600 font-medium">Yes</span>
+                                ) : (
+                                  <span className="text-gray-400">No</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {attendance.cs ? (
+                                  <span className="text-purple-600 font-medium">Yes</span>
+                                ) : (
+                                  <span className="text-gray-400">No</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {attendance.holiday ? (
+                                  <span className="text-orange-600 font-medium">Yes</span>
+                                ) : (
+                                  <span className="text-gray-400">No</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {attendance.ot_reg_holiday && !isNaN(Number(attendance.ot_reg_holiday)) ? Number(attendance.ot_reg_holiday).toFixed(2) : '-'}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {attendance.ot_special_holiday && !isNaN(Number(attendance.ot_special_holiday)) ? Number(attendance.ot_special_holiday).toFixed(2) : '-'}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
                                 {attendance.retromultiplier && !isNaN(Number(attendance.retromultiplier)) ? Number(attendance.retromultiplier).toFixed(2) : '-'}
@@ -857,9 +859,11 @@ const handleAttendanceUpdateWithSessionCheck = async (updatedAttendance) => {
                                   attendance.source === 'manual' ? 'bg-yellow-100 text-yellow-800' : 
                                   attendance.source === 'biometric' ? 'bg-green-100 text-green-800' : 
                                   attendance.source === 'manual_edit' ? 'bg-red-100 text-red-800' : 
+                                  attendance.source === 'slvl_sync' ? 'bg-indigo-100 text-indigo-800' :
                                   'bg-gray-100 text-gray-800'
                                 }`}>
                                   {attendance.source === 'manual_edit' ? 'Edited' : 
+                                  attendance.source === 'slvl_sync' ? 'SLVL' :
                                   attendance.source ? (attendance.source.charAt(0).toUpperCase() + attendance.source.slice(1)) : 'Unknown'}
                                 </span>
                               </td>
