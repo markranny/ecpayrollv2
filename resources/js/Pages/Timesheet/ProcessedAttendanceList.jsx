@@ -736,147 +736,153 @@ const handleAttendanceUpdateWithSessionCheck = async (updatedAttendance) => {
               </CardContent>
             </Card>
 
-            <div className="bg-white rounded-lg shadow overflow-x-auto">
+            {/* Modified table container with 60vh height */}
+            <div className="bg-white rounded-lg shadow h-[60vh] flex flex-col">
               {loading ? (
-                <div className="flex justify-center items-center p-8">
+                <div className="flex justify-center items-center h-full">
                   <RefreshCw className="h-8 w-8 animate-spin text-blue-500" />
                   <span className="ml-2 text-lg">Loading...</span>
                 </div>
               ) : attendances.length === 0 ? (
-                <div className="text-center py-12">
+                <div className="text-center py-12 flex-1 flex flex-col justify-center">
                   <Clock className="h-12 w-12 mx-auto text-gray-400 mb-4" />
                   <h3 className="text-lg font-medium text-gray-600 mb-2">No attendance records found</h3>
                   <p className="text-gray-500">Try adjusting your filters or adding new attendance data.</p>
                 </div>
               ) : (
                 <>
-                  <table className="min-w-full divide-y divide-gray-200">
-                    <thead className="bg-gray-50">
-                      <tr>
-                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                          <input
-                            type="checkbox"
-                            className="form-checkbox h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
-                            checked={selectAll}
-                            onChange={(e) => handleSelectAll(e.target.checked)}
-                          />
-                        </th>
-                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dept</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time In</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break Out</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break In</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time Out</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Next Day</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hours</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Travel</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Retro</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rest</th>
-                        <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
-                        <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-gray-200">
-                      {attendances.map((attendance) => (
-                        <tr key={attendance.id} className={attendance.source === 'manual_edit' ? 'bg-red-50' : ''}>
-                          <td className="px-2 py-4 whitespace-nowrap">
-                            <input
-                              type="checkbox"
-                              className="form-checkbox h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
-                              checked={selectedIds.includes(attendance.id)}
-                              onChange={(e) => handleCheckboxChange(attendance.id, e.target.checked)}
-                            />
-                          </td>
-                          <td className="px-2 py-4 whitespace-nowrap">
-                            <div className="flex items-center">
-                              <div>
-                                <div className="text-sm font-medium text-gray-900">
-                                  {attendance.employee_name || 'Unknown Employee'}
+                  {/* Table with fixed header and scrollable body */}
+                  <div className="flex-1 overflow-hidden flex flex-col">
+                    <div className="overflow-x-auto flex-1">
+                      <table className="min-w-full divide-y divide-gray-200 h-full">
+                        <thead className="bg-gray-50 sticky top-0 z-10">
+                          <tr>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              <input
+                                type="checkbox"
+                                className="form-checkbox h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
+                                checked={selectAll}
+                                onChange={(e) => handleSelectAll(e.target.checked)}
+                              />
+                            </th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dept</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time In</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break Out</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break In</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time Out</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Next Day</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hours</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Travel</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Retro</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rest</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
+                            <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200 overflow-y-auto">
+                          {attendances.map((attendance) => (
+                            <tr key={attendance.id} className={attendance.source === 'manual_edit' ? 'bg-red-50' : ''}>
+                              <td className="px-2 py-4 whitespace-nowrap">
+                                <input
+                                  type="checkbox"
+                                  className="form-checkbox h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
+                                  checked={selectedIds.includes(attendance.id)}
+                                  onChange={(e) => handleCheckboxChange(attendance.id, e.target.checked)}
+                                />
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap">
+                                <div className="flex items-center">
+                                  <div>
+                                    <div className="text-sm font-medium text-gray-900">
+                                      {attendance.employee_name || 'Unknown Employee'}
+                                    </div>
+                                    <div className="text-xs text-gray-500">
+                                      {attendance.idno || 'N/A'}
+                                    </div>
+                                  </div>
                                 </div>
-                                <div className="text-xs text-gray-500">
-                                  {attendance.idno || 'N/A'}
-                                </div>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {attendance.department || 'N/A'}
-                          </td>
-                          <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {formatDate(attendance.attendance_date)}
-                            {attendance.day && <span className="block text-xs mt-1 text-gray-400">{attendance.day}</span>}
-                          </td>
-                          <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {formatTime(attendance.time_in)}
-                          </td>
-                          <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {formatTime(attendance.break_out)}
-                          </td>
-                          <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {formatTime(attendance.break_in)}
-                          </td>
-                          <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {formatTime(attendance.time_out)}
-                          </td>
-                          <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {attendance.is_nightshift && attendance.next_day_timeout ? (
-                              <span className="text-purple-600">{formatTime(attendance.next_day_timeout)}</span>
-                            ) : (
-                              '-'
-                            )}
-                          </td>
-                          <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {attendance.hours_worked ? Number(attendance.hours_worked).toFixed(2) : 
-                              calculateDuration(attendance.time_in, attendance.time_out)}
-                          </td>
-                          <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {attendance.overtime && !isNaN(Number(attendance.overtime)) ? Number(attendance.overtime).toFixed(2) : '-'}
-                          </td>
-                          <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {attendance.travel_order && !isNaN(Number(attendance.travel_order)) ? Number(attendance.travel_order).toFixed(2) : '-'}
-                          </td>
-                          <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {attendance.retromultiplier && !isNaN(Number(attendance.retromultiplier)) ? Number(attendance.retromultiplier).toFixed(2) : '-'}
-                          </td>
-                          <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {attendance.restday ? (
-                              <span className="text-green-600 font-medium">Yes</span>
-                            ) : (
-                              <span className="text-gray-400">No</span>
-                            )}
-                          </td>
-                          <td className="px-2 py-4 whitespace-nowrap">
-                            <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                              attendance.source === 'import' ? 'bg-blue-100 text-blue-800' : 
-                              attendance.source === 'manual' ? 'bg-yellow-100 text-yellow-800' : 
-                              attendance.source === 'biometric' ? 'bg-green-100 text-green-800' : 
-                              attendance.source === 'manual_edit' ? 'bg-red-100 text-red-800' : 
-                              'bg-gray-100 text-gray-800'
-                            }`}>
-                              {attendance.source === 'manual_edit' ? 'Edited' : 
-                              attendance.source ? (attendance.source.charAt(0).toUpperCase() + attendance.source.slice(1)) : 'Unknown'}
-                            </span>
-                          </td>
-                          <td className="px-2 py-4 whitespace-nowrap text-right text-sm font-medium">
-                            <Button 
-                              variant="ghost" 
-                              size="sm"
-                              onClick={() => handleEditClick(attendance)}
-                              className="text-blue-600 hover:text-blue-900"
-                            >
-                              <Edit className="h-4 w-4 mr-1" />
-                              Edit
-                            </Button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {attendance.department || 'N/A'}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {formatDate(attendance.attendance_date)}
+                                {attendance.day && <span className="block text-xs mt-1 text-gray-400">{attendance.day}</span>}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {formatTime(attendance.time_in)}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {formatTime(attendance.break_out)}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {formatTime(attendance.break_in)}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {formatTime(attendance.time_out)}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {attendance.is_nightshift && attendance.next_day_timeout ? (
+                                  <span className="text-purple-600">{formatTime(attendance.next_day_timeout)}</span>
+                                ) : (
+                                  '-'
+                                )}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {attendance.hours_worked ? Number(attendance.hours_worked).toFixed(2) : 
+                                  calculateDuration(attendance.time_in, attendance.time_out)}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {attendance.overtime && !isNaN(Number(attendance.overtime)) ? Number(attendance.overtime).toFixed(2) : '-'}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {attendance.travel_order && !isNaN(Number(attendance.travel_order)) ? Number(attendance.travel_order).toFixed(2) : '-'}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {attendance.retromultiplier && !isNaN(Number(attendance.retromultiplier)) ? Number(attendance.retromultiplier).toFixed(2) : '-'}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {attendance.restday ? (
+                                  <span className="text-green-600 font-medium">Yes</span>
+                                ) : (
+                                  <span className="text-gray-400">No</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap">
+                                <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                  attendance.source === 'import' ? 'bg-blue-100 text-blue-800' : 
+                                  attendance.source === 'manual' ? 'bg-yellow-100 text-yellow-800' : 
+                                  attendance.source === 'biometric' ? 'bg-green-100 text-green-800' : 
+                                  attendance.source === 'manual_edit' ? 'bg-red-100 text-red-800' : 
+                                  'bg-gray-100 text-gray-800'
+                                }`}>
+                                  {attendance.source === 'manual_edit' ? 'Edited' : 
+                                  attendance.source ? (attendance.source.charAt(0).toUpperCase() + attendance.source.slice(1)) : 'Unknown'}
+                                </span>
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                <Button 
+                                  variant="ghost" 
+                                  size="sm"
+                                  onClick={() => handleEditClick(attendance)}
+                                  className="text-blue-600 hover:text-blue-900"
+                                >
+                                  <Edit className="h-4 w-4 mr-1" />
+                                  Edit
+                                </Button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
 
-                  {/* Pagination */}
-                  <div className="px-6 py-4 flex items-center justify-between border-t border-gray-200">
+                  {/* Pagination - Fixed at bottom */}
+                  <div className="px-6 py-4 flex items-center justify-between border-t border-gray-200 bg-white">
                     <div className="flex-1 flex justify-between sm:hidden">
                       <Button
                         onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
