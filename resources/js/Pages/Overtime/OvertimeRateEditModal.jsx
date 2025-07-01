@@ -2,13 +2,15 @@
 import React, { useState, useEffect } from 'react';
 import { router } from '@inertiajs/react';
 import { Loader2, Edit3, AlertTriangle } from 'lucide-react';
+import { toast } from 'react-toastify';
 
 const OvertimeRateEditModal = ({ 
     isOpen, 
     onClose, 
     overtime, 
     userRoles = {},
-    processing = false 
+    processing = false,
+    onRateUpdated = null // Add callback prop
 }) => {
     const [formData, setFormData] = useState({
         rate_multiplier: '',
@@ -84,15 +86,21 @@ const OvertimeRateEditModal = ({
         
         router.post(route('overtimes.updateRate', overtime.id), formData, {
             preserveScroll: true,
-            onSuccess: () => {
+            onSuccess: (page) => {
                 setIsSubmitting(false);
-                // Force refresh the entire overtime list by reloading the page data
-                router.reload({
-                    only: ['overtimes'],
-                    onFinish: () => {
-                        onClose();
-                    }
-                });
+                
+                // Show immediate success feedback
+                toast.success('Overtime rate updated successfully');
+                
+                // Call the callback to refresh the data in parent component
+                if (typeof onRateUpdated === 'function') {
+                    onRateUpdated(page.props.overtimes || null);
+                }
+                
+                // Close the modal
+                //onClose();
+
+                window.location.reload();
             },
             onError: (errors) => {
                 setIsSubmitting(false);

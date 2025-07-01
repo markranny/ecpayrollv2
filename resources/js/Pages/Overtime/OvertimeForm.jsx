@@ -49,22 +49,16 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
     // Auto-detect overtime type and night differential based on date and time
     const autoDetectOvertimeType = () => {
         const selectedDate = new Date(formData.date);
-        const dayOfWeek = selectedDate.getDay(); // 0 = Sunday, 6 = Saturday
         const startTime = formData.start_time;
         const endTime = formData.end_time;
-        
-        // Check if it's weekend
-        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
         
         // Check if it overlaps with night hours (10 PM to 6 AM)
         const startHour = parseInt(startTime.split(':')[0]);
         const endHour = parseInt(endTime.split(':')[0]);
         const hasNightHours = startHour >= 22 || endHour <= 6 || (startHour > endHour);
         
-        let detectedType = 'regular_weekday';
-        if (isWeekend) {
-            detectedType = 'rest_day';
-        }
+        // Always default to regular weekday - no automatic weekend detection
+        const detectedType = 'regular_weekday';
         
         setFormData(prev => ({
             ...prev,

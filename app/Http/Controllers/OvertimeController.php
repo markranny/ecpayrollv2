@@ -224,7 +224,52 @@ class OvertimeController extends Controller
                 'by_user' => $user->name
             ]);
 
-            return redirect()->back()->with('message', 'Overtime rate updated successfully.');
+            // Get fresh overtime data using the same logic as index method
+            $userRoles = $this->getUserRoles($user);
+            
+            // Query overtimes based on user role - same logic as in index method
+            $overtimesQuery = Overtime::with(['employee', 'creator', 'departmentManager', 'departmentApprover', 'hrdApprover']);
+            
+            // Apply same filtering logic as index method
+            if ($userRoles['isEmployee'] && !$userRoles['isDepartmentManager'] && !$userRoles['isHrdManager'] && !$userRoles['isSuperAdmin']) {
+                $employeeId = $user->employee ? $user->employee->id : null;
+                if ($employeeId) {
+                    $overtimesQuery->where('employee_id', $employeeId);
+                } else {
+                    $overtimesQuery->where('created_by', $user->id);
+                }
+            } elseif ($userRoles['isDepartmentManager'] && !$userRoles['isSuperAdmin']) {
+                $managedDepartments = DepartmentManager::where('manager_id', $user->id)
+                    ->pluck('department')
+                    ->toArray();
+                    
+                $overtimesQuery->where(function($query) use ($user, $managedDepartments) {
+                    $query->where('created_by', $user->id)
+                        ->orWhere('dept_manager_id', $user->id)
+                        ->orWhereHas('employee', function($q) use ($managedDepartments) {
+                            $q->whereIn('Department', $managedDepartments);
+                        });
+                });
+            }
+            
+            // Sort by latest first
+            $overtimesQuery->orderBy('created_at', 'desc');
+            
+            // Get the updated overtime list
+            $updatedOvertimes = $overtimesQuery->get();
+
+            // Return JSON response for AJAX requests (like from Inertia)
+            if ($request->wantsJson()) {
+                return response()->json([
+                    'message' => 'Overtime rate updated successfully.',
+                    'overtimes' => $updatedOvertimes
+                ]);
+            }
+
+            // For regular requests, redirect back with success message and updated data
+            return redirect()->back()
+                ->with('message', 'Overtime rate updated successfully.')
+                ->with('overtimes', $updatedOvertimes);
             
         } catch (\Exception $e) {
             // Log the error

@@ -95,6 +95,8 @@ const OvertimeList = ({
             }
         };
     }, [refreshInterval, filterStatus, filterOvertimeType, searchTerm, dateRange, processing, localProcessing]);
+
+    
     
     // Function to apply all filters
     const applyFilters = (data, status, overtimeType, search, dates) => {
@@ -346,6 +348,19 @@ const OvertimeList = ({
     const handleRateEditSuccess = () => {
         // Close modal and refresh data
         handleCloseRateEditModal(true);
+    };
+    
+    // Handle rate update success - This will be called from the modal
+    const handleRateUpdateSuccess = (updatedOvertimes) => {
+        if (updatedOvertimes) {
+            // Update local overtimes with the new data from server
+            setLocalOvertimes(updatedOvertimes);
+            // Apply current filters to the updated data
+            applyFilters(updatedOvertimes, filterStatus, filterOvertimeType, searchTerm, dateRange);
+        } else {
+            // Fallback: refresh data manually if no data provided
+            refreshOvertimeData();
+        }
     };
     
     // Handle double click on row to edit rate

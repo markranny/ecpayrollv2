@@ -41,7 +41,7 @@ const TravelOrderPage = () => {
                     setTravelOrders(page.props.travelOrders);
                 }
                 toast.success('Travel Order requests created successfully');
-                setActiveTab('list'); // Switch to list view after successful submission
+                //setActiveTab('list'); 
             },
             onError: (errors) => {
                 if (errors && typeof errors === 'object') {

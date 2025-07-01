@@ -15,7 +15,7 @@ const TimeSchedulePage = () => {
     
     // State to manage component data
     const [timeScheduleData, setTimeScheduleData] = useState(timeSchedules);
-    const [activeTab, setActiveTab] = useState('list');
+    const [activeTab, setActiveTab] = useState('create'); // Changed from 'list' to 'create'
     const [processing, setProcessing] = useState(false);
     
     // Display flash messages

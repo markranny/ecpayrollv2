@@ -74,6 +74,24 @@ const OvertimePage = () => {
         });
     };
 
+    const handleOvertimeDataRefresh = (newOvertimeData = null) => {
+        if (newOvertimeData) {
+            // Use provided data
+            setOvertimeData(newOvertimeData);
+        } else {
+            // Refresh from server
+            router.reload({
+                only: ['overtimes'],
+                preserveScroll: true,
+                onSuccess: (page) => {
+                    if (page.props.overtimes) {
+                        setOvertimeData(page.props.overtimes);
+                    }
+                }
+            });
+        }
+    };
+
     const handleBulkStatusUpdate = (status, remarks) => {
         setProcessing(true);
         setGlobalLoading(true);
