@@ -197,6 +197,8 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])
         Route::post('/{id}/mark-inactive', [EmployeeController::class, 'markInactive'])->name('employees.markInactive');
         Route::post('/{id}/mark-blocked', [EmployeeController::class, 'markBlocked'])->name('employees.markBlocked');
         Route::post('/{id}/mark-active', [EmployeeController::class, 'markActive'])->name('employees.markActive');
+
+        Route::get('/export', [EmployeeController::class, 'exportExcel'])->name('employees.export');
     });
 
 /*

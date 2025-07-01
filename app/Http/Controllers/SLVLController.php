@@ -100,8 +100,8 @@ class SLVLController extends Controller
             ['value' => 'bereavement', 'label' => 'Bereavement Leave', 'requires_documents' => true],
             ['value' => 'maternity', 'label' => 'Maternity Leave', 'requires_documents' => true],
             ['value' => 'paternity', 'label' => 'Paternity Leave', 'requires_documents' => true],
-            ['value' => 'personal', 'label' => 'Personal Leave', 'requires_documents' => false],
-            ['value' => 'study', 'label' => 'Study Leave', 'requires_documents' => true],
+            // ['value' => 'personal', 'label' => 'Personal Leave', 'requires_documents' => false],
+            // ['value' => 'study', 'label' => 'Study Leave', 'requires_documents' => true],
         ];
 
         // Pay options

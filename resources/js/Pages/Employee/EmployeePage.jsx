@@ -13,7 +13,9 @@ import {
     ShieldOff,
     Check,
     Lock,
-    Users
+    Users,
+    Download,
+    FileSpreadsheet
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -616,6 +618,34 @@ const EmployeeForm = ({ isOpen, onClose, employee = null, mode = 'create' }) => 
                             onChange={handleChange}
                         />
                     </div>
+
+                    <div>
+                        <label htmlFor="HDMFNo" className="block text-sm font-medium mb-1">
+                            HDMF Number
+                        </label>
+                        <input
+                            id="HDMFNo"
+                            name="HDMFNo"
+                            type="text"
+                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            value={formData.HDMFNo}
+                            onChange={handleChange}
+                        />
+                    </div>
+
+                    <div>
+                        <label htmlFor="TaxNo" className="block text-sm font-medium mb-1">
+                            Tax Number
+                        </label>
+                        <input
+                            id="TaxNo"
+                            name="TaxNo"
+                            type="text"
+                            className="w-full p-2 border rounded border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                            value={formData.TaxNo}
+                            onChange={handleChange}
+                        />
+                    </div>
                     
                     {/* Taxable Field - Key fix for the SQL error */}
                     <div>
@@ -722,7 +752,6 @@ const TabsContent = ({ children, value, activeTab }) => {
   );
 };
 
-// EmployeeList Component
 // EmployeeList Component
 const EmployeeList = ({ employees, onView, onEdit, onDelete, onMarkInactive, onMarkBlocked, onMarkActive }) => {
     if (!employees?.length) {
@@ -905,6 +934,7 @@ const EmployeePage = ({ employees: initialEmployees, currentStatus = 'all', flas
     const [selectedEmployee, setSelectedEmployee] = useState(null);
     const [formMode, setFormMode] = useState('create');
     const [viewModalOpen, setViewModalOpen] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
     const [confirmModal, setConfirmModal] = useState({
         isOpen: false,
         title: '',
@@ -1099,6 +1129,39 @@ const EmployeePage = ({ employees: initialEmployees, currentStatus = 'all', flas
         });
     };
 
+    // Export to Excel function
+    const handleExportToExcel = async () => {
+        setIsExporting(true);
+        
+        try {
+            // Create query parameters for current filters
+            const params = new URLSearchParams();
+            if (activeTab !== 'all') {
+                params.append('status', activeTab);
+            }
+            if (searchTerm) {
+                params.append('search', searchTerm);
+            }
+            
+            // Create the export URL
+            const exportUrl = `/employees/export?${params.toString()}`;
+            
+            // Create a temporary link and trigger download
+            const link = document.createElement('a');
+            link.href = exportUrl;
+            link.style.display = 'none';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+        } catch (error) {
+            console.error('Export failed:', error);
+            // You could add a toast notification here
+        } finally {
+            setIsExporting(false);
+        }
+    };
+
     return (
         <AuthenticatedLayout user={auth.user}>
             <Head title="Employee Management" />
@@ -1123,6 +1186,26 @@ const EmployeePage = ({ employees: initialEmployees, currentStatus = 'all', flas
                                 </p>
                             </div>
                             <div className="flex items-center space-x-4">
+                                {/* Export Button */}
+                                <Button
+                                    onClick={handleExportToExcel}
+                                    disabled={isExporting || !filteredEmployees.length}
+                                    className="px-5 py-2.5 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-colors duration-200 flex items-center"
+                                >
+                                    {isExporting ? (
+                                        <>
+                                            <div className="animate-spin h-4 w-4 mr-2 border-2 border-white border-t-transparent rounded-full"></div>
+                                            Exporting...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <FileSpreadsheet className="w-5 h-5 mr-2" />
+                                            Export to Excel
+                                        </>
+                                    )}
+                                </Button>
+                                
+                                {/* Add Employee Button */}
                                 <Button
                                     onClick={() => {
                                         setFormMode('create');
