@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
 
-const CancelRestDayForm = ({ employees, departments, onSubmit }) => {
+const CancelRestDayForm = ({ employees, departments, onSubmit, userRoles = {} }) => {
     const today = format(new Date(), 'yyyy-MM-dd');
     
     // Form state
@@ -16,6 +16,9 @@ const CancelRestDayForm = ({ employees, departments, onSubmit }) => {
     const [displayedEmployees, setDisplayedEmployees] = useState(employees || []);
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedDepartment, setSelectedDepartment] = useState('');
+    
+    // Check if user can select any date (past dates included)
+    const canSelectAnyDate = userRoles.isSuperAdmin || userRoles.isHrdManager;
     
     // Enhanced useEffect for CancelRestDayForm employee filtering and sorting
 useEffect(() => {
@@ -202,8 +205,8 @@ useEffect(() => {
             return;
         }
         
-        // Check that rest day date is not in the past
-        if (new Date(formData.rest_day_date) < new Date(today)) {
+        // Check that rest day date is not in the past (only for non-admin/non-HR users)
+        if (!canSelectAnyDate && new Date(formData.rest_day_date) < new Date(today)) {
             alert('Cannot cancel rest day for past dates');
             return;
         }
@@ -284,6 +287,13 @@ useEffect(() => {
             <div className="p-4 border-b">
                 <h3 className="text-lg font-semibold">Cancel Rest Day Request</h3>
                 <p className="text-sm text-gray-500">Create rest day cancellation request for one or multiple employees</p>
+                {canSelectAnyDate && (
+                    <div className="mt-2 p-2 bg-blue-50 border border-blue-200 rounded-md">
+                        <p className="text-sm text-blue-700">
+                            <span className="font-medium">Admin/HR Privilege:</span> You can select any date including past dates for rest day cancellation.
+                        </p>
+                    </div>
+                )}
             </div>
             
             <form onSubmit={handleSubmit}>
@@ -434,11 +444,13 @@ useEffect(() => {
                                     className="w-full rounded-md border-gray-300 shadow-sm focus:border-red-300 focus:ring focus:ring-red-200 focus:ring-opacity-50"
                                     value={formData.rest_day_date}
                                     onChange={handleChange}
-                                    min={today}
+                                    min={canSelectAnyDate ? undefined : today}
                                     required
                                 />
                                 <p className="mt-1 text-xs text-gray-500">
-                                    The scheduled rest day you want to cancel
+                                    {canSelectAnyDate 
+                                        ? 'You can select any date including past dates' 
+                                        : 'The scheduled rest day you want to cancel (future dates only)'}
                                 </p>
                             </div>
                             

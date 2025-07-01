@@ -147,15 +147,29 @@ class CancelRestDayController extends Controller
      */
     public function store(Request $request)
     {
-        $validated = $request->validate([
+        $user = Auth::user();
+        $userRoles = $this->getUserRoles($user);
+        
+        // Determine if user can select any date (including past dates)
+        $canSelectAnyDate = $userRoles['isSuperAdmin'] || $userRoles['isHrdManager'];
+        
+        // Set validation rules based on user privileges
+        $validationRules = [
             'employee_ids' => 'required|array',
             'employee_ids.*' => 'required|integer|exists:employees,id',
-            'rest_day_date' => 'required|date|after_or_equal:today',
             'replacement_work_date' => 'nullable|date|different:rest_day_date',
             'reason' => 'required|string|max:1000',
-        ]);
+        ];
         
-        $user = Auth::user();
+        // Add date validation based on user role
+        if ($canSelectAnyDate) {
+            $validationRules['rest_day_date'] = 'required|date';
+        } else {
+            $validationRules['rest_day_date'] = 'required|date|after_or_equal:today';
+        }
+        
+        $validated = $request->validate($validationRules);
+        
         $successCount = 0;
         $errorMessages = [];
         
@@ -195,6 +209,11 @@ class CancelRestDayController extends Controller
             DB::commit();
             
             $message = "Successfully created {$successCount} cancel rest day request(s)";
+            
+            // Add note if admin/HR created past date request
+            if ($canSelectAnyDate && $validated['rest_day_date'] < now()->toDateString()) {
+                $message .= " (including past date - Admin/HR privilege used)";
+            }
             
             if (!empty($errorMessages)) {
                 return redirect()->back()->with([

@@ -169,6 +169,7 @@ const CancelRestDayPage = () => {
                                         employees={employees} 
                                         departments={departments} 
                                         onSubmit={handleSubmitCancelRestDay}
+                                        userRoles={userRoles}
                                     />
                                 )}
                             </div>
