@@ -217,6 +217,26 @@ const OvertimeList = ({
         return description;
     };
     
+    // Function to refresh overtime data
+    const refreshOvertimeData = () => {
+        setLocalProcessing(true);
+        
+        // Use router.reload to refresh the current page data
+        router.reload({
+            only: ['overtimes'], // Only reload the overtimes prop
+            preserveScroll: true,
+            onSuccess: () => {
+                setLocalProcessing(false);
+                toast.success('Data refreshed successfully');
+            },
+            onError: (errors) => {
+                console.error('Error refreshing data:', errors);
+                toast.error('Failed to refresh data');
+                setLocalProcessing(false);
+            }
+        });
+    };
+    
     // Open detail modal
     const handleViewDetail = (overtime) => {
         if (processing || localProcessing) return;
@@ -283,10 +303,15 @@ const OvertimeList = ({
         setShowRateEditModal(true);
     };
     
-    // Close rate edit modal
-    const handleCloseRateEditModal = () => {
+    // Close rate edit modal and refresh data
+    const handleCloseRateEditModal = (shouldRefresh = false) => {
         setShowRateEditModal(false);
         setSelectedOvertimeForRate(null);
+        
+        // If the modal indicates data was updated, refresh immediately
+        if (shouldRefresh) {
+            refreshOvertimeData();
+        }
         
         // Resume auto-refresh when modal is closed
         if (!processing && !localProcessing) {
@@ -304,6 +329,12 @@ const OvertimeList = ({
             
             timerRef.current = setInterval(refreshData, refreshInterval);
         }
+    };
+    
+    // Handle rate edit success callback
+    const handleRateEditSuccess = () => {
+        // Close modal and refresh data
+        handleCloseRateEditModal(true);
     };
     
     // Handle double click on row to edit rate

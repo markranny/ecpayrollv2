@@ -214,6 +214,11 @@ class Overtime extends Model
         return $this->belongsTo(User::class, 'hrd_approved_by');
     }
 
+    public function rateEditor()
+    {
+        return $this->belongsTo(User::class, 'rate_edited_by');
+    }
+
     // Helper methods for status checks
     public function isPending()
     {

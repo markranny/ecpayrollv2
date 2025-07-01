@@ -187,8 +187,18 @@ class OvertimeController extends Controller
         try {
             $oldRate = $overtime->rate_multiplier;
             
+            // Check if rate is actually changing
+            $rateChanged = (float)$oldRate !== (float)$validated['rate_multiplier'];
+            
             // Update the rate multiplier
             $overtime->rate_multiplier = $validated['rate_multiplier'];
+            
+            // Track rate editing if rate actually changed
+            if ($rateChanged) {
+                $overtime->rate_edited = true;
+                $overtime->rate_edited_at = now();
+                $overtime->rate_edited_by = $user->id;
+            }
             
             // Add update reason to dept_remarks if provided
             if (!empty($validated['reason'])) {
@@ -210,6 +220,7 @@ class OvertimeController extends Controller
                 'overtime_id' => $overtime->id,
                 'old_rate' => $oldRate,
                 'new_rate' => $overtime->rate_multiplier,
+                'rate_changed' => $rateChanged,
                 'by_user' => $user->name
             ]);
 
