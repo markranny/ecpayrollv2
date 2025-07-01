@@ -214,6 +214,11 @@ const RetroForm = ({ employees, departments, onSubmit }) => {
         // Reset filters
         setSearchTerm('');
         setSelectedDepartment('');
+
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
     };
     
     // Helper function to get employee name

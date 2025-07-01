@@ -134,6 +134,11 @@ const OffsetForm = ({ employees, offsetTypes, departments, onSubmit }) => {
         } finally {
             setIsSubmitting(false);
         }
+
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
     };
     
     return (

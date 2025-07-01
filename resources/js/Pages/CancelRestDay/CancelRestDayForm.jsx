@@ -233,6 +233,11 @@ useEffect(() => {
         // Reset filters
         setSearchTerm('');
         setSelectedDepartment('');
+
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
     };
     
     // Helper function to get employee name - handles both mapped and direct data

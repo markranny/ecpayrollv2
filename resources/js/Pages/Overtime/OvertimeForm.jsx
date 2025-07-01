@@ -229,78 +229,85 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
     };
     
     // Handle form submission
-    const handleSubmit = async (e) => {
-        e.preventDefault();
+    // Handle form submission
+const handleSubmit = async (e) => {
+    e.preventDefault();
+    
+    if (isSubmitting) return; // Prevent double submission
+    
+    // Validation for form
+    if (formData.employee_ids.length === 0) {
+        alert('Please select at least one employee');
+        return;
+    }
+    
+    if (!formData.date || !formData.start_time || !formData.end_time) {
+        alert('Please fill in all required fields');
+        return;
+    }
+    
+    if (!formData.reason.trim()) {
+        alert('Please provide a reason for the overtime');
+        return;
+    }
+    
+    // Validate overtime hours
+    const overtimeHours = parseFloat(formData.overtime_hours);
+    if (isNaN(overtimeHours) || overtimeHours <= 0) {
+        alert('Please enter a valid number of overtime hours');
+        return;
+    }
+    
+    if (overtimeHours > 24) {
+        alert('Overtime hours cannot exceed 24 hours');
+        return;
+    }
+    
+    // Set loading state
+    setIsSubmitting(true);
+    setLoadingMessage(`Processing overtime for ${formData.employee_ids.length} employee${formData.employee_ids.length > 1 ? 's' : ''}...`);
+    
+    try {
+        // Call the onSubmit prop with the form data
+        await onSubmit(formData);
         
-        if (isSubmitting) return; // Prevent double submission
+        // Reset form after successful submission 
+        setFormData({
+            employee_ids: [],
+            date: today,
+            start_time: '17:00',
+            end_time: '20:00',
+            overtime_hours: '3.00',
+            reason: '',
+            rate_multiplier: rateMultipliers.length > 0 ? rateMultipliers[0].value : 1.25,
+            overtime_type: 'regular_weekday',
+            has_night_differential: false
+        });
         
-        // Validate form
-        if (formData.employee_ids.length === 0) {
-            alert('Please select at least one employee');
-            return;
-        }
+        // Reset filters
+        setSearchTerm('');
+        setSelectedDepartment('');
         
-        if (!formData.date || !formData.start_time || !formData.end_time) {
-            alert('Please fill in all required fields');
-            return;
-        }
+        setLoadingMessage('Overtime requests submitted successfully!');
         
-        if (!formData.reason.trim()) {
-            alert('Please provide a reason for the overtime');
-            return;
-        }
+        // Scroll to top of the page
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
         
-        // Validate overtime hours
-        const overtimeHours = parseFloat(formData.overtime_hours);
-        if (isNaN(overtimeHours) || overtimeHours <= 0) {
-            alert('Please enter a valid number of overtime hours');
-            return;
-        }
-        
-        if (overtimeHours > 24) {
-            alert('Overtime hours cannot exceed 24 hours');
-            return;
-        }
-        
-        // Set loading state
-        setIsSubmitting(true);
-        setLoadingMessage(`Processing overtime for ${formData.employee_ids.length} employee${formData.employee_ids.length > 1 ? 's' : ''}...`);
-        
-        try {
-            // Call the onSubmit prop with the form data
-            await onSubmit(formData);
-            
-            // Reset form after successful submission 
-            setFormData({
-                employee_ids: [],
-                date: today,
-                start_time: '17:00',
-                end_time: '20:00',
-                overtime_hours: '3.00',
-                reason: '',
-                rate_multiplier: rateMultipliers.length > 0 ? rateMultipliers[0].value : 1.25,
-                overtime_type: 'regular_weekday',
-                has_night_differential: false
-            });
-            
-            // Reset filters
-            setSearchTerm('');
-            setSelectedDepartment('');
-            
-            setLoadingMessage('Overtime requests submitted successfully!');
-            
-            // Clear success message after a delay
-            setTimeout(() => {
-                setLoadingMessage('');
-            }, 2000);
-            
-        } catch (error) {
-            console.error('Error submitting overtime:', error);
+        // Clear success message after a delay
+        setTimeout(() => {
             setLoadingMessage('');
-        } finally {
-            setIsSubmitting(false);
-        }
-    };
+        }, 2000);
+        
+    } catch (error) {
+        console.error('Error submitting overtime:', error);
+        setLoadingMessage('');
+    } finally {
+        setIsSubmitting(false);
+    }
+};
     
     // Calculate if all displayed employees are selected
     const allDisplayedSelected = displayedEmployees.length > 0 && 

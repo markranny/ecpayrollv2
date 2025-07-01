@@ -329,6 +329,11 @@ const SLVLForm = ({ employees, leaveTypes, payOptions, departments, onSubmit }) 
         } finally {
             setIsSubmitting(false);
         }
+
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
     };
     
     return (

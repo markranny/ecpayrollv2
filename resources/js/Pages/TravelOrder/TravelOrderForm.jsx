@@ -375,6 +375,11 @@ useEffect(() => {
         } finally {
             setIsSubmitting(false);
         }
+
+        window.scrollTo({
+            top: 0,
+            behavior: 'smooth'
+        });
     };
     
     // Calculate if all displayed employees are selected
