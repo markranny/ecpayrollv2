@@ -217,25 +217,36 @@ const OvertimeList = ({
         return description;
     };
     
-    // Function to refresh overtime data
     const refreshOvertimeData = () => {
-        setLocalProcessing(true);
-        
-        // Use router.reload to refresh the current page data
-        router.reload({
-            only: ['overtimes'], // Only reload the overtimes prop
-            preserveScroll: true,
-            onSuccess: () => {
-                setLocalProcessing(false);
-                toast.success('Data refreshed successfully');
-            },
-            onError: (errors) => {
-                console.error('Error refreshing data:', errors);
-                toast.error('Failed to refresh data');
-                setLocalProcessing(false);
-            }
-        });
-    };
+    console.log('Starting refresh...');
+    setLocalProcessing(true);
+    
+    router.reload({
+        only: ['overtimes'], // or whatever your actual prop name is
+        preserveScroll: true,
+        preserveState: true,
+        onBefore: () => {
+            console.log('About to reload...');
+        },
+        onStart: () => {
+            console.log('Reload started...');
+        },
+        onSuccess: (page) => {
+            console.log('Refresh successful, new data:', page.props);
+            setLocalProcessing(false);
+            toast.success('Data refreshed successfully');
+        },
+        onError: (errors) => {
+            console.error('Error refreshing data:', errors);
+            toast.error('Failed to refresh data');
+            setLocalProcessing(false);
+        },
+        onFinish: () => {
+            console.log('Refresh finished');
+            setLocalProcessing(false);
+        }
+    });
+};
     
     // Open detail modal
     const handleViewDetail = (overtime) => {
