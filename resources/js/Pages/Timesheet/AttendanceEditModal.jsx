@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Clock, AlertTriangle, RotateCcw, Trash2, Loader2 } from 'lucide-react';
+import { X, Save, Clock, AlertTriangle, RotateCcw, Trash2, Loader2, Info, Moon, Sun } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
@@ -60,15 +60,14 @@ const formatTime = (timeString) => {
   }
 };
 
-// Native Select TimePicker component for standard HTML selects
-const TimePicker = ({ value, onChange, name, placeholder, required }) => {
+// Enhanced TimePicker component with better UX
+const TimePicker = ({ value, onChange, name, placeholder, required, disabled = false }) => {
   // Parse the existing time value (if any) more robustly
   const parseTime = (timeStr) => {
     // Default/empty values
     if (!timeStr) return { hour: '', minute: '', period: 'AM' };
     
     try {
-      // For debugging
       console.log(`Parsing time string: "${timeStr}"`);
       
       // Handle null, undefined, or empty strings
@@ -238,7 +237,10 @@ const TimePicker = ({ value, onChange, name, placeholder, required }) => {
         <select
           value={hour || ""}
           onChange={(e) => handleTimeChange('hour', e)}
-          className="w-full py-2 pl-3 pr-10 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          disabled={disabled}
+          className={`w-full py-2 pl-3 pr-10 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+            disabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''
+          }`}
         >
           {hoursOptions()}
         </select>
@@ -251,7 +253,10 @@ const TimePicker = ({ value, onChange, name, placeholder, required }) => {
         <select
           value={minute || ""}
           onChange={(e) => handleTimeChange('minute', e)}
-          className="w-full py-2 pl-3 pr-10 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          disabled={disabled}
+          className={`w-full py-2 pl-3 pr-10 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+            disabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''
+          }`}
         >
           {minutesOptions()}
         </select>
@@ -262,7 +267,10 @@ const TimePicker = ({ value, onChange, name, placeholder, required }) => {
         <select
           value={period}
           onChange={(e) => handleTimeChange('period', e)}
-          className="w-full py-2 pl-3 pr-10 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          disabled={disabled}
+          className={`w-full py-2 pl-3 pr-10 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+            disabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''
+          }`}
         >
           <option value="AM">AM</option>
           <option value="PM">PM</option>
@@ -288,6 +296,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
   const [syncLoading, setSyncLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showNightShiftInfo, setShowNightShiftInfo] = useState(false);
 
   // Add the missing formatTimeForInput function
   const formatTimeForInput = (timeString) => {
@@ -453,94 +462,35 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
     }));
   };
 
-  // Handle sync action
-  const handleSync = async () => {
-    if (!attendance?.id) return;
+  // Enhanced Night Shift Handler with Clear Logic
+  const handleNightShiftChange = (e) => {
+    const isNightShift = e.target.checked;
     
-    setSyncLoading(true);
-    setError('');
+    setFormData(prev => ({
+      ...prev,
+      is_nightshift: isNightShift,
+      // Clear next day timeout if turning off night shift
+      next_day_timeout: isNightShift ? prev.next_day_timeout : ''
+    }));
     
+    // Show info panel for a few seconds when toggling
+    setShowNightShiftInfo(true);
+    setTimeout(() => setShowNightShiftInfo(false), 8000); // Hide after 8 seconds
+  };
+
+  // Helper to get next day for night shift
+  const getNextDay = (dateStr) => {
     try {
-      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-      
-      const response = await fetch(`/attendance/${attendance.id}/sync`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        }
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        if (onSync) {
-          onSync(data.data);
-        }
-        // Update form data with synced values
-        setFormData({
-          id: data.data.id,
-          time_in: formatTimeForInput(data.data.time_in),
-          time_out: formatTimeForInput(data.data.time_out),
-          break_in: formatTimeForInput(data.data.break_in),
-          break_out: formatTimeForInput(data.data.break_out),
-          next_day_timeout: formatTimeForInput(data.data.next_day_timeout),
-          is_nightshift: data.data.is_nightshift || false
-        });
-      } else {
-        setError('Failed to sync attendance: ' + (data.message || 'Unknown error'));
-      }
-    } catch (err) {
-      console.error('Error syncing attendance:', err);
-      setError('Error syncing attendance: ' + (err.message || 'Unknown error'));
-    } finally {
-      setSyncLoading(false);
+      const date = new Date(dateStr);
+      date.setDate(date.getDate() + 1);
+      return date.toISOString().split('T')[0]; // Return just the date part in YYYY-MM-DD format
+    } catch (error) {
+      console.error('Error calculating next day:', error);
+      return dateStr; // Return original if error
     }
   };
 
-  // Handle delete action
-  const handleDelete = async () => {
-    if (!attendance?.id) return;
-    
-    setDeleteLoading(true);
-    setError('');
-    
-    try {
-      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-      
-      const response = await fetch(`/attendance/${attendance.id}`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        }
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        if (onDelete) {
-          onDelete(attendance.id);
-        }
-        window.location.reload();
-        onClose();
-      } else {
-        setError('Failed to delete attendance: ' + (data.message || 'Unknown error'));
-      }
-    } catch (err) {
-      console.error('Error deleting attendance:', err);
-      setError('Error deleting attendance: ' + (err.message || 'Unknown error'));
-    } finally {
-      setDeleteLoading(false);
-      setShowDeleteConfirm(false);
-    }
-  };
-
-  // Handle form submission with improved validation and error handling
+  // Enhanced form submission with detailed night shift validation
   const handleSubmit = async () => {
     setError('');
     setLoading(true);
@@ -548,11 +498,28 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
     try {
       console.log('Form submission - Current data:', formData);
       
-      // Basic validation - make sure we have at least time in and time out
-      if (!formData.time_in || !formData.time_out) {
-        setError('Time In and Time Out are required');
-        setLoading(false);
-        return;
+      // Enhanced validation for night shifts
+      if (formData.is_nightshift) {
+        // For night shifts, we need either time_out OR next_day_timeout
+        if (!formData.time_out && !formData.next_day_timeout) {
+          setError('For night shifts, please provide either "Time Out" (same day) or "Next Day Timeout"');
+          setLoading(false);
+          return;
+        }
+        
+        // If both are provided, next_day_timeout takes precedence
+        if (formData.time_out && formData.next_day_timeout) {
+          setError('Please provide either "Time Out" OR "Next Day Timeout", not both');
+          setLoading(false);
+          return;
+        }
+      } else {
+        // For regular shifts, we need time_in and time_out
+        if (!formData.time_in || !formData.time_out) {
+          setError('Time In and Time Out are required for regular shifts');
+          setLoading(false);
+          return;
+        }
       }
       
       // Prepare data with original dates from attendance
@@ -571,7 +538,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
       
       console.log('Prepared submission data:', submissionData);
       
-      // Validate time sequence for non-nightshift
+      // Enhanced time sequence validation
       if (submissionData.time_in && submissionData.time_out && !formData.is_nightshift) {
         const timeIn = new Date(submissionData.time_in);
         const timeOut = new Date(submissionData.time_out);
@@ -583,7 +550,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
         }
       }
       
-      // Validate break times if BOTH are provided
+      // Enhanced break time validation
       if (submissionData.break_out && submissionData.break_in) {
         const breakOut = new Date(submissionData.break_out);
         const breakIn = new Date(submissionData.break_in);
@@ -601,8 +568,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
           return;
         }
         
-        // The employee goes on break (Break Out) and then comes back from break (Break In)
-        // So Break In should be AFTER Break Out
+        // Break In should be AFTER Break Out (employee returns from break after leaving)
         if (breakOut >= breakIn) {
           setError('Break In must be after Break Out - employee returns from break after leaving for break');
           setLoading(false);
@@ -657,16 +623,44 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
       setLoading(false);
     }
   };
-  
-  // Helper to get next day for night shift
-  const getNextDay = (dateStr) => {
+
+  // Handle delete action
+  const handleDelete = async () => {
+    if (!attendance?.id) return;
+    
+    setDeleteLoading(true);
+    setError('');
+    
     try {
-      const date = new Date(dateStr);
-      date.setDate(date.getDate() + 1);
-      return date.toISOString().split('T')[0]; // Return just the date part in YYYY-MM-DD format
-    } catch (error) {
-      console.error('Error calculating next day:', error);
-      return dateStr; // Return original if error
+      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+      
+      const response = await fetch(`/attendance/${attendance.id}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        }
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        if (onDelete) {
+          onDelete(attendance.id);
+        }
+        window.location.reload();
+        onClose();
+      } else {
+        setError('Failed to delete attendance: ' + (data.message || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Error deleting attendance:', err);
+      setError('Error deleting attendance: ' + (err.message || 'Unknown error'));
+    } finally {
+      setDeleteLoading(false);
+      setShowDeleteConfirm(false);
     }
   };
 
@@ -677,7 +671,21 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
     <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
       <div className="relative bg-white rounded-lg shadow-lg max-w-4xl w-full mx-4 md:mx-8">
         <div className="flex justify-between items-center p-6 border-b">
-          <h2 className="text-xl font-semibold text-gray-800">Edit Attendance Times</h2>
+          <div className="flex items-center space-x-3">
+            <h2 className="text-xl font-semibold text-gray-800">Edit Attendance Times</h2>
+            {formData.is_nightshift && (
+              <div className="flex items-center space-x-1 px-2 py-1 bg-purple-100 text-purple-800 rounded-full text-sm">
+                <Moon className="h-4 w-4" />
+                <span>Night Shift</span>
+              </div>
+            )}
+            {!formData.is_nightshift && (
+              <div className="flex items-center space-x-1 px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-sm">
+                <Sun className="h-4 w-4" />
+                <span>Regular Shift</span>
+              </div>
+            )}
+          </div>
           <button
             onClick={onClose}
             className="text-gray-500 hover:text-gray-700"
@@ -692,6 +700,19 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
             <Alert variant="destructive">
               <AlertTriangle className="h-4 w-4 mr-2" />
               <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
+          {/* Night Shift Information Panel */}
+          {showNightShiftInfo && (
+            <Alert className="border-purple-200 bg-purple-50">
+              <Info className="h-4 w-4 mr-2 text-purple-600" />
+              <AlertDescription className="text-purple-800">
+                <strong>Night Shift Mode:</strong> {formData.is_nightshift ? 
+                  'Use "Next Day Timeout" for employees who clock out the following day. Regular "Time Out" is for same-day clock outs.' :
+                  'Regular shift mode: Use "Time In" and "Time Out" for same-day attendance.'
+                }
+              </AlertDescription>
             </Alert>
           )}
 
@@ -712,10 +733,33 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
             </div>
           </div>
 
+          {/* Night Shift Toggle */}
+          <div className="border-2 border-dashed border-gray-200 rounded-lg p-4 bg-gray-50">
+            <div className="flex items-center mb-2">
+              <input
+                type="checkbox"
+                id="is_nightshift"
+                name="is_nightshift"
+                className="h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+                checked={formData.is_nightshift}
+                onChange={handleNightShiftChange}
+              />
+              <label htmlFor="is_nightshift" className="ml-2 block text-sm font-medium text-gray-900">
+                <div className="flex items-center space-x-2">
+                  <Moon className="h-4 w-4 text-purple-600" />
+                  <span>Night Shift</span>
+                </div>
+              </label>
+            </div>
+            <p className="text-xs text-gray-600 ml-6">
+              Check this if the employee works overnight and may clock out the next day
+            </p>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
               <label htmlFor="time_in" className="block text-sm font-medium text-gray-700 mb-2">
-                Time In
+                Time In <span className="text-red-500">*</span>
               </label>
               <div className="relative">
                 <Clock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 z-10" />
@@ -733,7 +777,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
 
             <div>
               <label htmlFor="time_out" className="block text-sm font-medium text-gray-700 mb-2">
-                Time Out
+                Time Out {formData.is_nightshift ? '(Same Day)' : <span className="text-red-500">*</span>}
               </label>
               <div className="relative">
                 <Clock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 z-10" />
@@ -743,15 +787,21 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
                     value={formData.time_out}
                     onChange={handleChange}
                     placeholder="5:30 PM"
-                    required
+                    required={!formData.is_nightshift}
+                    disabled={formData.is_nightshift && formData.next_day_timeout}
                   />
                 </div>
               </div>
+              {formData.is_nightshift && (
+                <p className="mt-1 text-xs text-gray-500">
+                  Only use this if employee clocks out on the same day. Otherwise, use "Next Day Timeout" below.
+                </p>
+              )}
             </div>
 
             <div>
               <label htmlFor="break_out" className="block text-sm font-medium text-gray-700 mb-2">
-                Break Out
+                Break Out (Optional)
               </label>
               <div className="relative">
                 <Clock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 z-10" />
@@ -764,11 +814,14 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
                   />
                 </div>
               </div>
+              <p className="mt-1 text-xs text-gray-500">
+                When employee leaves for break/lunch
+              </p>
             </div>
 
             <div>
               <label htmlFor="break_in" className="block text-sm font-medium text-gray-700 mb-2">
-                Break In
+                Break In (Optional)
               </label>
               <div className="relative">
                 <Clock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 z-10" />
@@ -781,45 +834,64 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
                   />
                 </div>
               </div>
+              <p className="mt-1 text-xs text-gray-500">
+                When employee returns from break/lunch
+              </p>
             </div>
           </div>
 
-          <div className="border-t border-gray-200 pt-6 mt-6">
-            <div className="flex items-center mb-4">
-              <input
-                type="checkbox"
-                id="is_nightshift"
-                name="is_nightshift"
-                className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
-                checked={formData.is_nightshift}
-                onChange={handleChange}
-              />
-              <label htmlFor="is_nightshift" className="ml-2 block text-sm text-gray-900">
-                Night Shift
-              </label>
-            </div>
-
-            {formData.is_nightshift && (
+          {/* Night Shift Next Day Timeout */}
+          {formData.is_nightshift && (
+            <div className="border-2 border-purple-200 rounded-lg p-4 bg-purple-50">
               <div>
-                <label htmlFor="next_day_timeout" className="block text-sm font-medium text-gray-700 mb-2">
-                  Next Day Timeout
+                <label htmlFor="next_day_timeout" className="block text-sm font-medium text-purple-800 mb-2">
+                  <div className="flex items-center space-x-2">
+                    <Moon className="h-4 w-4" />
+                    <span>Next Day Timeout</span>
+                    {!formData.time_out && <span className="text-red-500">*</span>}
+                  </div>
                 </label>
                 <div className="relative">
-                  <Clock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400 z-10" />
+                  <Clock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-purple-600 z-10" />
                   <div className="pl-10">
                     <TimePicker
                       name="next_day_timeout"
                       value={formData.next_day_timeout}
                       onChange={handleChange}
                       placeholder="6:00 AM"
+                      disabled={!!formData.time_out}
                     />
                   </div>
                 </div>
-                <p className="mt-2 text-xs text-gray-500">
-                  For night shifts, specify when the employee clocked out on the following day.
+                <p className="mt-2 text-xs text-purple-700">
+                  <strong>For night shifts only:</strong> When the employee clocks out on the following day (e.g., 6:00 AM the next morning).
+                  {formData.time_out && (
+                    <span className="block mt-1 text-purple-600 font-medium">
+                      Disabled because "Time Out" is already set. Clear "Time Out" to use this field.
+                    </span>
+                  )}
                 </p>
               </div>
-            )}
+            </div>
+          )}
+
+          {/* Usage Instructions */}
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-start">
+              <Info className="h-5 w-5 text-blue-600 mt-0.5 mr-2 flex-shrink-0" />
+              <div className="text-sm text-blue-800">
+                <h4 className="font-medium mb-2">How to Use:</h4>
+                <div className="space-y-1">
+                  <p><strong>Regular Shifts:</strong> Use "Time In" and "Time Out" for same-day attendance</p>
+                  <p><strong>Night Shifts:</strong> Check "Night Shift" box, then either:</p>
+                  <ul className="ml-4 mt-1 space-y-1">
+                    <li>• Use "Time Out" if employee clocks out the same day</li>
+                    <li>• Use "Next Day Timeout" if employee clocks out the following day</li>
+                  </ul>
+                  <p><strong>Break Times:</strong> "Break Out" = leaving for break, "Break In" = returning from break</p>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Delete Confirmation Dialog */}
@@ -869,45 +941,6 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
 
           <div className="bg-gray-50 p-6 -mx-6 -mb-6 mt-6 flex justify-between items-center border-t">
             <div className="flex space-x-2">
-              {/* <Button
-                type="button"
-                variant="outline"
-                onClick={handleSync}
-                disabled={syncLoading}
-                className="text-blue-600 border-blue-300 hover:bg-blue-50"
-              >
-                {syncLoading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Syncing...
-                  </>
-                ) : (
-                  <>
-                    <RotateCcw className="h-4 w-4 mr-2" />
-                    Sync
-                  </>
-                )}
-              </Button> */}
-              {/* <Button
-                type="button"
-                variant="outline"
-                onClick={handleSync}
-                disabled={syncLoading}
-                className="text-blue-600 border-blue-300 hover:bg-blue-50"
-              >
-                {syncLoading ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    Syncing...
-                  </>
-                ) : (
-                  <>
-                    <RotateCcw className="h-4 w-4 mr-2" />
-                    Sync
-                  </>
-                )}
-              </Button> */}
-              
               <Button
                 type="button"
                 variant="outline"

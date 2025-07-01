@@ -39,7 +39,7 @@ const ProcessedAttendanceList = () => {
   
   // Delete modal state
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deleteMode, setDeleteMode] = useState('selected'); // 'selected' or 'range'
+  const [deleteMode, setDeleteMode] = useState('selected');
   const [deleteRange, setDeleteRange] = useState({
     start_date: '',
     end_date: '',
@@ -309,8 +309,12 @@ const ProcessedAttendanceList = () => {
     }
   };
 
-  // Handle individual checkbox change
-  const handleCheckboxChange = (id, checked) => {
+  // Handle individual checkbox change - FIXED: Prevent event bubbling
+  const handleCheckboxChange = (e, id) => {
+    // Stop event propagation to prevent conflicts
+    e.stopPropagation();
+    
+    const checked = e.target.checked;
     if (checked) {
       setSelectedIds(prev => [...prev, id]);
     } else {
@@ -435,8 +439,13 @@ const ProcessedAttendanceList = () => {
     }, 0);
   };
 
-  // Handle edit button click
-  const handleEditClick = (attendance) => {
+  // FIXED: Handle edit button click - prevent event bubbling and ensure single click
+  const handleEditClick = (e, attendance) => {
+    // Prevent event bubbling
+    e.stopPropagation();
+    e.preventDefault();
+    
+    console.log('Edit clicked for:', attendance.id);
     setSelectedAttendance(attendance);
     setShowEditModal(true);
   };
@@ -756,13 +765,19 @@ const ProcessedAttendanceList = () => {
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200 overflow-y-auto">
                           {attendances.map((attendance) => (
-                            <tr key={attendance.id} className={attendance.source === 'manual_edit' ? 'bg-red-50' : ''}>
-                              <td className="px-2 py-4 whitespace-nowrap">
+                            <tr 
+                              key={attendance.id} 
+                              className={`hover:bg-gray-50 ${attendance.source === 'manual_edit' ? 'bg-red-50' : ''}`}
+                            >
+                              <td 
+                                className="px-2 py-4 whitespace-nowrap"
+                                onClick={(e) => e.stopPropagation()} // Prevent row click when clicking checkbox area
+                              >
                                 <input
                                   type="checkbox"
                                   className="form-checkbox h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
                                   checked={selectedIds.includes(attendance.id)}
-                                  onChange={(e) => handleCheckboxChange(attendance.id, e.target.checked)}
+                                  onChange={(e) => handleCheckboxChange(e, attendance.id)}
                                 />
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap">
@@ -798,7 +813,7 @@ const ProcessedAttendanceList = () => {
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
                                 {attendance.is_nightshift && attendance.next_day_timeout ? (
-                                  <span className="text-purple-600">{formatTime(attendance.next_day_timeout)}</span>
+                                  <span className="text-purple-600 font-medium">{formatTime(attendance.next_day_timeout)}</span>
                                 ) : (
                                   '-'
                                 )}
@@ -871,7 +886,7 @@ const ProcessedAttendanceList = () => {
                                 <Button 
                                   variant="ghost" 
                                   size="sm"
-                                  onClick={() => handleEditClick(attendance)}
+                                  onClick={(e) => handleEditClick(e, attendance)}
                                   className="text-blue-600 hover:text-blue-900"
                                 >
                                   <Edit className="h-4 w-4 mr-1" />
