@@ -1,7 +1,7 @@
 // resources/js/Pages/Overtime/OvertimeForm.jsx
 import React, { useState, useEffect } from 'react';
 import { format } from 'date-fns';
-import { HelpCircle, Loader2 } from 'lucide-react';
+import { HelpCircle, Loader2, Info } from 'lucide-react';
 import OvertimeRateHelpModal from './OvertimeRateHelpModal';
 
 const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => {
@@ -13,9 +13,11 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
         date: today,
         start_time: '17:00',
         end_time: '20:00',
-        overtime_hours: '3.00', // Add manual overtime hours field
+        overtime_hours: '3.00',
         reason: '',
-        rate_multiplier: rateMultipliers.length > 0 ? rateMultipliers[0].value : 1.25
+        rate_multiplier: rateMultipliers.length > 0 ? rateMultipliers[0].value : 1.25,
+        overtime_type: 'regular_weekday',
+        has_night_differential: false
     });
     
     // Loading and processing states
@@ -30,110 +32,151 @@ const OvertimeForm = ({ employees, departments, rateMultipliers, onSubmit }) => 
     // Rate help modal state
     const [showRateHelpModal, setShowRateHelpModal] = useState(false);
     
-    // Enhanced useEffect for employee filtering and sorting
-useEffect(() => {
-    // Define our categories of employees with clear priorities
-    let selectedAndExactMatch = [];      // Priority 1: Selected + Exact match
-    let selectedAndPartialMatch = [];    // Priority 2: Selected + Partial match  
-    let selectedButNotMatched = [];      // Priority 3: Selected but no search match
-    let exactSearchMatches = [];         // Priority 4: Not selected + Exact match
-    let partialSearchMatches = [];       // Priority 5: Not selected + Partial match
-    let otherEmployees = [];             // Priority 6: Everything else
-    
-    employees.forEach(employee => {
-        const isSelected = formData.employee_ids.includes(employee.id);
-        
-        // Check search match
-        let matchesSearch = true;
-        let exactMatch = false;
-        
-        if (searchTerm) {
-            const term = searchTerm.toLowerCase().trim();
-            const fullName = `${employee.Fname} ${employee.Lname}`.toLowerCase();
-            const reverseName = `${employee.Lname} ${employee.Fname}`.toLowerCase();
-            const employeeId = employee.idno?.toString().toLowerCase();
-            
-            // Check for exact match first
-            if (
-                employee.Lname.toLowerCase() === term || 
-                employee.Fname.toLowerCase() === term ||
-                fullName === term ||
-                reverseName === term ||
-                employeeId === term
-            ) {
-                exactMatch = true;
-                matchesSearch = true;
-            } else {
-                // Check for partial match
-                matchesSearch = 
-                    employee.Fname.toLowerCase().includes(term) || 
-                    employee.Lname.toLowerCase().includes(term) || 
-                    employeeId?.includes(term);
-            }
-        }
-        
-        // Check department match - using proper department relationship
-        let matchesDepartment = true;
-        if (selectedDepartment) {
-            const employeeDepartment = employee.department?.name || employee.Department;
-            matchesDepartment = employeeDepartment === selectedDepartment;
-        }
-        
-        // Skip if doesn't match department filter
-        if (!matchesDepartment) {
-            return;
-        }
-        
-        // Categorize based on selection status and search matches
-        if (isSelected && exactMatch) {
-            selectedAndExactMatch.push(employee);
-        } else if (isSelected && matchesSearch) {
-            selectedAndPartialMatch.push(employee);
-        } else if (isSelected) {
-            selectedButNotMatched.push(employee);
-        } else if (exactMatch) {
-            exactSearchMatches.push(employee);
-        } else if (matchesSearch) {
-            partialSearchMatches.push(employee);
-        } else if (!searchTerm) {
-            // Only show non-matching employees when no search term
-            otherEmployees.push(employee);
-        }
-    });
-    
-    // Sort each category alphabetically by last name
-    const sortByName = (a, b) => {
-        const aName = `${a.Lname}, ${a.Fname}`.toLowerCase();
-        const bName = `${b.Lname}, ${b.Fname}`.toLowerCase();
-        return aName.localeCompare(bName);
+    // Overtime type options
+    const overtimeTypes = {
+        'regular_weekday': 'Regular Weekday Overtime',
+        'rest_day': 'Rest Day Work',
+        'scheduled_rest_day': 'Scheduled Rest Day Work',
+        'regular_holiday': 'Regular Holiday Work',
+        'special_holiday': 'Special Holiday Work',
+        'emergency_work': 'Emergency Work',
+        'extended_shift': 'Extended Shift',
+        'weekend_work': 'Weekend Work',
+        'night_shift': 'Night Shift Work',
+        'other': 'Other'
     };
     
-    selectedAndExactMatch.sort(sortByName);
-    selectedAndPartialMatch.sort(sortByName);
-    selectedButNotMatched.sort(sortByName);
-    exactSearchMatches.sort(sortByName);
-    partialSearchMatches.sort(sortByName);
-    otherEmployees.sort(sortByName);
+    // Auto-detect overtime type and night differential based on date and time
+    const autoDetectOvertimeType = () => {
+        const selectedDate = new Date(formData.date);
+        const dayOfWeek = selectedDate.getDay(); // 0 = Sunday, 6 = Saturday
+        const startTime = formData.start_time;
+        const endTime = formData.end_time;
+        
+        // Check if it's weekend
+        const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+        
+        // Check if it overlaps with night hours (10 PM to 6 AM)
+        const startHour = parseInt(startTime.split(':')[0]);
+        const endHour = parseInt(endTime.split(':')[0]);
+        const hasNightHours = startHour >= 22 || endHour <= 6 || (startHour > endHour);
+        
+        let detectedType = 'regular_weekday';
+        if (isWeekend) {
+            detectedType = 'rest_day';
+        }
+        
+        setFormData(prev => ({
+            ...prev,
+            overtime_type: detectedType,
+            has_night_differential: hasNightHours
+        }));
+    };
     
-    // Combine all categories in priority order
-    const result = [
-        ...selectedAndExactMatch,
-        ...selectedAndPartialMatch,
-        ...selectedButNotMatched,
-        ...exactSearchMatches,
-        ...partialSearchMatches,
-        ...otherEmployees
-    ];
-    
-    setDisplayedEmployees(result);
-}, [searchTerm, selectedDepartment, employees, formData.employee_ids]);
+    // Enhanced useEffect for employee filtering and sorting
+    useEffect(() => {
+        // Define our categories of employees with clear priorities
+        let selectedAndExactMatch = [];      // Priority 1: Selected + Exact match
+        let selectedAndPartialMatch = [];    // Priority 2: Selected + Partial match  
+        let selectedButNotMatched = [];      // Priority 3: Selected but no search match
+        let exactSearchMatches = [];         // Priority 4: Not selected + Exact match
+        let partialSearchMatches = [];       // Priority 5: Not selected + Partial match
+        let otherEmployees = [];             // Priority 6: Everything else
+        
+        employees.forEach(employee => {
+            const isSelected = formData.employee_ids.includes(employee.id);
+            
+            // Check search match
+            let matchesSearch = true;
+            let exactMatch = false;
+            
+            if (searchTerm) {
+                const term = searchTerm.toLowerCase().trim();
+                const fullName = `${employee.Fname} ${employee.Lname}`.toLowerCase();
+                const reverseName = `${employee.Lname} ${employee.Fname}`.toLowerCase();
+                const employeeId = employee.idno?.toString().toLowerCase();
+                
+                // Check for exact match first
+                if (
+                    employee.Lname.toLowerCase() === term || 
+                    employee.Fname.toLowerCase() === term ||
+                    fullName === term ||
+                    reverseName === term ||
+                    employeeId === term
+                ) {
+                    exactMatch = true;
+                    matchesSearch = true;
+                } else {
+                    // Check for partial match
+                    matchesSearch = 
+                        employee.Fname.toLowerCase().includes(term) || 
+                        employee.Lname.toLowerCase().includes(term) || 
+                        employeeId?.includes(term);
+                }
+            }
+            
+            // Check department match - using proper department relationship
+            let matchesDepartment = true;
+            if (selectedDepartment) {
+                const employeeDepartment = employee.department?.name || employee.Department;
+                matchesDepartment = employeeDepartment === selectedDepartment;
+            }
+            
+            // Skip if doesn't match department filter
+            if (!matchesDepartment) {
+                return;
+            }
+            
+            // Categorize based on selection status and search matches
+            if (isSelected && exactMatch) {
+                selectedAndExactMatch.push(employee);
+            } else if (isSelected && matchesSearch) {
+                selectedAndPartialMatch.push(employee);
+            } else if (isSelected) {
+                selectedButNotMatched.push(employee);
+            } else if (exactMatch) {
+                exactSearchMatches.push(employee);
+            } else if (matchesSearch) {
+                partialSearchMatches.push(employee);
+            } else if (!searchTerm) {
+                // Only show non-matching employees when no search term
+                otherEmployees.push(employee);
+            }
+        });
+        
+        // Sort each category alphabetically by last name
+        const sortByName = (a, b) => {
+            const aName = `${a.Lname}, ${a.Fname}`.toLowerCase();
+            const bName = `${b.Lname}, ${b.Fname}`.toLowerCase();
+            return aName.localeCompare(bName);
+        };
+        
+        selectedAndExactMatch.sort(sortByName);
+        selectedAndPartialMatch.sort(sortByName);
+        selectedButNotMatched.sort(sortByName);
+        exactSearchMatches.sort(sortByName);
+        partialSearchMatches.sort(sortByName);
+        otherEmployees.sort(sortByName);
+        
+        // Combine all categories in priority order
+        const result = [
+            ...selectedAndExactMatch,
+            ...selectedAndPartialMatch,
+            ...selectedButNotMatched,
+            ...exactSearchMatches,
+            ...partialSearchMatches,
+            ...otherEmployees
+        ];
+        
+        setDisplayedEmployees(result);
+    }, [searchTerm, selectedDepartment, employees, formData.employee_ids]);
     
     // Handle input changes
     const handleChange = (e) => {
-        const { name, value } = e.target;
+        const { name, value, type, checked } = e.target;
         setFormData({
             ...formData,
-            [name]: value
+            [name]: type === 'checkbox' ? checked : value
         });
     };
     
@@ -191,36 +234,6 @@ useEffect(() => {
         });
     };
     
-    // Handle department selection for bulk operations
-    const handleSelectByDepartment = (department) => {
-        // Filter employees by department using proper relationship
-        const departmentEmployees = employees.filter(emp => {
-            const employeeDepartment = emp.department?.name || emp.Department;
-            return employeeDepartment === department;
-        });
-        const departmentIds = departmentEmployees.map(emp => emp.id);
-        
-        setFormData(prevData => {
-            // Check if all employees from this department are already selected
-            const allDeptSelected = departmentIds.every(id => prevData.employee_ids.includes(id));
-            
-            if (allDeptSelected) {
-                // If all are selected, deselect them
-                return {
-                    ...prevData,
-                    employee_ids: prevData.employee_ids.filter(id => !departmentIds.includes(id))
-                };
-            } else {
-                // Select all employees from this department
-                const remainingIds = prevData.employee_ids.filter(id => !departmentIds.includes(id));
-                return {
-                    ...prevData,
-                    employee_ids: [...remainingIds, ...departmentIds]
-                };
-            }
-        });
-    };
-    
     // Handle form submission
     const handleSubmit = async (e) => {
         e.preventDefault();
@@ -237,12 +250,6 @@ useEffect(() => {
             alert('Please fill in all required fields');
             return;
         }
-        
-        // Removed the time validation that was preventing overnight shifts
-        // if (formData.start_time >= formData.end_time) {
-        //     alert('End time must be after start time');
-        //     return;
-        // }
         
         if (!formData.reason.trim()) {
             alert('Please provide a reason for the overtime');
@@ -277,7 +284,9 @@ useEffect(() => {
                 end_time: '20:00',
                 overtime_hours: '3.00',
                 reason: '',
-                rate_multiplier: rateMultipliers.length > 0 ? rateMultipliers[0].value : 1.25
+                rate_multiplier: rateMultipliers.length > 0 ? rateMultipliers[0].value : 1.25,
+                overtime_type: 'regular_weekday',
+                has_night_differential: false
             });
             
             // Reset filters
@@ -305,22 +314,6 @@ useEffect(() => {
     
     // Get selected employees details for display
     const selectedEmployees = employees.filter(emp => formData.employee_ids.includes(emp.id));
-    
-    // Get department statistics for quick selection
-    const departmentStats = departments.map(dept => {
-        // Filter employees by department using proper relationship
-        const deptEmployees = employees.filter(emp => {
-            const employeeDepartment = emp.department?.name || emp.Department;
-            return employeeDepartment === dept;
-        });
-        const selectedFromDept = deptEmployees.filter(emp => formData.employee_ids.includes(emp.id));
-        return {
-            name: dept,
-            total: deptEmployees.length,
-            selected: selectedFromDept.length,
-            allSelected: deptEmployees.length > 0 && selectedFromDept.length === deptEmployees.length
-        };
-    });
 
     return (
         <div className="bg-white shadow-md rounded-lg overflow-hidden">
@@ -527,7 +520,20 @@ useEffect(() => {
                                 </div>
                             </div>
                             
-                            {/* New Manual Overtime Hours Field */}
+                            {/* Auto-detect button */}
+                            <div className="flex justify-end">
+                                <button
+                                    type="button"
+                                    onClick={autoDetectOvertimeType}
+                                    className="text-xs text-indigo-600 hover:text-indigo-800 flex items-center disabled:opacity-50"
+                                    disabled={isSubmitting}
+                                >
+                                    <Info className="h-3 w-3 mr-1" />
+                                    Auto-detect overtime type
+                                </button>
+                            </div>
+                            
+                            {/* Overtime Hours */}
                             <div>
                                 <label htmlFor="overtime_hours" className="block text-sm font-medium text-gray-700 mb-1">
                                     Overtime Hours <span className="text-red-600">*</span>
@@ -551,6 +557,51 @@ useEffect(() => {
                                 </p>
                             </div>
                             
+                            {/* Overtime Type */}
+                            <div>
+                                <label htmlFor="overtime_type" className="block text-sm font-medium text-gray-700 mb-1">
+                                    Overtime Type <span className="text-red-600">*</span>
+                                </label>
+                                <select
+                                    id="overtime_type"
+                                    name="overtime_type"
+                                    className="w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                    value={formData.overtime_type}
+                                    onChange={handleChange}
+                                    disabled={isSubmitting}
+                                    required
+                                >
+                                    {Object.entries(overtimeTypes).map(([value, label]) => (
+                                        <option key={value} value={value}>{label}</option>
+                                    ))}
+                                </select>
+                                <p className="mt-1 text-xs text-gray-500">
+                                    Select the category that best describes this overtime work.
+                                </p>
+                            </div>
+                            
+                            {/* Night Differential */}
+                            <div>
+                                <div className="flex items-center">
+                                    <input
+                                        type="checkbox"
+                                        id="has_night_differential"
+                                        name="has_night_differential"
+                                        className="rounded border-gray-300 text-indigo-600 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                        checked={formData.has_night_differential}
+                                        onChange={handleChange}
+                                        disabled={isSubmitting}
+                                    />
+                                    <label htmlFor="has_night_differential" className="ml-2 block text-sm text-gray-700">
+                                        Night Differential (10PM - 6AM)
+                                    </label>
+                                </div>
+                                <p className="mt-1 text-xs text-gray-500">
+                                    Check this if any part of the overtime work falls between 10PM and 6AM.
+                                </p>
+                            </div>
+                            
+                            {/* Rate Multiplier */}
                             <div>
                                 <div className="flex items-center justify-between">
                                     <label htmlFor="rate_multiplier" className="block text-sm font-medium text-gray-700 mb-1">

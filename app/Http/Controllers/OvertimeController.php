@@ -36,6 +36,7 @@ class OvertimeController extends Controller
             ['value' => 1.30, 'label' => 'Rest Day/Special Day (130%)'],
             ['value' => 1.50, 'label' => 'Scheduled Rest Day (150%)'],
             ['value' => 2.00, 'label' => 'Regular Holiday (200%)'],
+            
             ['value' => 1.69, 'label' => 'Rest Day/Special Day Overtime (169%)'],
             ['value' => 1.95, 'label' => 'Scheduled Rest Day Overtime (195%)'],
             ['value' => 2.60, 'label' => 'Regular Holiday Overtime (260%)'],

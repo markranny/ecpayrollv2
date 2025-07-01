@@ -19,6 +19,7 @@ const OvertimeList = ({
     const [selectedOvertime, setSelectedOvertime] = useState(null);
     const [showModal, setShowModal] = useState(false);
     const [filterStatus, setFilterStatus] = useState('');
+    const [filterOvertimeType, setFilterOvertimeType] = useState(''); // New filter
     const [filteredOvertimes, setFilteredOvertimes] = useState(overtimes || []);
     const [localOvertimes, setLocalOvertimes] = useState(overtimes || []);
     const timerRef = useRef(null);
@@ -38,11 +39,25 @@ const OvertimeList = ({
     const [showBulkActionModal, setShowBulkActionModal] = useState(false);
     const [selectAll, setSelectAll] = useState(false);
     
+    // Overtime type options for filtering
+    const overtimeTypes = {
+        'regular_weekday': 'Regular Weekday',
+        'rest_day': 'Rest Day',
+        'scheduled_rest_day': 'Scheduled Rest Day',
+        'regular_holiday': 'Regular Holiday',
+        'special_holiday': 'Special Holiday',
+        'emergency_work': 'Emergency Work',
+        'extended_shift': 'Extended Shift',
+        'weekend_work': 'Weekend Work',
+        'night_shift': 'Night Shift',
+        'other': 'Other'
+    };
+    
     // Update local state when props change
     useEffect(() => {
         if (!overtimes) return; // Guard against undefined overtimes prop
         setLocalOvertimes(overtimes);
-        applyFilters(overtimes, filterStatus, searchTerm, dateRange);
+        applyFilters(overtimes, filterStatus, filterOvertimeType, searchTerm, dateRange);
     }, [overtimes]);
     
     // Set up auto-refresh timer
@@ -54,7 +69,7 @@ const OvertimeList = ({
                 if (typeof window.refreshOvertimes === 'function') {
                     const freshData = await window.refreshOvertimes();
                     setLocalOvertimes(freshData);
-                    applyFilters(freshData, filterStatus, searchTerm, dateRange);
+                    applyFilters(freshData, filterStatus, filterOvertimeType, searchTerm, dateRange);
                 }
             } catch (error) {
                 console.error('Error refreshing overtime data:', error);
@@ -72,15 +87,20 @@ const OvertimeList = ({
                 clearInterval(timerRef.current);
             }
         };
-    }, [refreshInterval, filterStatus, searchTerm, dateRange, processing, localProcessing]);
+    }, [refreshInterval, filterStatus, filterOvertimeType, searchTerm, dateRange, processing, localProcessing]);
     
     // Function to apply all filters
-    const applyFilters = (data, status, search, dates) => {
+    const applyFilters = (data, status, overtimeType, search, dates) => {
         let result = [...data];
         
         // Apply status filter
         if (status) {
             result = result.filter(ot => ot.status === status);
+        }
+        
+        // Apply overtime type filter
+        if (overtimeType) {
+            result = result.filter(ot => ot.overtime_type === overtimeType);
         }
         
         // Apply search filter
@@ -96,7 +116,9 @@ const OvertimeList = ({
                 // Search by department
                 (ot.employee && ot.employee.Department && ot.employee.Department.toLowerCase().includes(searchLower)) ||
                 // Search by reason
-                (ot.reason && ot.reason.toLowerCase().includes(searchLower))
+                (ot.reason && ot.reason.toLowerCase().includes(searchLower)) ||
+                // Search by overtime type
+                (ot.overtime_type && ot.overtime_type.toLowerCase().includes(searchLower))
             );
         }
         
@@ -137,7 +159,15 @@ const OvertimeList = ({
         if (processing || localProcessing) return;
         const status = e.target.value;
         setFilterStatus(status);
-        applyFilters(localOvertimes, status, searchTerm, dateRange);
+        applyFilters(localOvertimes, status, filterOvertimeType, searchTerm, dateRange);
+    };
+    
+    // Handle overtime type filter change
+    const handleOvertimeTypeFilterChange = (e) => {
+        if (processing || localProcessing) return;
+        const overtimeType = e.target.value;
+        setFilterOvertimeType(overtimeType);
+        applyFilters(localOvertimes, filterStatus, overtimeType, searchTerm, dateRange);
     };
     
     // Handle search input change
@@ -145,7 +175,7 @@ const OvertimeList = ({
         if (processing || localProcessing) return;
         const value = e.target.value;
         setSearchTerm(value);
-        applyFilters(localOvertimes, filterStatus, value, dateRange);
+        applyFilters(localOvertimes, filterStatus, filterOvertimeType, value, dateRange);
     };
     
     // Handle date range changes
@@ -153,16 +183,31 @@ const OvertimeList = ({
         if (processing || localProcessing) return;
         const newDateRange = { ...dateRange, [field]: value };
         setDateRange(newDateRange);
-        applyFilters(localOvertimes, filterStatus, searchTerm, newDateRange);
+        applyFilters(localOvertimes, filterStatus, filterOvertimeType, searchTerm, newDateRange);
     };
     
     // Clear all filters
     const clearFilters = () => {
         if (processing || localProcessing) return;
         setFilterStatus('');
+        setFilterOvertimeType('');
         setSearchTerm('');
         setDateRange({ from: '', to: '' });
-        applyFilters(localOvertimes, '', '', { from: '', to: '' });
+        applyFilters(localOvertimes, '', '', '', { from: '', to: '' });
+    };
+    
+    // Get overtime type label
+    const getOvertimeTypeLabel = (type) => {
+        return overtimeTypes[type] || type?.replace('_', ' ')?.replace(/\b\w/g, l => l.toUpperCase()) || 'Unknown';
+    };
+    
+    // Format overtime type with night differential
+    const formatOvertimeDescription = (overtime) => {
+        let description = getOvertimeTypeLabel(overtime.overtime_type);
+        if (overtime.has_night_differential) {
+            description += ' (Night Diff.)';
+        }
+        return description;
     };
     
     // Open detail modal
@@ -190,7 +235,7 @@ const OvertimeList = ({
                     if (typeof window.refreshOvertimes === 'function') {
                         const freshData = await window.refreshOvertimes();
                         setLocalOvertimes(freshData);
-                        applyFilters(freshData, filterStatus, searchTerm, dateRange);
+                        applyFilters(freshData, filterStatus, filterOvertimeType, searchTerm, dateRange);
                     }
                 } catch (error) {
                     console.error('Error refreshing overtime data:', error);
@@ -257,7 +302,7 @@ const OvertimeList = ({
                     setLocalOvertimes(updatedOvertimes);
                     
                     // Apply filters to the updated list
-                    applyFilters(updatedOvertimes, filterStatus, searchTerm, dateRange);
+                    applyFilters(updatedOvertimes, filterStatus, filterOvertimeType, searchTerm, dateRange);
                     
                     toast.success('Overtime deleted successfully');
                     setDeletingId(null);
@@ -423,6 +468,10 @@ const OvertimeList = ({
             queryParams.append('status', filterStatus);
         }
         
+        if (filterOvertimeType) {
+            queryParams.append('overtime_type', filterOvertimeType);
+        }
+        
         if (searchTerm) {
             queryParams.append('search', searchTerm);
         }
@@ -561,6 +610,22 @@ const OvertimeList = ({
                                 <option value="rejected">Rejected</option>
                             </select>
                         </div>
+                        
+                        {/* Overtime Type Filter */}
+                        <div className="flex items-center">
+                            <select
+                                id="overtimeTypeFilter"
+                                className="rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
+                                value={filterOvertimeType}
+                                onChange={handleOvertimeTypeFilterChange}
+                                disabled={processing || localProcessing}
+                            >
+                                <option value="">All Types</option>
+                                {Object.entries(overtimeTypes).map(([value, label]) => (
+                                    <option key={value} value={value}>{label}</option>
+                                ))}
+                            </select>
+                        </div>
                     </div>
                 </div>
                 
@@ -610,7 +675,7 @@ const OvertimeList = ({
                         </div>
                         
                         {/* Clear filters button */}
-                        {(filterStatus || searchTerm || dateRange.from || dateRange.to) && (
+                        {(filterStatus || filterOvertimeType || searchTerm || dateRange.from || dateRange.to) && (
                             <button
                                 onClick={clearFilters}
                                 className="px-3 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md text-sm flex items-center disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200"
@@ -650,6 +715,9 @@ const OvertimeList = ({
                                 Hours
                             </th>
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                Type
+                            </th>
+                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                 Rate
                             </th>
                             <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
@@ -666,7 +734,7 @@ const OvertimeList = ({
                     <tbody className="bg-white divide-y divide-gray-200">
                         {filteredOvertimes.length === 0 ? (
                             <tr>
-                                <td colSpan={selectableItemsCount > 0 ? "8" : "7"} className="px-6 py-4 text-center text-sm text-gray-500">
+                                <td colSpan={selectableItemsCount > 0 ? "9" : "8"} className="px-6 py-4 text-center text-sm text-gray-500">
                                     {processing || localProcessing ? 'Loading overtime records...' : 'No overtime records found'}
                                 </td>
                             </tr>
@@ -712,6 +780,11 @@ const OvertimeList = ({
                                         {overtime.total_hours !== undefined ? 
                                             parseFloat(overtime.total_hours).toFixed(2) : 
                                             'N/A'}
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap">
+                                        <div className="text-sm text-gray-900">
+                                            {formatOvertimeDescription(overtime)}
+                                        </div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                         {overtime.rate_multiplier ? `${overtime.rate_multiplier}x` : 'N/A'}

@@ -1,5 +1,5 @@
 // In OvertimeDetailModal.jsx
-// Corrected version with proper modal management and status handling
+// Updated version with overtime type information display
 
 import React, { useState } from 'react';
 import { format } from 'date-fns';
@@ -8,6 +8,20 @@ import OvertimeStatusBadge from './OvertimeStatusBadge';
 const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}, viewOnly = false }) => {
     const [remarks, setRemarks] = useState('');
     const [processing, setProcessing] = useState(false);
+    
+    // Overtime type labels
+    const overtimeTypes = {
+        'regular_weekday': 'Regular Weekday Overtime',
+        'rest_day': 'Rest Day Work',
+        'scheduled_rest_day': 'Scheduled Rest Day Work', 
+        'regular_holiday': 'Regular Holiday Work',
+        'special_holiday': 'Special Holiday Work',
+        'emergency_work': 'Emergency Work',
+        'extended_shift': 'Extended Shift',
+        'weekend_work': 'Weekend Work',
+        'night_shift': 'Night Shift Work',
+        'other': 'Other'
+    };
     
     const handleStatusChange = (status) => {
         if (processing) return;
@@ -108,6 +122,11 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
             console.error('Error formatting datetime:', error);
             return 'Invalid datetime';
         }
+    };
+    
+    // Get overtime type label
+    const getOvertimeTypeLabel = (type) => {
+        return overtimeTypes[type] || type?.replace('_', ' ')?.replace(/\b\w/g, l => l.toUpperCase()) || 'Unknown';
     };
     
     // Enhanced role checks with null safety
@@ -242,6 +261,18 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                                             : 'N/A'}
                                     </div>
                                     
+                                    <div className="text-sm font-medium text-gray-500">Overtime Type</div>
+                                    <div className="mt-1 text-sm text-gray-900 sm:mt-0">
+                                        <div className="flex flex-col">
+                                            <span>{getOvertimeTypeLabel(overtime.overtime_type)}</span>
+                                            {overtime.has_night_differential && (
+                                                <span className="text-xs text-blue-600 mt-1">
+                                                    ✓ Night Differential (10PM - 6AM)
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    
                                     <div className="text-sm font-medium text-gray-500">Rate Multiplier</div>
                                     <div className="mt-1 text-sm text-gray-900 sm:mt-0">
                                         {overtime.rate_multiplier ? `${overtime.rate_multiplier}x` : 'N/A'}
@@ -270,6 +301,51 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Reason:</label>
                                     <div className="border rounded-md p-3 bg-gray-50 text-sm text-gray-900">
                                         {overtime.reason || 'No reason provided'}
+                                    </div>
+                                </div>
+                                
+                                {/* Enhanced Overtime Classification Section */}
+                                <div className="mt-4 border-t border-gray-200 pt-4">
+                                    <h4 className="text-md font-medium text-gray-900 mb-3">Overtime Classification</h4>
+                                    
+                                    <div className="bg-blue-50 rounded-md p-4">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                            <div>
+                                                <span className="text-sm font-medium text-gray-700">Type:</span>
+                                                <div className="mt-1 text-sm text-gray-900">
+                                                    {getOvertimeTypeLabel(overtime.overtime_type)}
+                                                </div>
+                                            </div>
+                                            
+                                            <div>
+                                                <span className="text-sm font-medium text-gray-700">Night Differential:</span>
+                                                <div className="mt-1 text-sm">
+                                                    {overtime.has_night_differential ? (
+                                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                                            ✓ Applies (10PM - 6AM)
+                                                        </span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                                                            Not Applicable
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            
+                                            <div>
+                                                <span className="text-sm font-medium text-gray-700">Pay Rate:</span>
+                                                <div className="mt-1 text-sm text-gray-900">
+                                                    {overtime.rate_multiplier}x base rate
+                                                </div>
+                                            </div>
+                                            
+                                            <div>
+                                                <span className="text-sm font-medium text-gray-700">Total Hours:</span>
+                                                <div className="mt-1 text-sm text-gray-900">
+                                                    {overtime.total_hours ? parseFloat(overtime.total_hours).toFixed(2) : 'N/A'} hours
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                                 
@@ -383,82 +459,6 @@ const OvertimeDetailModal = ({ overtime, onClose, onStatusUpdate, userRoles = {}
                                         )}
                                     </div>
                                 </div>
-                                
-                                {/* Department Manager Approval Form */}
-                                {canApproveDept && (
-                                    <div className="mt-6 border-t border-gray-200 pt-4 hidden">
-                                        <h4 className="text-md font-medium text-gray-900 mb-3">Department Manager Decision</h4>
-                                        
-                                        <div className="mb-4">
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                Remarks (required for rejection)
-                                            </label>
-                                            <textarea
-                                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                                rows={3}
-                                                value={remarks}
-                                                onChange={(e) => setRemarks(e.target.value)}
-                                                placeholder="Enter any comments or reasons for approval/rejection"
-                                                disabled={processing}
-                                            ></textarea>
-                                        </div>
-                                        
-                                        <div className="flex justify-end space-x-3">
-                                            <button
-                                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                onClick={() => handleStatusChange('manager_approved')}
-                                                disabled={processing}
-                                            >
-                                                {processing ? 'Processing...' : 'Approve (Dept. Level)'}
-                                            </button>
-                                            <button
-                                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                onClick={() => handleStatusChange('rejected')}
-                                                disabled={processing}
-                                            >
-                                                {processing ? 'Processing...' : 'Reject'}
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
-                                
-                                {/* HRD Manager Approval Form */}
-                                {canApproveHrd && (
-                                    <div className="mt-6 border-t border-gray-200 pt-4 hidden">
-                                        <h4 className="text-md font-medium text-gray-900 mb-3">HRD Manager Final Decision</h4>
-                                        
-                                        <div className="mb-4">
-                                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                                                Remarks (required for rejection)
-                                            </label>
-                                            <textarea
-                                                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-300 focus:ring focus:ring-indigo-200 focus:ring-opacity-50"
-                                                rows={3}
-                                                value={remarks}
-                                                onChange={(e) => setRemarks(e.target.value)}
-                                                placeholder="Enter any comments or reasons for approval/rejection"
-                                                disabled={processing}
-                                            ></textarea>
-                                        </div>
-                                        
-                                        <div className="flex justify-end space-x-3">
-                                            <button
-                                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                onClick={() => handleStatusChange('approved')}
-                                                disabled={processing}
-                                            >
-                                                {processing ? 'Processing...' : 'Final Approve'}
-                                            </button>
-                                            <button
-                                                className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                                                onClick={() => handleStatusChange('rejected')}
-                                                disabled={processing}
-                                            >
-                                                {processing ? 'Processing...' : 'Reject'}
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
 
                                 {/* Force Approve Section (Superadmin Only) */}
                                 {canForceApprove && (

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { Head, usePage } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
@@ -39,6 +39,7 @@ const ImportAttendance = () => {
     const [importResult, setImportResult] = useState(null);
     const [validationStatus, setValidationStatus] = useState(null);
     const [showSuccessActions, setShowSuccessActions] = useState(false);
+    const [isDragOver, setIsDragOver] = useState(false);
 
     // Column definitions that match the UI and backend expectations
     const requiredColumns = [
@@ -262,11 +263,8 @@ const ImportAttendance = () => {
         return formattedRow;
     };
 
-    // Handle file upload
-    const handleFileChange = useCallback(async (e) => {
-        const selectedFile = e.target.files[0];
-        if (!selectedFile) return;
-
+    // Validate file type and size
+    const validateFile = (selectedFile) => {
         const allowedTypes = [
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'application/vnd.ms-excel',
@@ -278,14 +276,25 @@ const ImportAttendance = () => {
             !selectedFile.name.endsWith('.csv') && 
             !selectedFile.name.endsWith('.xlsx') && 
             !selectedFile.name.endsWith('.xls')) {
-            setError('Please upload only Excel or CSV files (.xlsx, .xls, .csv)');
-            setValidationStatus('error');
-            return;
+            throw new Error('Please upload only Excel or CSV files (.xlsx, .xls, .csv)');
         }
 
-        // Check file size
+        // Check file size (10MB limit)
         if (selectedFile.size > 10 * 1024 * 1024) {  
-            setError('File size should not exceed 10MB');
+            throw new Error('File size should not exceed 10MB');
+        }
+
+        return true;
+    };
+
+    // Process the selected file (shared logic for both drag & drop and file input)
+    const processFile = useCallback(async (selectedFile) => {
+        if (!selectedFile) return;
+
+        try {
+            validateFile(selectedFile);
+        } catch (error) {
+            setError(error.message);
             setValidationStatus('error');
             return;
         }
@@ -355,6 +364,80 @@ const ImportAttendance = () => {
         } else {
             reader.readAsArrayBuffer(selectedFile);
         }
+    }, []);
+
+    // Handle file input change
+    const handleFileChange = useCallback(async (e) => {
+        const selectedFile = e.target.files[0];
+        await processFile(selectedFile);
+    }, [processFile]);
+
+    // Simple and effective drag and drop - minimal approach
+    const dropZoneRef = React.useRef(null);
+    
+    const handleDragOver = useCallback((e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'copy';
+        setIsDragOver(true);
+    }, []);
+
+    const handleDragEnter = useCallback((e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(true);
+    }, []);
+
+    const handleDragLeave = useCallback((e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        // Only hide if truly leaving the drop zone
+        const rect = e.currentTarget.getBoundingClientRect();
+        if (
+            e.clientX < rect.left ||
+            e.clientX > rect.right ||
+            e.clientY < rect.top ||
+            e.clientY > rect.bottom
+        ) {
+            setIsDragOver(false);
+        }
+    }, []);
+
+    const handleDrop = useCallback(async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragOver(false);
+
+        const files = e.dataTransfer.files;
+        if (files && files.length > 0) {
+            await processFile(files[0]);
+        }
+    }, [processFile]);
+
+    // Global drag prevention - only prevent defaults, don't interfere with our handlers
+    React.useEffect(() => {
+        const handleGlobalDragOver = (e) => {
+            // Only prevent if not over our drop zone
+            if (!dropZoneRef.current?.contains(e.target)) {
+                e.preventDefault();
+            }
+        };
+
+        const handleGlobalDrop = (e) => {
+            // Only prevent if not over our drop zone
+            if (!dropZoneRef.current?.contains(e.target)) {
+                e.preventDefault();
+            }
+        };
+
+        document.addEventListener('dragover', handleGlobalDragOver);
+        document.addEventListener('drop', handleGlobalDrop);
+
+        return () => {
+            document.removeEventListener('dragover', handleGlobalDragOver);
+            document.removeEventListener('drop', handleGlobalDrop);
+        };
     }, []);
 
     // Handle the upload and import process
@@ -430,6 +513,21 @@ const ImportAttendance = () => {
                         </div>
                         
                         <Card className="max-w-4xl mx-auto">
+                            {/* Full-screen drag overlay */}
+                            {isDragOver && (
+                                <div 
+                                    className="fixed inset-0 z-50 bg-blue-500 bg-opacity-20 flex items-center justify-center"
+                                    style={{ pointerEvents: 'none' }}
+                                >
+                                    <div className="bg-white p-8 rounded-lg shadow-lg border-2 border-blue-400 border-dashed">
+                                        <div className="text-center">
+                                            <UploadCloud className="h-16 w-16 text-blue-500 mx-auto mb-4" />
+                                            <p className="text-xl font-semibold text-blue-600">Drop your Excel file here</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                            
                             <CardHeader>
                                 <CardTitle>Import Attendance</CardTitle>
                                 <p className="text-gray-600">
@@ -465,7 +563,26 @@ const ImportAttendance = () => {
                                         Download Attendance Import Template
                                     </Button>
 
-                                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-8">
+                                    <div 
+                                        ref={dropZoneRef}
+                                        className={`border-2 border-dashed rounded-lg p-8 transition-colors relative ${
+                                            isDragOver 
+                                                ? 'border-blue-400 bg-blue-50' 
+                                                : validationStatus === 'success' 
+                                                    ? 'border-green-300 bg-green-50' 
+                                                    : validationStatus === 'error' 
+                                                        ? 'border-red-300 bg-red-50' 
+                                                        : 'border-gray-300'
+                                        }`}
+                                        onDragEnter={handleDragEnter}
+                                        onDragOver={handleDragOver}
+                                        onDragLeave={handleDragLeave}
+                                        onDrop={handleDrop}
+                                        style={{ 
+                                            minHeight: '200px',
+                                            position: 'relative'
+                                        }}
+                                    >
                                         <input
                                             type="file"
                                             onChange={handleFileChange}
@@ -482,18 +599,29 @@ const ImportAttendance = () => {
                                             ) : validationStatus === 'error' ? (
                                                 <XCircle className="h-12 w-12 text-red-500 mb-4" />
                                             ) : (
-                                                <UploadCloud className="h-12 w-12 text-gray-400 mb-4" />
+                                                <UploadCloud className={`h-12 w-12 mb-4 ${
+                                                    isDragOver ? 'text-blue-500' : 'text-gray-400'
+                                                }`} />
                                             )}
-                                            <span className="text-gray-600 text-center">
+                                            <span className={`text-center ${
+                                                isDragOver ? 'text-blue-600' : 'text-gray-600'
+                                            }`}>
                                                 {file ? (
                                                     <div className="flex items-center gap-2">
                                                         <FileSpreadsheet className="h-5 w-5" />
                                                         {file.name}
                                                     </div>
+                                                ) : isDragOver ? (
+                                                    'Drop your file here'
                                                 ) : (
                                                     'Drop your Excel file here or click to browse'
                                                 )}
                                             </span>
+                                            {!file && (
+                                                <span className="text-sm text-gray-500 mt-2">
+                                                    Supports .xlsx, .xls, and .csv files (max 10MB)
+                                                </span>
+                                            )}
                                         </label>
                                     </div>
 
