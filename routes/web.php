@@ -345,6 +345,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('/overtimes/explain-rate', [OvertimeController::class, 'explainRateCalculation'])
         ->name('overtimes.explain-rate');
     
+    // NEW: Rate update route - Allow updating rate for pending overtimes
+    Route::post('/overtimes/{overtime}/rate', [OvertimeController::class, 'updateRate'])
+        ->name('overtimes.updateRate');
+    
     // Bulk Actions for managers
     Route::middleware('role:department_manager,hrd_manager,superadmin')->group(function () {
         Route::post('/overtimes/bulk-update', [OvertimeController::class, 'bulkUpdateStatus'])

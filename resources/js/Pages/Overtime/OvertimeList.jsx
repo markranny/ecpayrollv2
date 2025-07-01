@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { format } from 'date-fns';
-import { Download, Search, X, Filter, Loader2 } from 'lucide-react';
+import { Download, Search, X, Filter, Loader2, Edit3 } from 'lucide-react';
 import OvertimeStatusBadge from './OvertimeStatusBadge';
 import OvertimeDetailModal from './OvertimeDetailModal';
+import OvertimeRateEditModal from './OvertimeRateEditModal';
 import MultiBulkActionModal from './MultiBulkActionModal';
 import ForceApproveButton from './ForceApproveButton';
 import { router } from '@inertiajs/react';
@@ -18,6 +19,8 @@ const OvertimeList = ({
 }) => {
     const [selectedOvertime, setSelectedOvertime] = useState(null);
     const [showModal, setShowModal] = useState(false);
+    const [showRateEditModal, setShowRateEditModal] = useState(false);
+    const [selectedOvertimeForRate, setSelectedOvertimeForRate] = useState(null);
     const [filterStatus, setFilterStatus] = useState('');
     const [filterOvertimeType, setFilterOvertimeType] = useState(''); // New filter
     const [filteredOvertimes, setFilteredOvertimes] = useState(overtimes || []);
@@ -58,6 +61,10 @@ const OvertimeList = ({
         if (!overtimes) return; // Guard against undefined overtimes prop
         setLocalOvertimes(overtimes);
         applyFilters(overtimes, filterStatus, filterOvertimeType, searchTerm, dateRange);
+        
+        // Clear selections if data has changed (after rate edit)
+        setSelectedIds([]);
+        setSelectAll(false);
     }, [overtimes]);
     
     // Set up auto-refresh timer
@@ -243,6 +250,104 @@ const OvertimeList = ({
             };
             
             timerRef.current = setInterval(refreshData, refreshInterval);
+        }
+    };
+    
+    // Handle rate edit modal
+    const handleEditRate = (overtime) => {
+        if (processing || localProcessing) return;
+        
+        // Only allow editing if overtime is pending
+        if (overtime.status !== 'pending') {
+            toast.warning('Rate can only be edited for pending overtime requests');
+            return;
+        }
+        
+        // Check if user has permission to edit rate
+        const canEdit = userRoles.isSuperAdmin ||
+                       userRoles.isHrdManager ||
+                       userRoles.isDepartmentManager ||
+                       overtime.created_by === userRoles.userId;
+        
+        if (!canEdit) {
+            toast.error('You do not have permission to edit this overtime rate');
+            return;
+        }
+        
+        // Pause auto-refresh when modal is open
+        if (timerRef.current) {
+            clearInterval(timerRef.current);
+        }
+        
+        setSelectedOvertimeForRate(overtime);
+        setShowRateEditModal(true);
+    };
+    
+    // Close rate edit modal
+    const handleCloseRateEditModal = () => {
+        setShowRateEditModal(false);
+        setSelectedOvertimeForRate(null);
+        
+        // Resume auto-refresh when modal is closed
+        if (!processing && !localProcessing) {
+            const refreshData = async () => {
+                try {
+                    if (typeof window.refreshOvertimes === 'function') {
+                        const freshData = await window.refreshOvertimes();
+                        setLocalOvertimes(freshData);
+                        applyFilters(freshData, filterStatus, filterOvertimeType, searchTerm, dateRange);
+                    }
+                } catch (error) {
+                    console.error('Error refreshing overtime data:', error);
+                }
+            };
+            
+            timerRef.current = setInterval(refreshData, refreshInterval);
+        }
+    };
+    
+    // Handle double click on row to edit rate
+    const handleRowDoubleClick = (overtime, event) => {
+        // Prevent double click on action buttons
+        if (event.target.closest('button') || event.target.closest('input[type="checkbox"]')) {
+            return;
+        }
+        
+        // Only allow double click edit for pending status
+        if (overtime.status === 'pending') {
+            handleEditRate(overtime);
+        }
+    };
+    
+    // Check if user can edit rate for an overtime
+    const canEditRate = (overtime) => {
+        if (overtime.status !== 'pending') return false;
+        
+        return userRoles.isSuperAdmin ||
+               userRoles.isHrdManager ||
+               userRoles.isDepartmentManager ||
+               overtime.created_by === userRoles.userId;
+    };
+    
+    // Check if overtime rate has been edited
+    const isRateEdited = (overtime) => {
+        return overtime.rate_edited === true || overtime.rate_edited === 1;
+    };
+    
+    // Get row styling based on edit status
+    const getRowStyling = (overtime) => {
+        const baseClasses = "transition-colors duration-200";
+        const processingClasses = (deletingId === overtime.id || updatingId === overtime.id) ? 'opacity-50' : '';
+        
+        if (isRateEdited(overtime)) {
+            // Red styling for edited rows
+            return `${baseClasses} ${processingClasses} bg-red-50 border-l-4 border-red-400 hover:bg-red-100`;
+        } else if (canEditRate(overtime)) {
+            // Blue styling for editable rows
+            return `${baseClasses} ${processingClasses} hover:bg-blue-50 cursor-pointer`;
+        } else {
+            // Default styling
+            return `${baseClasses} ${processingClasses} hover:bg-gray-50`;
         }
     };
     
@@ -740,9 +845,18 @@ const OvertimeList = ({
                             </tr>
                         ) : (
                             filteredOvertimes.map(overtime => (
-                                <tr key={overtime.id} className={`hover:bg-gray-50 transition-colors duration-200 ${
-                                    (deletingId === overtime.id || updatingId === overtime.id) ? 'opacity-50' : ''
-                                }`}>
+                                <tr 
+                                    key={overtime.id} 
+                                    className={getRowStyling(overtime)}
+                                    onDoubleClick={(e) => handleRowDoubleClick(overtime, e)}
+                                    title={
+                                        isRateEdited(overtime) 
+                                            ? `Rate edited on ${overtime.rate_edited_at ? new Date(overtime.rate_edited_at).toLocaleString() : 'Unknown date'}${overtime.rateEditor ? ` by ${overtime.rateEditor.name}` : ''}`
+                                            : canEditRate(overtime) 
+                                                ? 'Double-click to edit rate' 
+                                                : ''
+                                    }
+                                >
                                     {selectableItemsCount > 0 && (
                                         <td className="px-4 py-4">
                                             {canSelectOvertime(overtime) && (
@@ -786,8 +900,26 @@ const OvertimeList = ({
                                             {formatOvertimeDescription(overtime)}
                                         </div>
                                     </td>
-                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                                        {overtime.rate_multiplier ? `${overtime.rate_multiplier}x` : 'N/A'}
+                                    <td className="px-6 py-4 whitespace-nowrap">
+                                        <div className="flex items-center">
+                                            <span className={`text-sm ${isRateEdited(overtime) ? 'text-red-700 font-medium' : 'text-gray-900'}`}>
+                                                {overtime.rate_multiplier ? `${overtime.rate_multiplier}x` : 'N/A'}
+                                            </span>
+                                            {isRateEdited(overtime) && (
+                                                <div className="flex items-center ml-2">
+                                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                                        EDITED
+                                                    </span>
+                                                    <Edit3 className="h-3 w-3 text-red-500 ml-1" />
+                                                </div>
+                                            )}
+                                            {!isRateEdited(overtime) && canEditRate(overtime) && (
+                                                <Edit3 
+                                                    className="h-3 w-3 text-blue-500 ml-1 opacity-60" 
+                                                    title="Double-click to edit"
+                                                />
+                                            )}
+                                        </div>
                                     </td>
                                     <td className="px-6 py-4 whitespace-nowrap">
                                         <OvertimeStatusBadge status={overtime.status} />
@@ -804,6 +936,21 @@ const OvertimeList = ({
                                             >
                                                 View
                                             </button>
+                                            
+                                            {canEditRate(overtime) && (
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleEditRate(overtime);
+                                                    }}
+                                                    className="text-blue-600 hover:text-blue-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200 flex items-center"
+                                                    disabled={processing || localProcessing || updatingId === overtime.id}
+                                                    title="Edit Rate"
+                                                >
+                                                    <Edit3 className="h-3 w-3 mr-1" />
+                                                    Rate
+                                                </button>
+                                            )}
                                             
                                             {(overtime.status === 'pending' && 
                                               (userRoles.isSuperAdmin || 
@@ -847,15 +994,23 @@ const OvertimeList = ({
                         )}
                     </div>
                     
-                    {/* Processing indicator */}
-                    {(processing || localProcessing) && (
-                        <div className="flex items-center text-indigo-600">
-                            <Loader2 className="h-4 w-4 animate-spin mr-1" />
-                            <span className="text-xs">
-                                {processing ? 'Processing...' : 'Updating...'}
-                            </span>
+                    <div className="flex items-center space-x-4">
+                        {/* Rate editing hint */}
+                        <div className="flex items-center text-xs text-blue-600">
+                            <Edit3 className="h-3 w-3 mr-1" />
+                            <span>Double-click pending rows to edit rate</span>
                         </div>
-                    )}
+                        
+                        {/* Processing indicator */}
+                        {(processing || localProcessing) && (
+                            <div className="flex items-center text-indigo-600">
+                                <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                                <span className="text-xs">
+                                    {processing ? 'Processing...' : 'Updating...'}
+                                </span>
+                            </div>
+                        )}
+                    </div>
                 </div>
             </div>
             
@@ -868,6 +1023,17 @@ const OvertimeList = ({
                     userRoles={userRoles}
                     viewOnly={processing || localProcessing} // Pass loading state as viewOnly
                     processing={updatingId === selectedOvertime.id}
+                />
+            )}
+
+            {/* Rate Edit Modal */}
+            {showRateEditModal && selectedOvertimeForRate && (
+                <OvertimeRateEditModal
+                    isOpen={showRateEditModal}
+                    onClose={handleCloseRateEditModal}
+                    overtime={selectedOvertimeForRate}
+                    userRoles={userRoles}
+                    processing={processing || localProcessing}
                 />
             )}
 

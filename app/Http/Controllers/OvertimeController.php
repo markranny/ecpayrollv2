@@ -119,6 +119,114 @@ class OvertimeController extends Controller
         ]);
     }
 
+    /**
+     * Update the rate multiplier of an overtime request.
+     * Only allows updating if the overtime is in pending status.
+     */
+    public function updateRate(Request $request, Overtime $overtime)
+    {
+        $user = Auth::user();
+        
+        // Validate request
+        $validated = $request->validate([
+            'rate_multiplier' => 'required|numeric|min:1|max:10',
+            'reason' => 'nullable|string|max:500',
+        ]);
+
+        // Log the action for debugging
+        \Log::info('Updating overtime rate', [
+            'overtime_id' => $overtime->id,
+            'current_rate' => $overtime->rate_multiplier,
+            'new_rate' => $validated['rate_multiplier'],
+            'user_id' => $user->id,
+            'user_name' => $user->name
+        ]);
+
+        // Check if overtime is in pending status
+        if ($overtime->status !== 'pending') {
+            \Log::warning('Attempted to update rate for non-pending overtime', [
+                'overtime_id' => $overtime->id,
+                'status' => $overtime->status,
+                'user_id' => $user->id
+            ]);
+            
+            return redirect()->back()->with('error', 'Rate can only be updated for pending overtime requests.');
+        }
+
+        // Check permission for rate update
+        $canUpdate = false;
+        
+        // Check if user is a superadmin
+        if ($this->isSuperAdmin($user)) {
+            $canUpdate = true;
+        }
+        // Check if user is HRD manager
+        elseif ($this->isHrdManager($user)) {
+            $canUpdate = true;
+        }
+        // Check if user is department manager for this overtime
+        elseif ($this->isDepartmentManagerFor($user, $overtime)) {
+            $canUpdate = true;
+        }
+        // Check if user created this overtime
+        elseif ($overtime->created_by === $user->id) {
+            $canUpdate = true;
+        }
+
+        if (!$canUpdate) {
+            \Log::warning('Unauthorized overtime rate update attempt', [
+                'overtime_id' => $overtime->id,
+                'user_id' => $user->id,
+                'current_rate' => $overtime->rate_multiplier,
+                'requested_rate' => $validated['rate_multiplier']
+            ]);
+            
+            return redirect()->back()->with('error', 'You are not authorized to update this overtime request rate.');
+        }
+
+        try {
+            $oldRate = $overtime->rate_multiplier;
+            
+            // Update the rate multiplier
+            $overtime->rate_multiplier = $validated['rate_multiplier'];
+            
+            // Add update reason to dept_remarks if provided
+            if (!empty($validated['reason'])) {
+                $currentRemarks = $overtime->dept_remarks ?: '';
+                $updateNote = "Rate updated from {$oldRate}x to {$validated['rate_multiplier']}x by {$user->name}";
+                if ($validated['reason']) {
+                    $updateNote .= " - Reason: {$validated['reason']}";
+                }
+                
+                $overtime->dept_remarks = $currentRemarks ? 
+                    $currentRemarks . "\n\n" . $updateNote : 
+                    $updateNote;
+            }
+            
+            $overtime->save();
+
+            // Log success
+            \Log::info('Overtime rate updated successfully', [
+                'overtime_id' => $overtime->id,
+                'old_rate' => $oldRate,
+                'new_rate' => $overtime->rate_multiplier,
+                'by_user' => $user->name
+            ]);
+
+            return redirect()->back()->with('message', 'Overtime rate updated successfully.');
+            
+        } catch (\Exception $e) {
+            // Log the error
+            \Log::error('Failed to update overtime rate', [
+                'overtime_id' => $overtime->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return redirect()->back()->with('error', 'Failed to update overtime rate: ' . $e->getMessage());
+        }
+    }
+
     private function getUserRoles($user)
 {
     // Check department manager directly from database first
@@ -309,7 +417,7 @@ public function bulkUpdateStatus(Request $request)
         session()->flash('json_response', $jsonResponse);
         
         // Return a redirect with an error message
-        return redirect()->back()->with('error', 'Error updating overtime statuses: ' . $e->getMessage());
+        return redirect().back()->with('error', 'Error updating overtime statuses: ' . $e->getMessage());
     }
 }
 

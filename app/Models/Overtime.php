@@ -28,6 +28,9 @@ class Overtime extends Model
         'hrd_approved_at',        // When HRD final approval happened
         'hrd_remarks',            // HRD manager remarks
         'created_by',             // User who created the overtime request
+        'rate_edited',            // Track if rate has been manually edited
+        'rate_edited_at',         // When rate was last edited
+        'rate_edited_by',         // Who edited the rate
     ];
 
     protected $casts = [
