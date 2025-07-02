@@ -48,7 +48,7 @@ const ProcessedAttendanceList = () => {
   });
   const [deleting, setDeleting] = useState(false);
 
-  // FIXED: Better double-click prevention using useRef instead of state
+  // Better double-click prevention using useRef instead of state
   const editClickTimeoutRef = useRef(null);
   const isEditingRef = useRef(false);
 
@@ -67,7 +67,7 @@ const ProcessedAttendanceList = () => {
     }
   }, [error]);
 
-  // FIXED: Clean up timeouts on unmount
+  // Clean up timeouts on unmount
   useEffect(() => {
     return () => {
       if (editClickTimeoutRef.current) {
@@ -366,7 +366,7 @@ const ProcessedAttendanceList = () => {
     }
   };
 
-  // Handle individual checkbox change - FIXED: Prevent event bubbling
+  // Handle individual checkbox change
   const handleCheckboxChange = (e, id) => {
     // Stop event propagation to prevent conflicts
     e.stopPropagation();
@@ -496,7 +496,7 @@ const ProcessedAttendanceList = () => {
     }, 0);
   };
 
-  // FIXED: Improved handleEditClick with proper debouncing
+  // Improved handleEditClick with proper debouncing
   const handleEditClick = useCallback((e, attendance) => {
     // Prevent all event propagation
     e.stopPropagation();
@@ -526,7 +526,7 @@ const ProcessedAttendanceList = () => {
     }, 1000);
   }, []);
 
-  // NEW: Handle double-click on table rows
+  // Handle double-click on table rows
   const handleRowDoubleClick = useCallback((e, attendance) => {
     // Prevent event propagation to avoid conflicts with other click handlers
     e.preventDefault();
@@ -556,7 +556,7 @@ const ProcessedAttendanceList = () => {
     }, 1000);
   }, []);
 
-  // FIXED: Reset editing flag when modal closes
+  // Reset editing flag when modal closes
   const handleCloseModal = () => {
     setShowEditModal(false);
     setSelectedAttendance(null);
@@ -1001,7 +1001,7 @@ const ProcessedAttendanceList = () => {
                             >
                               <td 
                                 className="px-2 py-4 whitespace-nowrap"
-                                onClick={(e) => e.stopPropagation()} // Prevent row click when clicking checkbox area
+                                onClick={(e) => e.stopPropagation()}
                               >
                                 <input
                                   type="checkbox"
@@ -1067,7 +1067,7 @@ const ProcessedAttendanceList = () => {
                                 {renderStatusBadge(attendance.cs)}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {renderStatusBadge(attendance.holiday)}
+                                {formatNumeric(attendance.holiday)}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
                                 {formatNumeric(attendance.ot_reg_holiday)}
@@ -1081,18 +1081,21 @@ const ProcessedAttendanceList = () => {
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
                                 {renderStatusBadge(attendance.restday)}
                               </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {formatNumeric(attendance.offset)}
+                              </td>
                               <td className="px-2 py-4 whitespace-nowrap">
                                 {renderStatusBadge(attendance.source, 'source')}
                               </td>
                               <td 
                                 className="px-2 py-4 whitespace-nowrap text-right text-sm font-medium"
-                                onClick={(e) => e.stopPropagation()} // Prevent row double-click when clicking edit button
+                                onClick={(e) => e.stopPropagation()}
                               >
                                 <Button 
                                   variant="ghost" 
                                   size="sm"
                                   onClick={(e) => handleEditClick(e, attendance)}
-                                  disabled={isEditingRef.current} // Use ref for immediate state
+                                  disabled={isEditingRef.current}
                                   className="text-blue-600 hover:text-blue-900 disabled:opacity-50 disabled:cursor-not-allowed"
                                   type="button"
                                 >
