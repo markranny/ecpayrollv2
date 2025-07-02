@@ -26,9 +26,16 @@ class ProcessedAttendance extends Model
         'hours_worked',
         'overtime',
         'travel_order',
+        'slvl',
+        'ct',
+        'cs',
+        'holiday',
+        'ot_reg_holiday',
+        'ot_special_holiday',
         'retromultiplier',
         'restday',
-        'ob', // Add the missing 'ob' field from migration
+        'offset', // Add the new offset field
+        'ob',
         'status',
         'source',
         'remarks',
@@ -50,9 +57,16 @@ class ProcessedAttendance extends Model
         'hours_worked' => 'float',
         'overtime' => 'decimal:2',
         'travel_order' => 'decimal:2',
+        'slvl' => 'decimal:1',
+        'ct' => 'boolean',
+        'cs' => 'boolean',
+        'holiday' => 'decimal:2', // Changed from boolean to decimal for rate multiplier
+        'ot_reg_holiday' => 'decimal:2',
+        'ot_special_holiday' => 'decimal:2',
         'retromultiplier' => 'decimal:2',
         'restday' => 'boolean',
-        'ob' => 'boolean', // Cast the 'ob' field to boolean
+        'offset' => 'decimal:2', // Add casting for the new offset field
+        'ob' => 'boolean',
         'is_nightshift' => 'boolean',
     ];
 

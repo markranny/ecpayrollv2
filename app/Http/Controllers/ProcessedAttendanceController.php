@@ -949,7 +949,7 @@ class ProcessedAttendanceController extends Controller
     {
         $overtime = \App\Models\Overtime::where('employee_id', $employeeId)
             ->whereDate('date', $attendanceDate)
-            ->where('rate_multiplier', '>', 1.31)
+            ->where('overtime_type', '=', 'Regular Holiday')
             ->where('status', 'approved')
             ->first();
             
@@ -967,7 +967,7 @@ class ProcessedAttendanceController extends Controller
     {
         $overtime = \App\Models\Overtime::where('employee_id', $employeeId)
             ->whereDate('date', $attendanceDate)
-            ->where('rate_multiplier', '<', 1.30)
+            ->where('overtime_type', '=', 'Special Holiday')
             ->where('status', 'approved')
             ->first();
             
@@ -1019,6 +1019,7 @@ class ProcessedAttendanceController extends Controller
             ->first();
             
         if ($overtime) {
+            //return $overtime->total_hours * $overtime->rate_multiplier;
             return $overtime->total_hours * $overtime->rate_multiplier;
         }
         
