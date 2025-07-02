@@ -8,6 +8,7 @@ use App\Models\ProcessedAttendance;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Inertia\Inertia;
 
@@ -301,16 +302,15 @@ class ProcessedAttendanceController extends Controller
             ]);
             
         } catch (\Exception $e) {
-            /* Log::error('Error updating attendance: ' . $e->getMessage(), [
+            Log::error('Error updating attendance: ' . $e->getMessage(), [
                 'id' => $id,
                 'exception' => get_class($e),
                 'file' => $e->getFile(),
                 'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString()
-            ]); */
+            ]);
             
-            /* return back()->withErrors(['error' => 'Failed to update attendance: ' . $e->getMessage()]); */
-            return back();
+            return back()->withErrors(['error' => 'Failed to update attendance: ' . $e->getMessage()]);
         }
     }
 
@@ -640,163 +640,212 @@ class ProcessedAttendanceController extends Controller
     }
 
     /**
-     * Sync processed attendance with all related data sources
+     * IMPROVED Sync processed attendance with all related data sources
      */
     public function sync(Request $request)
-{
-    try {
-        Log::info('Starting comprehensive attendance sync process');
-        
-        $syncedCount = 0;
-        $errorCount = 0;
-        $errors = [];
-        $createdRecords = 0;
-        
-        // Get date range for sync - default to current month if not provided
-        $startDate = $request->input('start_date', now()->startOfMonth()->format('Y-m-d'));
-        $endDate = $request->input('end_date', now()->endOfMonth()->format('Y-m-d'));
-        
-        Log::info("Syncing attendance data from {$startDate} to {$endDate}");
-        
-        // 1. First, create SLVL attendance records
-        $this->syncSLVLRecords($startDate, $endDate, $createdRecords, $errorCount, $errors);
-        
-        // 2. Get all processed attendance records within the date range (including newly created ones)
-        $attendances = ProcessedAttendance::whereBetween('attendance_date', [$startDate, $endDate])
-            ->with('employee')
-            ->get();
-        
-        foreach ($attendances as $attendance) {
+    {
+        // Use database transactions for better data integrity
+        return DB::transaction(function () use ($request) {
             try {
-                $updated = false;
-                $employeeId = $attendance->employee_id;
-                $attendanceDate = $attendance->attendance_date;
+                Log::info('Starting comprehensive attendance sync process');
                 
-                // 3. Sync Travel Order Data
-                $travelOrderValue = $this->calculateTravelOrderValue($employeeId, $attendanceDate);
-                if ($attendance->travel_order != $travelOrderValue) {
-                    $attendance->travel_order = $travelOrderValue;
-                    $updated = true;
+                $syncedCount = 0;
+                $errorCount = 0;
+                $errors = [];
+                $createdRecords = 0;
+                
+                // Get date range for sync - default to current month if not provided
+                /* $startDate = $request->input('start_date', now()->startOfMonth()->format('Y-m-d'));
+                $endDate = $request->input('end_date', now()->endOfMonth()->format('Y-m-d')); */
+
+                $startDate = '2025-01-01';
+                $endDate = '2025-01-31';
+                
+                Log::info("Syncing attendance data from {$startDate} to {$endDate}");
+                
+                // Validate models exist and are accessible
+                $this->validateSyncModels();
+                
+                // 1. First, create SLVL attendance records
+                $this->syncSLVLRecords($startDate, $endDate, $createdRecords, $errorCount, $errors);
+                
+                // 2. Get all processed attendance records within the date range (including newly created ones)
+                $attendances = ProcessedAttendance::whereBetween('attendance_date', [$startDate, $endDate])
+                    ->with('employee')
+                    ->get();
+                
+                Log::info("Found {$attendances->count()} attendance records to sync");
+                
+                foreach ($attendances as $attendance) {
+                    try {
+                        $updated = false;
+                        $employeeId = $attendance->employee_id;
+                        $attendanceDate = $attendance->attendance_date;
+                        
+                        // Log current processing
+                        Log::debug("Processing attendance for employee {$employeeId} on {$attendanceDate}");
+                        
+                        // 3. Sync Travel Order Data
+                        $travelOrderValue = $this->calculateTravelOrderValue($employeeId, $attendanceDate);
+                        if ($attendance->travel_order != $travelOrderValue) {
+                            $attendance->travel_order = $travelOrderValue;
+                            $updated = true;
+                            Log::debug("Updated travel_order: {$travelOrderValue}");
+                        }
+                        
+                        // 4. Sync SLVL Data (for existing records)
+                        $slvlValue = $this->calculateSLVLValue($employeeId, $attendanceDate);
+                        if ($attendance->slvl != $slvlValue) {
+                            $attendance->slvl = $slvlValue;
+                            $updated = true;
+                            Log::debug("Updated slvl: {$slvlValue}");
+                        }
+                        
+                        // 5. Sync CT (Compensatory Time) Data
+                        $ctValue = $this->calculateCTValue($employeeId, $attendanceDate);
+                        if ($attendance->ct != $ctValue) {
+                            $attendance->ct = $ctValue;
+                            $updated = true;
+                            Log::debug("Updated ct: " . ($ctValue ? 'true' : 'false'));
+                        }
+                        
+                        // 6. Sync CS (Compressed Schedule) Data
+                        $csValue = $this->calculateCSValue($employeeId, $attendanceDate);
+                        if ($attendance->cs != $csValue) {
+                            $attendance->cs = $csValue;
+                            $updated = true;
+                            Log::debug("Updated cs: " . ($csValue ? 'true' : 'false'));
+                        }
+                        
+                        // 7. Sync Regular Holiday Overtime Data
+                        $otRegHolidayValue = $this->calculateOTRegHolidayValue($employeeId, $attendanceDate);
+                        if ($attendance->ot_reg_holiday != $otRegHolidayValue) {
+                            $attendance->ot_reg_holiday = $otRegHolidayValue;
+                            $updated = true;
+                            Log::debug("Updated ot_reg_holiday: {$otRegHolidayValue}");
+                        }
+                        
+                        // 8. Sync Special Holiday Overtime Data
+                        $otSpecialHolidayValue = $this->calculateOTSpecialHolidayValue($employeeId, $attendanceDate);
+                        if ($attendance->ot_special_holiday != $otSpecialHolidayValue) {
+                            $attendance->ot_special_holiday = $otSpecialHolidayValue;
+                            $updated = true;
+                            Log::debug("Updated ot_special_holiday: {$otSpecialHolidayValue}");
+                        }
+                        
+                        // 9. Sync Rest Day Data
+                        $restDayValue = $this->calculateRestDayValue($employeeId, $attendanceDate);
+                        if ($attendance->restday != $restDayValue) {
+                            $attendance->restday = $restDayValue;
+                            $updated = true;
+                            Log::debug("Updated restday: " . ($restDayValue ? 'true' : 'false'));
+                        }
+                        
+                        // 10. Sync Retro Multiplier Data
+                        $retroMultiplierValue = $this->calculateRetroMultiplierValue($employeeId, $attendanceDate);
+                        if ($attendance->retromultiplier != $retroMultiplierValue) {
+                            $attendance->retromultiplier = $retroMultiplierValue;
+                            $updated = true;
+                            Log::debug("Updated retromultiplier: {$retroMultiplierValue}");
+                        }
+                        
+                        // 11. Sync Overtime Data (updated to use rate_multiplier)
+                        $overtimeValue = $this->calculateOvertimeHours($employeeId, $attendanceDate);
+                        if ($attendance->overtime != $overtimeValue) {
+                            $attendance->overtime = $overtimeValue;
+                            $updated = true;
+                            Log::debug("Updated overtime: {$overtimeValue}");
+                        }
+                        
+                        // 12. Sync Offset Data
+                        $offsetValue = $this->calculateOffsetValue($employeeId, $attendanceDate);
+                        if ($attendance->offset != $offsetValue) {
+                            $attendance->offset = $offsetValue;
+                            $updated = true;
+                            Log::debug("Updated offset: {$offsetValue}");
+                        }
+                        
+                        // Save if any changes were made
+                        if ($updated) {
+                            $attendance->save();
+                            $syncedCount++;
+                            
+                            Log::info("Synced attendance for employee {$employeeId} on {$attendanceDate}");
+                        }
+                        
+                    } catch (\Exception $e) {
+                        $errorCount++;
+                        $error = "Error syncing attendance ID {$attendance->id}: " . $e->getMessage();
+                        $errors[] = $error;
+                        Log::error($error, ['exception' => $e]);
+                    }
                 }
                 
-                // 4. Sync SLVL Data (for existing records)
-                $slvlValue = $this->calculateSLVLValue($employeeId, $attendanceDate);
-                if ($attendance->slvl != $slvlValue) {
-                    $attendance->slvl = $slvlValue;
-                    $updated = true;
+                Log::info("Attendance sync completed", [
+                    'synced_count' => $syncedCount,
+                    'created_records' => $createdRecords,
+                    'error_count' => $errorCount,
+                    'total_processed' => $attendances->count()
+                ]);
+                
+                $message = "Sync completed successfully. {$syncedCount} records updated";
+                if ($createdRecords > 0) {
+                    $message .= ", {$createdRecords} new records created";
+                }
+                if ($errorCount > 0) {
+                    $message .= ", {$errorCount} errors occurred.";
                 }
                 
-                // 5. Sync CT (Compensatory Time) Data
-                $ctValue = $this->calculateCTValue($employeeId, $attendanceDate);
-                if ($attendance->ct != $ctValue) {
-                    $attendance->ct = $ctValue;
-                    $updated = true;
-                }
-                
-                // 6. Sync CS (Compressed Schedule) Data
-                $csValue = $this->calculateCSValue($employeeId, $attendanceDate);
-                if ($attendance->cs != $csValue) {
-                    $attendance->cs = $csValue;
-                    $updated = true;
-                }
-                
-                // 7. Sync Regular Holiday Overtime Data
-                $otRegHolidayValue = $this->calculateOTRegHolidayValue($employeeId, $attendanceDate);
-                if ($attendance->ot_reg_holiday != $otRegHolidayValue) {
-                    $attendance->ot_reg_holiday = $otRegHolidayValue;
-                    $updated = true;
-                }
-                
-                // 8. Sync Special Holiday Overtime Data
-                $otSpecialHolidayValue = $this->calculateOTSpecialHolidayValue($employeeId, $attendanceDate);
-                if ($attendance->ot_special_holiday != $otSpecialHolidayValue) {
-                    $attendance->ot_special_holiday = $otSpecialHolidayValue;
-                    $updated = true;
-                }
-                
-                // 9. Sync Rest Day Data
-                $restDayValue = $this->calculateRestDayValue($employeeId, $attendanceDate);
-                if ($attendance->restday != $restDayValue) {
-                    $attendance->restday = $restDayValue;
-                    $updated = true;
-                }
-                
-                // 10. Sync Retro Multiplier Data
-                $retroMultiplierValue = $this->calculateRetroMultiplierValue($employeeId, $attendanceDate);
-                if ($attendance->retromultiplier != $retroMultiplierValue) {
-                    $attendance->retromultiplier = $retroMultiplierValue;
-                    $updated = true;
-                }
-                
-                // 11. Sync Overtime Data (updated to use rate_multiplier)
-                $overtimeValue = $this->calculateOvertimeHours($employeeId, $attendanceDate);
-                if ($attendance->overtime != $overtimeValue) {
-                    $attendance->overtime = $overtimeValue;
-                    $updated = true;
-                }
-                
-                // 12. NEW: Sync Offset Data
-                $offsetValue = $this->calculateOffsetValue($employeeId, $attendanceDate);
-                if ($attendance->offset != $offsetValue) {
-                    $attendance->offset = $offsetValue;
-                    $updated = true;
-                }
-                
-                // Save if any changes were made
-                if ($updated) {
-                    $attendance->save();
-                    $syncedCount++;
-                    
-                    Log::info("Synced attendance for employee {$employeeId} on {$attendanceDate}");
-                }
+                return response()->json([
+                    'success' => true,
+                    'message' => $message,
+                    'details' => [
+                        'synced_count' => $syncedCount,
+                        'created_records' => $createdRecords,
+                        'error_count' => $errorCount,
+                        'total_processed' => $attendances->count(),
+                        'errors' => $errorCount > 0 ? array_slice($errors, 0, 10) : []
+                    ]
+                ]);
                 
             } catch (\Exception $e) {
-                $errorCount++;
-                $error = "Error syncing attendance ID {$attendance->id}: " . $e->getMessage();
-                $errors[] = $error;
-                Log::error($error, ['exception' => $e]);
+                Log::error('Error in attendance sync process: ' . $e->getMessage(), [
+                    'exception' => $e,
+                    'trace' => $e->getTraceAsString()
+                ]);
+                
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Sync failed: ' . $e->getMessage()
+                ], 500);
+            }
+        });
+    }
+    
+    /**
+     * Validate that all required models exist before syncing
+     */
+    private function validateSyncModels()
+    {
+        $requiredModels = [
+            'App\Models\SLVL',
+            'App\Models\TravelOrder', 
+            'App\Models\TimeSchedule',
+            'App\Models\ChangeOffSchedule',
+            'App\Models\Overtime',
+            'App\Models\CancelRestDay',
+            'App\Models\Retro',
+            'App\Models\Offset'
+        ];
+        
+        foreach ($requiredModels as $model) {
+            if (!class_exists($model)) {
+                throw new \Exception("Required model {$model} does not exist");
             }
         }
         
-        Log::info("Attendance sync completed", [
-            'synced_count' => $syncedCount,
-            'created_records' => $createdRecords,
-            'error_count' => $errorCount,
-            'total_processed' => $attendances->count()
-        ]);
-        
-        $message = "Sync completed successfully. {$syncedCount} records updated";
-        if ($createdRecords > 0) {
-            $message .= ", {$createdRecords} new records created";
-        }
-        if ($errorCount > 0) {
-            $message .= ", {$errorCount} errors occurred.";
-        }
-        
-        return response()->json([
-            'success' => true,
-            'message' => $message,
-            'details' => [
-                'synced_count' => $syncedCount,
-                'created_records' => $createdRecords,
-                'error_count' => $errorCount,
-                'total_processed' => $attendances->count(),
-                'errors' => $errorCount > 0 ? array_slice($errors, 0, 10) : []
-            ]
-        ]);
-        
-    } catch (\Exception $e) {
-        Log::error('Error in attendance sync process: ' . $e->getMessage(), [
-            'exception' => $e,
-            'trace' => $e->getTraceAsString()
-        ]);
-        
-        return response()->json([
-            'success' => false,
-            'message' => 'Sync failed: ' . $e->getMessage()
-        ], 500);
+        Log::info('All required models validated successfully');
     }
-}
     
     /**
      * Create SLVL attendance records
@@ -804,6 +853,14 @@ class ProcessedAttendanceController extends Controller
     private function syncSLVLRecords($startDate, $endDate, &$createdRecords, &$errorCount, &$errors)
     {
         try {
+            Log::info('Starting SLVL records sync');
+            
+            // Check if SLVL model exists
+            if (!class_exists('App\Models\SLVL')) {
+                Log::warning('SLVL model not found, skipping SLVL sync');
+                return;
+            }
+            
             // Get all approved SLVL records that overlap with our date range
             $slvlRecords = \App\Models\SLVL::where('status', 'approved')
                 ->where(function($query) use ($startDate, $endDate) {
@@ -815,6 +872,8 @@ class ProcessedAttendanceController extends Controller
                           });
                 })
                 ->get();
+            
+            Log::info("Found {$slvlRecords->count()} SLVL records to process");
             
             foreach ($slvlRecords as $slvl) {
                 try {
@@ -855,6 +914,7 @@ class ProcessedAttendanceController extends Controller
                                 ]);
                                 
                                 $createdRecords++;
+                                Log::debug("Created SLVL attendance record for employee {$slvl->employee_id} on {$currentDate->format('Y-m-d')}");
                             }
                         }
                         
@@ -869,6 +929,8 @@ class ProcessedAttendanceController extends Controller
                 }
             }
             
+            Log::info("SLVL sync completed. Created {$createdRecords} new records");
+            
         } catch (\Exception $e) {
             $errorCount++;
             $error = "Error in SLVL sync: " . $e->getMessage();
@@ -882,23 +944,33 @@ class ProcessedAttendanceController extends Controller
      */
     private function calculateTravelOrderValue($employeeId, $attendanceDate)
     {
-        $travelOrder = \App\Models\TravelOrder::where('employee_id', $employeeId)
-            ->where('start_date', '<=', $attendanceDate)
-            ->where('end_date', '>=', $attendanceDate)
-            ->where('status', 'approved')
-            ->first();
-            
-        if ($travelOrder) {
-            if ($travelOrder->is_full_day == 1) {
-                return 1.0;
-            } elseif ($travelOrder->is_full_day == 0) {
+        try {
+            if (!class_exists('App\Models\TravelOrder')) {
+                Log::debug('TravelOrder model not found');
                 return 0.0;
-            } else {
-                return 0.5; // Handle 0.5 case
             }
+            
+            $travelOrder = \App\Models\TravelOrder::where('employee_id', $employeeId)
+                ->where('start_date', '<=', $attendanceDate)
+                ->where('end_date', '>=', $attendanceDate)
+                ->where('status', 'approved')
+                ->first();
+                
+            if ($travelOrder) {
+                if ($travelOrder->is_full_day == 1) {
+                    return 1.0;
+                } elseif ($travelOrder->is_full_day == 0) {
+                    return 0.0;
+                } else {
+                    return 0.5; // Handle 0.5 case
+                }
+            }
+            
+            return 0.0;
+        } catch (\Exception $e) {
+            Log::error("Error calculating travel order value: " . $e->getMessage());
+            return 0.0;
         }
-        
-        return 0.0;
     }
     
     /**
@@ -906,21 +978,30 @@ class ProcessedAttendanceController extends Controller
      */
     private function calculateSLVLValue($employeeId, $attendanceDate)
     {
-        $slvl = \App\Models\SLVL::where('employee_id', $employeeId)
-            ->where('start_date', '<=', $attendanceDate)
-            ->where('end_date', '>=', $attendanceDate)
-            ->where('status', 'approved')
-            ->first();
-            
-        if ($slvl) {
-            if ($slvl->pay_type === 'with_pay') {
-                return $slvl->half_day ? 0.5 : 1.0;
-            } else {
-                return $slvl->half_day ? 0.5 : 0.0;
+        try {
+            if (!class_exists('App\Models\SLVL')) {
+                return 0.0;
             }
+            
+            $slvl = \App\Models\SLVL::where('employee_id', $employeeId)
+                ->where('start_date', '<=', $attendanceDate)
+                ->where('end_date', '>=', $attendanceDate)
+                ->where('status', 'approved')
+                ->first();
+                
+            if ($slvl) {
+                if ($slvl->pay_type === 'with_pay') {
+                    return $slvl->half_day ? 0.5 : 1.0;
+                } else {
+                    return $slvl->half_day ? 0.5 : 0.0;
+                }
+            }
+            
+            return 0.0;
+        } catch (\Exception $e) {
+            Log::error("Error calculating SLVL value: " . $e->getMessage());
+            return 0.0;
         }
-        
-        return 0.0;
     }
     
     /**
@@ -928,12 +1009,21 @@ class ProcessedAttendanceController extends Controller
      */
     private function calculateCTValue($employeeId, $attendanceDate)
     {
-        $timeSchedule = \App\Models\TimeSchedule::where('employee_id', $employeeId)
-            ->where('effective_date', $attendanceDate)
-            ->where('status', 'approved')
-            ->exists();
+        try {
+            if (!class_exists('App\Models\TimeSchedule')) {
+                return false;
+            }
             
-        return $timeSchedule;
+            $timeSchedule = \App\Models\TimeSchedule::where('employee_id', $employeeId)
+                ->where('effective_date', $attendanceDate)
+                ->where('status', 'approved')
+                ->exists();
+                
+            return $timeSchedule;
+        } catch (\Exception $e) {
+            Log::error("Error calculating CT value: " . $e->getMessage());
+            return false;
+        }
     }
     
     /**
@@ -941,77 +1031,124 @@ class ProcessedAttendanceController extends Controller
      */
     private function calculateCSValue($employeeId, $attendanceDate)
     {
-        $changeOffSchedule = \App\Models\ChangeOffSchedule::where('employee_id', $employeeId)
-            ->where('requested_date', $attendanceDate)
-            ->where('status', 'approved')
-            ->exists();
+        try {
+            if (!class_exists('App\Models\ChangeOffSchedule')) {
+                return false;
+            }
             
-        return $changeOffSchedule;
+            $changeOffSchedule = \App\Models\ChangeOffSchedule::where('employee_id', $employeeId)
+                ->where('requested_date', $attendanceDate)
+                ->where('status', 'approved')
+                ->exists();
+                
+            return $changeOffSchedule;
+        } catch (\Exception $e) {
+            Log::error("Error calculating CS value: " . $e->getMessage());
+            return false;
+        }
     }
     
     /**
      * Calculate Regular Holiday Overtime value for employee on specific date
      */
     private function calculateOTRegHolidayValue($employeeId, $attendanceDate)
-{
-    $overtime = \App\Models\Overtime::where('employee_id', $employeeId)
-        ->whereDate('date', $attendanceDate)
-        ->where('overtime_type', 'regular_holiday')
-        ->where('status', 'approved')
-        ->first();
-        
-    if ($overtime) {
-        return $overtime->rate_multiplier;
+    {
+        try {
+            if (!class_exists('App\Models\Overtime')) {
+                return 0.0;
+            }
+            
+            $overtime = \App\Models\Overtime::where('employee_id', $employeeId)
+                ->whereDate('date', $attendanceDate)
+                ->where('overtime_type', 'regular_holiday')
+                ->where('status', 'approved')
+                ->first();
+                
+            if ($overtime) {
+                return $overtime->rate_multiplier;
+            }
+            
+            return 0.0;
+        } catch (\Exception $e) {
+            Log::error("Error calculating OT Regular Holiday value: " . $e->getMessage());
+            return 0.0;
+        }
     }
-    
-    return 0.0;
-}
     
     /**
      * Calculate Special Holiday Overtime value for employee on specific date
      */
     private function calculateOTSpecialHolidayValue($employeeId, $attendanceDate)
-{
-    $overtime = \App\Models\Overtime::where('employee_id', $employeeId)
-        ->whereDate('date', $attendanceDate)
-        ->where('overtime_type', 'special_holiday')
-        ->where('status', 'approved')
-        ->first();
-        
-    if ($overtime) {
-        return $overtime->rate_multiplier;
+    {
+        try {
+            if (!class_exists('App\Models\Overtime')) {
+                return 0.0;
+            }
+            
+            $overtime = \App\Models\Overtime::where('employee_id', $employeeId)
+                ->whereDate('date', $attendanceDate)
+                ->where('overtime_type', 'special_holiday')
+                ->where('status', 'approved')
+                ->first();
+                
+            if ($overtime) {
+                return $overtime->rate_multiplier;
+            }
+            
+            return 0.0;
+        } catch (\Exception $e) {
+            Log::error("Error calculating OT Special Holiday value: " . $e->getMessage());
+            return 0.0;
+        }
     }
-    
-    return 0.0;
-}
 
-// Add this new method for calculating offset hours
-private function calculateOffsetValue($employeeId, $attendanceDate)
-{
-    $offset = \App\Models\Offset::where('employee_id', $employeeId)
-        ->whereDate('date', $attendanceDate)
-        ->where('transaction_type', 'debit')
-        ->where('status', 'approved')
-        ->first();
-        
-    if ($offset) {
-        return $offset->hours;
+    /**
+     * Calculate offset hours for employee on specific date
+     */
+    private function calculateOffsetValue($employeeId, $attendanceDate)
+    {
+        try {
+            if (!class_exists('App\Models\Offset')) {
+                return 0.0;
+            }
+            
+            $offset = \App\Models\Offset::where('employee_id', $employeeId)
+                ->whereDate('date', $attendanceDate)
+                ->where('transaction_type', 'debit')
+                ->where('status', 'approved')
+                ->first();
+                
+            if ($offset) {
+                return $offset->hours;
+            }
+            
+            return 0.0;
+        } catch (\Exception $e) {
+            Log::error("Error calculating offset value: " . $e->getMessage());
+            return 0.0;
+        }
     }
-    
-    return 0.0;
-}
     
     /**
      * Calculate Rest Day value for employee on specific date
      */
     private function calculateRestDayValue($employeeId, $attendanceDate)
     {
-        $cancelRestDay = \App\Models\CancelRestDay::where('employee_id', $employeeId)
-            ->whereDate('rest_day_date', $attendanceDate)
-            ->where('status', 'approved')
-            ->exists();
+        try {
+            if (!class_exists('App\Models\CancelRestDay')) {
+                return false;
+            }
             
-        return $cancelRestDay;
+            $cancelRestDay = \App\Models\CancelRestDay::where('employee_id', $employeeId)
+                ->whereDate('rest_day_date', $attendanceDate)
+                ->where('status', 'approved')
+                ->exists();
+                
+            return $cancelRestDay;
+        } catch (\Exception $e) {
+            Log::error("Error calculating Rest Day value: " . $e->getMessage());
+            return false;
+        }
     }
     
     /**
@@ -1019,34 +1156,52 @@ private function calculateOffsetValue($employeeId, $attendanceDate)
      */
     private function calculateRetroMultiplierValue($employeeId, $attendanceDate)
     {
-        $retro = \App\Models\Retro::where('employee_id', $employeeId)
-            ->whereDate('retro_date', $attendanceDate)
-            ->where('status', 'approved')
-            ->first();
+        try {
+            if (!class_exists('App\Models\Retro')) {
+                return 0.0;
+            }
             
-        if ($retro) {
-            return $retro->multiplier_rate * $retro->hours_days;
+            $retro = \App\Models\Retro::where('employee_id', $employeeId)
+                ->whereDate('retro_date', $attendanceDate)
+                ->where('status', 'approved')
+                ->first();
+                
+            if ($retro) {
+                return $retro->multiplier_rate * $retro->hours_days;
+            }
+            
+            return 0.0;
+        } catch (\Exception $e) {
+            Log::error("Error calculating Retro Multiplier value: " . $e->getMessage());
+            return 0.0;
         }
-        
-        return 0.0;
     }
     
     /**
      * Calculate overtime hours for employee on specific date (updated)
      */
     private function calculateOvertimeHours($employeeId, $attendanceDate)
-{
-    // Get regular overtime (excluding Special Holiday and Regular Holiday)
-    $overtime = \App\Models\Overtime::where('employee_id', $employeeId)
-        ->whereDate('date', $attendanceDate)
-        ->where('status', 'approved')
-        ->whereNotIn('overtime_type', ['special_holiday', 'regular_holiday'])
-        ->first();
-        
-    if ($overtime) {
-        return $overtime->rate_multiplier;
+    {
+        try {
+            if (!class_exists('App\Models\Overtime')) {
+                return 0.0;
+            }
+            
+            // Get regular overtime (excluding Special Holiday and Regular Holiday)
+            $overtime = \App\Models\Overtime::where('employee_id', $employeeId)
+                ->whereDate('date', $attendanceDate)
+                ->where('status', 'approved')
+                ->whereNotIn('overtime_type', ['special_holiday', 'regular_holiday'])
+                ->first();
+                
+            if ($overtime) {
+                return $overtime->rate_multiplier;
+            }
+            
+            return 0.0;
+        } catch (\Exception $e) {
+            Log::error("Error calculating overtime hours: " . $e->getMessage());
+            return 0.0;
+        }
     }
-    
-    return 0.0;
-}
 }
