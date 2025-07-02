@@ -60,11 +60,11 @@ const formatTime = (timeString) => {
   }
 };
 
-// Enhanced TimePicker component with better UX
+// Enhanced TimePicker component for better time handling
+
 const TimePicker = ({ value, onChange, name, placeholder, required, disabled = false }) => {
-  // Parse the existing time value (if any) more robustly
+  // FIXED: Enhanced time parsing with better error handling
   const parseTime = (timeStr) => {
-    // Default/empty values
     if (!timeStr) return { hour: '', minute: '', period: 'AM' };
     
     try {
@@ -87,24 +87,8 @@ const TimePicker = ({ value, onChange, name, placeholder, required, disabled = f
         };
       }
       
-      // Handle ISO date string (2023-04-10T14:30:00Z)
-      if (typeof timeStr === 'string' && timeStr.includes('T')) {
-        const date = new Date(timeStr);
-        if (!isNaN(date)) {
-          let hours = date.getHours();
-          const period = hours >= 12 ? 'PM' : 'AM';
-          hours = hours % 12 || 12; // Convert to 12-hour format
-          
-          return {
-            hour: hours.toString(),
-            minute: date.getMinutes().toString().padStart(2, '0'),
-            period
-          };
-        }
-      }
-      
       // Handle 24-hour time format (14:30)
-      if (typeof timeStr === 'string' && timeStr.includes(':')) {
+      if (typeof timeStr === 'string' && timeStr.includes(':') && !timeStr.includes('AM') && !timeStr.includes('PM')) {
         const [hourPart, minutePart] = timeStr.split(':');
         const hourNum = parseInt(hourPart, 10);
         
@@ -120,31 +104,28 @@ const TimePicker = ({ value, onChange, name, placeholder, required, disabled = f
         }
       }
       
-      // Handle time with date (2023-04-10 14:30:00)
-      if (typeof timeStr === 'string' && timeStr.includes(' ') && timeStr.includes(':')) {
-        const parts = timeStr.split(' ');
-        const timePart = parts[parts.length - 1];
-        const [hourPart, minutePart] = timePart.split(':');
-        const hourNum = parseInt(hourPart, 10);
-        
-        if (!isNaN(hourNum)) {
-          const period = hourNum >= 12 ? 'PM' : 'AM';
-          const hour12 = hourNum % 12 || 12;
+      // Handle ISO date string (2023-04-10T14:30:00Z)
+      if (typeof timeStr === 'string' && timeStr.includes('T')) {
+        const date = new Date(timeStr);
+        if (!isNaN(date)) {
+          let hours = date.getHours();
+          const period = hours >= 12 ? 'PM' : 'AM';
+          hours = hours % 12 || 12;
           
           return {
-            hour: hour12.toString(),
-            minute: minutePart || '00',
+            hour: hours.toString(),
+            minute: date.getMinutes().toString().padStart(2, '0'),
             period
           };
         }
       }
       
       // Try to parse as date as last resort
-      const date = new Date(timeStr);
+      const date = new Date(`2000-01-01 ${timeStr}`);
       if (!isNaN(date.getTime())) {
         let hours = date.getHours();
         const period = hours >= 12 ? 'PM' : 'AM';
-        hours = hours % 12 || 12; // Convert to 12-hour format
+        hours = hours % 12 || 12;
         
         return {
           hour: hours.toString(),
@@ -153,7 +134,6 @@ const TimePicker = ({ value, onChange, name, placeholder, required, disabled = f
         };
       }
       
-      // If we can't parse it, return empty values
       console.warn(`Could not parse time: "${timeStr}"`);
       return { hour: '', minute: '', period: 'AM' };
       
@@ -163,10 +143,9 @@ const TimePicker = ({ value, onChange, name, placeholder, required, disabled = f
     }
   };
 
-  // Get the current values
   const { hour, minute, period } = parseTime(value);
 
-  // Handle individual selection changes with better logging
+  // FIXED: Enhanced time change handler with better validation
   const handleTimeChange = (type, e) => {
     const newValue = e.target.value;
     
@@ -174,39 +153,39 @@ const TimePicker = ({ value, onChange, name, placeholder, required, disabled = f
     let updatedMinute = minute;
     let updatedPeriod = period;
     
-    if (type === 'hour') updatedHour = newValue === '' ? '' : newValue;
-    if (type === 'minute') updatedMinute = newValue === '' ? '' : newValue;
+    if (type === 'hour') {
+      updatedHour = newValue === '' ? '' : newValue;
+      // FIXED: Auto-set minute to 00 if hour is selected but minute is empty
+      if (newValue !== '' && !updatedMinute) {
+        updatedMinute = '00';
+      }
+    }
+    if (type === 'minute') {
+      updatedMinute = newValue === '' ? '' : newValue;
+      // FIXED: Auto-set hour to 12 if minute is selected but hour is empty
+      if (newValue !== '' && !updatedHour) {
+        updatedHour = '12';
+      }
+    }
     if (type === 'period') updatedPeriod = newValue;
     
-    console.log(`Time change - Type: ${type}, New value: ${newValue}, Current values:`, {
+    console.log(`Time change - Type: ${type}, New value: ${newValue}`, {
       hour: updatedHour,
       minute: updatedMinute,
       period: updatedPeriod
     });
     
-    // Only create time string if we have both hour and minute components
+    // FIXED: Create time string only if we have both components
     if (updatedHour && updatedMinute) {
       const timeString = `${updatedHour}:${updatedMinute} ${updatedPeriod}`;
       console.log(`Setting complete time: ${timeString}`);
       onChange({ target: { name, value: timeString } });
     } else if (!updatedHour && !updatedMinute) {
-      // Clear the time value if both hour and minute are empty
+      // Clear the time value if both are empty
       console.log('Clearing time value');
       onChange({ target: { name, value: '' } });
-    } else {
-      // If we have partial data (only hour or only minute), fill in defaults
-      let partialTimeString = '';
-      if (updatedHour) {
-        partialTimeString = `${updatedHour}:${updatedMinute || '00'} ${updatedPeriod}`;
-      } else if (updatedMinute) {
-        partialTimeString = `12:${updatedMinute} ${updatedPeriod}`;
-      }
-      
-      if (partialTimeString) {
-        console.log(`Setting partial time: ${partialTimeString}`);
-        onChange({ target: { name, value: partialTimeString } });
-      }
     }
+    // FIXED: Don't set partial values - wait for both hour and minute
   };
 
   // Create hours options (1-12)
@@ -238,15 +217,15 @@ const TimePicker = ({ value, onChange, name, placeholder, required, disabled = f
           value={hour || ""}
           onChange={(e) => handleTimeChange('hour', e)}
           disabled={disabled}
-          className={`w-full py-2 pl-3 pr-10 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-            disabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''
-          }`}
+          className={`w-full py-2 pl-3 pr-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm ${
+            disabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+          } ${!hour && required ? 'border-red-300' : 'border-gray-300'}`}
         >
           {hoursOptions()}
         </select>
       </div>
       
-      <span>:</span>
+      <span className="text-gray-400 font-medium">:</span>
       
       {/* Minute dropdown */}
       <div className="w-1/3">
@@ -254,9 +233,9 @@ const TimePicker = ({ value, onChange, name, placeholder, required, disabled = f
           value={minute || ""}
           onChange={(e) => handleTimeChange('minute', e)}
           disabled={disabled}
-          className={`w-full py-2 pl-3 pr-10 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-            disabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''
-          }`}
+          className={`w-full py-2 pl-3 pr-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm ${
+            disabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+          } ${!minute && required ? 'border-red-300' : 'border-gray-300'}`}
         >
           {minutesOptions()}
         </select>
@@ -268,9 +247,9 @@ const TimePicker = ({ value, onChange, name, placeholder, required, disabled = f
           value={period}
           onChange={(e) => handleTimeChange('period', e)}
           disabled={disabled}
-          className={`w-full py-2 pl-3 pr-10 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-            disabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : ''
-          }`}
+          className={`w-full py-2 pl-3 pr-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm ${
+            disabled ? 'bg-gray-100 text-gray-500 cursor-not-allowed' : 'bg-white'
+          } border-gray-300`}
         >
           <option value="AM">AM</option>
           <option value="PM">PM</option>
@@ -368,6 +347,39 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
     }
   }, [attendance]);
 
+  // FIXED: Helper function to convert time string to minutes for comparison
+  const timeToMinutes = (timeString) => {
+    if (!timeString) return 0;
+    try {
+      // Handle both 12-hour (HH:MM AM/PM) and 24-hour (HH:MM) formats
+      let hours, minutes;
+      
+      if (timeString.includes('AM') || timeString.includes('PM')) {
+        // 12-hour format
+        const [timePart, period] = timeString.split(' ');
+        const [hourStr, minuteStr] = timePart.split(':');
+        hours = parseInt(hourStr, 10);
+        minutes = parseInt(minuteStr, 10);
+        
+        if (period === 'PM' && hours !== 12) {
+          hours += 12;
+        } else if (period === 'AM' && hours === 12) {
+          hours = 0;
+        }
+      } else {
+        // 24-hour format
+        const [hourStr, minuteStr] = timeString.split(':');
+        hours = parseInt(hourStr, 10);
+        minutes = parseInt(minuteStr, 10);
+      }
+      
+      return hours * 60 + minutes;
+    } catch (error) {
+      console.error('Error parsing time:', error);
+      return 0;
+    }
+  };
+
   // Improved conversion to 24-hour format
   const convertTo24Hour = (timeStr) => {
     if (!timeStr) return '';
@@ -462,20 +474,35 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
     }));
   };
 
-  // Enhanced Night Shift Handler with Clear Logic
+  // FIXED: Enhanced Night Shift Handler with better logic
   const handleNightShiftChange = (e) => {
     const isNightShift = e.target.checked;
     
-    setFormData(prev => ({
-      ...prev,
-      is_nightshift: isNightShift,
-      // Clear next day timeout if turning off night shift
-      next_day_timeout: isNightShift ? prev.next_day_timeout : ''
-    }));
+    setFormData(prev => {
+      const newData = {
+        ...prev,
+        is_nightshift: isNightShift
+      };
+      
+      // Better logic for clearing/setting timeout fields
+      if (isNightShift) {
+        // If enabling night shift, clear regular time_out to avoid confusion
+        newData.time_out = '';
+      } else {
+        // If disabling night shift, clear next_day_timeout and restore time_out if needed
+        newData.next_day_timeout = '';
+        if (!newData.time_out) {
+          // Set a default time_out if none exists
+          newData.time_out = '5:00 PM';
+        }
+      }
+      
+      return newData;
+    });
     
-    // Show info panel for a few seconds when toggling
+    // Show info panel for guidance
     setShowNightShiftInfo(true);
-    setTimeout(() => setShowNightShiftInfo(false), 8000); // Hide after 8 seconds
+    setTimeout(() => setShowNightShiftInfo(false), 8000);
   };
 
   // Helper to get next day for night shift
@@ -490,7 +517,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
     }
   };
 
-  // Enhanced form submission with detailed night shift validation
+  // FIXED: Enhanced form submission with better night shift validation
   const handleSubmit = async () => {
     setError('');
     setLoading(true);
@@ -505,31 +532,85 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
         return;
       }
 
-      // Enhanced validation for night shifts
+      // Enhanced validation for night shifts with clearer error messages
       if (formData.is_nightshift) {
-        // For night shifts, we need either time_out OR next_day_timeout
-        if (!formData.time_out && !formData.next_day_timeout) {
-          setError('For night shifts, please provide either "Time Out" (same day) or "Next Day Timeout"');
+        const hasTimeOut = formData.time_out && formData.time_out.trim() !== '';
+        const hasNextDayTimeout = formData.next_day_timeout && formData.next_day_timeout.trim() !== '';
+        
+        if (!hasTimeOut && !hasNextDayTimeout) {
+          setError('For night shifts, please provide either "Time Out" (same day) or "Next Day Timeout" (next day)');
           setLoading(false);
           return;
         }
         
-        // If both are provided, prefer next_day_timeout but warn user
-        if (formData.time_out && formData.next_day_timeout) {
-          setError('Please provide either "Time Out" OR "Next Day Timeout", not both. Next Day Timeout will be used.');
+        if (hasTimeOut && hasNextDayTimeout) {
+          setError('Please provide either "Time Out" OR "Next Day Timeout", not both. For night shifts, use "Next Day Timeout" if the employee clocks out the following day.');
           setLoading(false);
           return;
         }
       } else {
-        // For regular shifts, we need time_out (but time_in is already checked above)
-        if (!formData.time_out) {
+        // For regular shifts, we need time_out
+        if (!formData.time_out || formData.time_out.trim() === '') {
           setError('Time Out is required for regular shifts');
+          setLoading(false);
+          return;
+        }
+        
+        // Make sure next_day_timeout is cleared for regular shifts
+        if (formData.next_day_timeout) {
+          setError('Next Day Timeout should only be used for night shifts. Please uncheck "Night Shift" or clear the Next Day Timeout field.');
           setLoading(false);
           return;
         }
       }
       
-      // Prepare data with original dates from attendance
+      // Enhanced time sequence validation
+      if (formData.time_in) {
+        // For regular shifts, validate time sequence
+        if (!formData.is_nightshift && formData.time_out) {
+          const timeInMinutes = timeToMinutes(formData.time_in);
+          const timeOutMinutes = timeToMinutes(formData.time_out);
+          
+          if (timeOutMinutes <= timeInMinutes) {
+            setError('Time Out must be after Time In for regular shifts');
+            setLoading(false);
+            return;
+          }
+        }
+        
+        // Enhanced break time validation
+        if (formData.break_out && formData.break_in) {
+          const breakOutMinutes = timeToMinutes(formData.break_out);
+          const breakInMinutes = timeToMinutes(formData.break_in);
+          const timeInMinutes = timeToMinutes(formData.time_in);
+          
+          // Break Out should be after Time In
+          if (breakOutMinutes <= timeInMinutes) {
+            setError('Break Out must be after Time In');
+            setLoading(false);
+            return;
+          }
+          
+          // Break In should be after Break Out
+          if (breakInMinutes <= breakOutMinutes) {
+            setError('Break In must be after Break Out - employee returns from break after leaving for break');
+            setLoading(false);
+            return;
+          }
+          
+          // For regular shifts, break in should be before time out
+          if (!formData.is_nightshift && formData.time_out) {
+            const timeOutMinutes = timeToMinutes(formData.time_out);
+            if (breakInMinutes >= timeOutMinutes) {
+              setError('Break In must be before Time Out for regular shifts');
+              setLoading(false);
+              return;
+            }
+          }
+        }
+      }
+      
+      // Prepare data with better date-time handling
       const submissionData = {
         ...formData,
         id: attendance.id,
@@ -545,79 +626,11 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
       
       console.log('Prepared submission data:', submissionData);
       
-      // Enhanced time sequence validation for regular shifts
-      if (submissionData.time_in && submissionData.time_out && !formData.is_nightshift) {
-        const timeIn = new Date(submissionData.time_in);
-        const timeOut = new Date(submissionData.time_out);
-        
-        if (timeOut <= timeIn) {
-          setError('Time Out must be after Time In for regular shifts');
-          setLoading(false);
-          return;
-        }
-      }
-      
-      // Enhanced break time validation
-      if (submissionData.break_out && submissionData.break_in) {
-        const breakOut = new Date(submissionData.break_out);
-        const breakIn = new Date(submissionData.break_in);
-        
-        // Check if the dates are valid
-        if (isNaN(breakOut.getTime()) || isNaN(breakIn.getTime())) {
-          console.error('Invalid break time dates:', {
-            breakOut: submissionData.break_out,
-            breakIn: submissionData.break_in,
-            parsedBreakOut: breakOut,
-            parsedBreakIn: breakIn
-          });
-          setError('Invalid break time format. Please check your entries.');
-          setLoading(false);
-          return;
-        }
-        
-        // Break In should be AFTER Break Out (employee returns from break after leaving)
-        if (breakOut >= breakIn) {
-          setError('Break In must be after Break Out - employee returns from break after leaving for break');
-          setLoading(false);
-          return;
-        }
-      }
-      
-      // Additional validation - breaks should be between time in and time out
-      if (submissionData.time_in) {
-        const timeIn = new Date(submissionData.time_in);
-        
-        // Check break_out is after time_in if provided
-        if (submissionData.break_out) {
-          const breakOut = new Date(submissionData.break_out);
-          if (breakOut <= timeIn) {
-            setError('Break Out must be after Time In');
-            setLoading(false);
-            return;
-          }
-        }
-        
-        // For regular shifts, check break_in is before time_out
-        if (submissionData.break_in && submissionData.time_out && !formData.is_nightshift) {
-          const breakIn = new Date(submissionData.break_in);
-          const timeOut = new Date(submissionData.time_out);
-          if (breakIn >= timeOut) {
-            setError('Break In must be before Time Out for regular shifts');
-            setLoading(false);
-            return;
-          }
-        }
-      }
-      
-      // All validations passed, call onSave with the updated data
-      console.log('Calling onSave with data:', submissionData);
-      
-      // Await the onSave call in case it's async
+      // Call onSave with the updated data
       if (onSave) {
         await onSave(submissionData);
       }
       
-      // If we reach here, the save was successful
       console.log('Save completed successfully');
       
     } catch (error) {
@@ -707,15 +720,30 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
             </Alert>
           )}
 
-          {/* Night Shift Information Panel */}
+          {/* Enhanced Night Shift Information Panel */}
           {showNightShiftInfo && (
             <Alert className="border-purple-200 bg-purple-50">
               <Info className="h-4 w-4 mr-2 text-purple-600" />
               <AlertDescription className="text-purple-800">
-                <strong>Night Shift Mode:</strong> {formData.is_nightshift ? 
-                  'Use "Next Day Timeout" for employees who clock out the following day. Regular "Time Out" is for same-day clock outs.' :
-                  'Regular shift mode: Use "Time In" and "Time Out" for same-day attendance.'
-                }
+                <strong>{formData.is_nightshift ? 'Night Shift Enabled:' : 'Regular Shift Mode:'}</strong>
+                <br />
+                {formData.is_nightshift ? (
+                  <>
+                    • Use "Time Out" only if employee clocks out the same day
+                    <br />
+                    • Use "Next Day Timeout" if employee clocks out the following day
+                    <br />
+                    • Do not use both fields - choose the appropriate one for your situation
+                  </>
+                ) : (
+                  <>
+                    • Use "Time In" and "Time Out" for same-day attendance
+                    <br />
+                    • "Next Day Timeout" field is disabled for regular shifts
+                    <br />
+                    • Both Time In and Time Out are required
+                  </>
+                )}
               </AlertDescription>
             </Alert>
           )}
@@ -737,9 +765,9 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
             </div>
           </div>
 
-          {/* Night Shift Toggle */}
+          {/* FIXED: Enhanced Night Shift Toggle Section */}
           <div className="border-2 border-dashed border-gray-200 rounded-lg p-4 bg-gray-50">
-            <div className="flex items-center mb-2">
+            <div className="flex items-center mb-3">
               <input
                 type="checkbox"
                 id="is_nightshift"
@@ -750,13 +778,20 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
               />
               <label htmlFor="is_nightshift" className="ml-2 block text-sm font-medium text-gray-900">
                 <div className="flex items-center space-x-2">
-                  <Moon className="h-4 w-4 text-purple-600" />
+                  {formData.is_nightshift ? (
+                    <Moon className="h-4 w-4 text-purple-600" />
+                  ) : (
+                    <Sun className="h-4 w-4 text-yellow-600" />
+                  )}
                   <span>Night Shift</span>
                 </div>
               </label>
             </div>
             <p className="text-xs text-gray-600 ml-6">
-              Check this if the employee works overnight and may clock out the next day
+              {formData.is_nightshift 
+                ? "Night shift mode: Employee works overnight and may clock out the next day"
+                : "Regular shift mode: Employee clocks in and out on the same day"
+              }
             </p>
           </div>
 
@@ -844,7 +879,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
             </div>
           </div>
 
-          {/* Night Shift Next Day Timeout */}
+          {/* FIXED: Enhanced Next Day Timeout Section */}
           {formData.is_nightshift && (
             <div className="border-2 border-purple-200 rounded-lg p-4 bg-purple-50">
               <div>
@@ -867,14 +902,19 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
                     />
                   </div>
                 </div>
-                <p className="mt-2 text-xs text-purple-700">
-                  <strong>For night shifts only:</strong> When the employee clocks out on the following day (e.g., 6:00 AM the next morning).
+                <div className="mt-2 text-xs text-purple-700">
+                  <strong>For night shifts only:</strong> When the employee clocks out on the following day.
                   {formData.time_out && (
-                    <span className="block mt-1 text-purple-600 font-medium">
-                      Disabled because "Time Out" is already set. Clear "Time Out" to use this field.
-                    </span>
+                    <div className="mt-1 p-2 bg-purple-100 rounded text-purple-800 font-medium">
+                      ⚠️ Disabled because "Time Out" is set. Clear "Time Out" to use this field.
+                    </div>
                   )}
-                </p>
+                  {!formData.time_out && !formData.next_day_timeout && (
+                    <div className="mt-1 p-2 bg-yellow-100 rounded text-yellow-800 font-medium">
+                      💡 Either "Time Out" (same day) or "Next Day Timeout" is required for night shifts.
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           )}

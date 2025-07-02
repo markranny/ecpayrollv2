@@ -48,9 +48,9 @@ const ProcessedAttendanceList = () => {
   });
   const [deleting, setDeleting] = useState(false);
 
-  // Refs for preventing double-clicks
-  const editButtonRef = useRef(null);
-  const [isEditButtonDisabled, setIsEditButtonDisabled] = useState(false);
+  // FIXED: Better double-click prevention using useRef instead of state
+  const editClickTimeoutRef = useRef(null);
+  const isEditingRef = useRef(false);
 
   // Auto-clear success/error messages
   useEffect(() => {
@@ -66,6 +66,15 @@ const ProcessedAttendanceList = () => {
       return () => clearTimeout(timer);
     }
   }, [error]);
+
+  // FIXED: Clean up timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (editClickTimeoutRef.current) {
+        clearTimeout(editClickTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Date formatting with error handling
   const formatDate = (dateString) => {
@@ -487,33 +496,78 @@ const ProcessedAttendanceList = () => {
     }, 0);
   };
 
-  // FIXED: Handle edit button click - prevent event bubbling and ensure single click
+  // FIXED: Improved handleEditClick with proper debouncing
   const handleEditClick = useCallback((e, attendance) => {
     // Prevent all event propagation
     e.stopPropagation();
     e.preventDefault();
     
-    // Prevent double clicks with a brief disable
-    if (isEditButtonDisabled) return;
+    // Use ref-based flag to prevent race conditions
+    if (isEditingRef.current) {
+      console.log('Edit already in progress, ignoring click');
+      return;
+    }
     
-    setIsEditButtonDisabled(true);
+    // Clear any existing timeout
+    if (editClickTimeoutRef.current) {
+      clearTimeout(editClickTimeoutRef.current);
+    }
+    
+    // Set flag immediately
+    isEditingRef.current = true;
     
     console.log('Edit clicked for:', attendance.id);
     setSelectedAttendance(attendance);
     setShowEditModal(true);
     
-    // Re-enable after a short delay
-    setTimeout(() => {
-      setIsEditButtonDisabled(false);
-    }, 500);
-  }, [isEditButtonDisabled]);
+    // Reset flag after modal is shown (longer delay to ensure modal is rendered)
+    editClickTimeoutRef.current = setTimeout(() => {
+      isEditingRef.current = false;
+    }, 1000);
+  }, []);
 
-  // Handle modal close
+  // NEW: Handle double-click on table rows
+  const handleRowDoubleClick = useCallback((e, attendance) => {
+    // Prevent event propagation to avoid conflicts with other click handlers
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Check if we're already editing to prevent duplicate modals
+    if (isEditingRef.current) {
+      console.log('Edit already in progress, ignoring double-click');
+      return;
+    }
+    
+    // Clear any existing timeout
+    if (editClickTimeoutRef.current) {
+      clearTimeout(editClickTimeoutRef.current);
+    }
+    
+    // Set flag immediately
+    isEditingRef.current = true;
+    
+    console.log('Row double-clicked for:', attendance.id, attendance.employee_name);
+    setSelectedAttendance(attendance);
+    setShowEditModal(true);
+    
+    // Reset flag after modal is shown
+    editClickTimeoutRef.current = setTimeout(() => {
+      isEditingRef.current = false;
+    }, 1000);
+  }, []);
+
+  // FIXED: Reset editing flag when modal closes
   const handleCloseModal = () => {
     setShowEditModal(false);
     setSelectedAttendance(null);
     setError('');
     setSuccess('');
+    
+    // Reset the editing flag when modal closes
+    isEditingRef.current = false;
+    if (editClickTimeoutRef.current) {
+      clearTimeout(editClickTimeoutRef.current);
+    }
   };
 
   const handleAttendanceUpdate = async (updatedAttendance) => {
@@ -694,6 +748,9 @@ const ProcessedAttendanceList = () => {
                 </h1>
                 <p className="text-gray-600">
                   View and manage processed attendance records with edit history tracking.
+                </p>
+                <p className="text-sm text-blue-600 mt-1">
+                  💡 Tip: Double-click any row to quickly edit attendance times
                 </p>
               </div>
               
@@ -937,7 +994,9 @@ const ProcessedAttendanceList = () => {
                           {attendances.map((attendance) => (
                             <tr 
                               key={attendance.id} 
-                              className={`hover:bg-gray-50 ${attendance.source === 'manual_edit' ? 'bg-red-50' : ''}`}
+                              className={`hover:bg-gray-50 cursor-pointer transition-colors ${attendance.source === 'manual_edit' ? 'bg-red-50' : ''}`}
+                              onDoubleClick={(e) => handleRowDoubleClick(e, attendance)}
+                              title="Double-click to edit attendance times"
                             >
                               <td 
                                 className="px-2 py-4 whitespace-nowrap"
@@ -1024,14 +1083,16 @@ const ProcessedAttendanceList = () => {
                               <td className="px-2 py-4 whitespace-nowrap">
                                 {renderStatusBadge(attendance.source, 'source')}
                               </td>
-                              <td className="px-2 py-4 whitespace-nowrap text-right text-sm font-medium">
+                              <td 
+                                className="px-2 py-4 whitespace-nowrap text-right text-sm font-medium"
+                                onClick={(e) => e.stopPropagation()} // Prevent row double-click when clicking edit button
+                              >
                                 <Button 
-                                  ref={editButtonRef}
                                   variant="ghost" 
                                   size="sm"
                                   onClick={(e) => handleEditClick(e, attendance)}
-                                  disabled={isEditButtonDisabled}
-                                  className="text-blue-600 hover:text-blue-900 disabled:opacity-50"
+                                  disabled={isEditingRef.current} // Use ref for immediate state
+                                  className="text-blue-600 hover:text-blue-900 disabled:opacity-50 disabled:cursor-not-allowed"
                                   type="button"
                                 >
                                   <Edit className="h-4 w-4 mr-1" />
