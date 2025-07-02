@@ -524,138 +524,142 @@ public function bulkUpdateStatus(Request $request)
     }
 
     public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'employee_ids' => 'required|array',
-            'employee_ids.*' => 'required|integer|exists:employees,id',
-            'date' => 'required|date',
-            'start_time' => 'required',
-            'end_time' => 'required',
-            'overtime_hours' => 'required|numeric|min:0.25|max:24',
-            'reason' => 'required|string|max:1000',
-            'rate_multiplier' => 'required|numeric',
-        ]);
-        
-        // Get the current authenticated user
-        $user = Auth::user();
-        
-        // Check if user is a department manager
-        $userRoles = $this->getUserRoles($user);
-        $isDepartmentManager = $userRoles['isDepartmentManager'];
-        
-        $successCount = 0;
-        $skippedCount = 0;
-        $errorMessages = [];
-        
-        DB::beginTransaction();
-        
-        try {
-            foreach ($validated['employee_ids'] as $employeeId) {
-                $employee = Employee::with('department')->find($employeeId);
-                
-                if (!$employee) {
-                    $errorMessages[] = "Employee ID $employeeId not found";
-                    continue;
-                }
-                
-                // Check if employee belongs to an active department
-                if (!$employee->department || !$employee->department->is_active) {
-                    $errorMessages[] = "Employee {$employee->Fname} {$employee->Lname} belongs to an inactive department";
-                    continue;
-                }
-                
-                // Check for duplicate overtime entries (same employee and date)
-                $existingOvertime = Overtime::where('employee_id', $employeeId)
-                                           ->where('date', $validated['date'])
-                                           ->first();
-                
-                if ($existingOvertime) {
-                    $skippedCount++;
-                    $errorMessages[] = "Overtime for {$employee->Fname} {$employee->Lname} on {$validated['date']} already exists";
-                    continue;
-                }
-                
-                // Find department manager for this employee using the department name
-                $deptManager = DepartmentManager::where('department', $employee->department->name)
-                    ->first();
-                
-                // Parse start and end times for storage
-                $startTime = Carbon::parse($validated['date'] . ' ' . $validated['start_time']);
-                $endTime = Carbon::parse($validated['date'] . ' ' . $validated['end_time']);
-                
-                // Handle case where end time is on the next day (overnight shift)
-                if ($endTime->lt($startTime)) {
-                    $endTime->addDay();
-                }
-                
-                // Use the manually entered overtime hours
-                $totalHours = floatval($validated['overtime_hours']);
-                
-                // Calculate rate multiplier based on day type and night differential
-                $rateMultiplier = $this->calculateRateMultiplier(
-                    $validated['date'],
-                    $startTime,
-                    $endTime,
-                    $validated['rate_multiplier']
-                );
-                
-                $overtime = new Overtime();
-                $overtime->employee_id = $employeeId;
-                $overtime->date = $validated['date'];
-                $overtime->start_time = $startTime;
-                $overtime->end_time = $endTime;
-                $overtime->total_hours = $totalHours;
-                $overtime->rate_multiplier = $rateMultiplier;
-                $overtime->reason = $validated['reason'];
-                
-                // Set initial status based on conditions
-                if ($isDepartmentManager && $totalHours >= 4.0 && 
-                    ($employeeId == $user->employee_id || 
-                     ($employee->department && DepartmentManager::where('manager_id', $user->id)
-                                                        ->where('department', $employee->department->name)
-                                                        ->exists()))) {
-                    
-                    // Auto-approve at department manager level
-                    $overtime->status = 'manager_approved';
-                    $overtime->dept_approved_by = $user->id;
-                    $overtime->dept_approved_at = now();
-                    $overtime->dept_remarks = 'Auto-approved (Department Manager)';
-                } else {
-                    // Normal pending status
-                    $overtime->status = 'pending';
-                }
-                
-                $overtime->created_by = $user->id;
-                
-                // Assign department manager if found
-                if ($deptManager) {
-                    $overtime->dept_manager_id = $deptManager->manager_id;
-                }
-                
-                $overtime->save();
-                $successCount++;
+{
+    $validated = $request->validate([
+        'employee_ids' => 'required|array',
+        'employee_ids.*' => 'required|integer|exists:employees,id',
+        'date' => 'required|date',
+        'start_time' => 'required',
+        'end_time' => 'required',
+        'overtime_hours' => 'required|numeric|min:0.25|max:24',
+        'reason' => 'required|string|max:1000',
+        'rate_multiplier' => 'required|numeric',
+        'overtime_type' => 'required|string|in:regular_weekday,rest_day,scheduled_rest_day,regular_holiday,special_holiday,emergency_work,extended_shift,weekend_work,night_shift,other',
+        'has_night_differential' => 'boolean',
+    ]);
+    
+    // Get the current authenticated user
+    $user = Auth::user();
+    
+    // Check if user is a department manager
+    $userRoles = $this->getUserRoles($user);
+    $isDepartmentManager = $userRoles['isDepartmentManager'];
+    
+    $successCount = 0;
+    $skippedCount = 0;
+    $errorMessages = [];
+    
+    DB::beginTransaction();
+    
+    try {
+        foreach ($validated['employee_ids'] as $employeeId) {
+            $employee = Employee::with('department')->find($employeeId);
+            
+            if (!$employee) {
+                $errorMessages[] = "Employee ID $employeeId not found";
+                continue;
             }
             
-            DB::commit();
-            
-            $message = "Successfully created {$successCount} overtime request(s)";
-            if ($skippedCount > 0) {
-                $message .= ". Skipped {$skippedCount} duplicate entries.";
+            // Check if employee belongs to an active department
+            if (!$employee->department || !$employee->department->is_active) {
+                $errorMessages[] = "Employee {$employee->Fname} {$employee->Lname} belongs to an inactive department";
+                continue;
             }
             
-            if (!empty($errorMessages)) {
-                return redirect()->back()->with([
-                    'message' => $message,
-                    'errors' => $errorMessages
-                ]);
+            // Check for duplicate overtime entries (same employee and date)
+            $existingOvertime = Overtime::where('employee_id', $employeeId)
+                                       ->where('date', $validated['date'])
+                                       ->first();
+            
+            if ($existingOvertime) {
+                $skippedCount++;
+                $errorMessages[] = "Overtime for {$employee->Fname} {$employee->Lname} on {$validated['date']} already exists";
+                continue;
             }
             
-            return redirect()->back()->with('message', $message);
-        } catch (\Exception $e) {
-            DB::rollBack();
-            return redirect()->back()->with('error', 'Error creating overtime requests: ' . $e->getMessage());
+            // Find department manager for this employee using the department name
+            $deptManager = DepartmentManager::where('department', $employee->department->name)
+                ->first();
+            
+            // Parse start and end times for storage
+            $startTime = Carbon::parse($validated['date'] . ' ' . $validated['start_time']);
+            $endTime = Carbon::parse($validated['date'] . ' ' . $validated['end_time']);
+            
+            // Handle case where end time is on the next day (overnight shift)
+            if ($endTime->lt($startTime)) {
+                $endTime->addDay();
+            }
+            
+            // Use the manually entered overtime hours
+            $totalHours = floatval($validated['overtime_hours']);
+            
+            // Calculate rate multiplier based on day type and night differential
+            $rateMultiplier = $this->calculateRateMultiplier(
+                $validated['date'],
+                $startTime,
+                $endTime,
+                $validated['rate_multiplier']
+            );
+            
+            $overtime = new Overtime();
+            $overtime->employee_id = $employeeId;
+            $overtime->date = $validated['date'];
+            $overtime->start_time = $startTime;
+            $overtime->end_time = $endTime;
+            $overtime->total_hours = $totalHours;
+            $overtime->rate_multiplier = $rateMultiplier;
+            $overtime->overtime_type = $validated['overtime_type']; // Add this line
+            $overtime->has_night_differential = $validated['has_night_differential'] ?? false; // Add this line
+            $overtime->reason = $validated['reason'];
+            
+            // Set initial status based on conditions
+            if ($isDepartmentManager && $totalHours >= 4.0 && 
+                ($employeeId == $user->employee_id || 
+                 ($employee->department && DepartmentManager::where('manager_id', $user->id)
+                                                    ->where('department', $employee->department->name)
+                                                    ->exists()))) {
+                
+                // Auto-approve at department manager level
+                $overtime->status = 'manager_approved';
+                $overtime->dept_approved_by = $user->id;
+                $overtime->dept_approved_at = now();
+                $overtime->dept_remarks = 'Auto-approved (Department Manager)';
+            } else {
+                // Normal pending status
+                $overtime->status = 'pending';
+            }
+            
+            $overtime->created_by = $user->id;
+            
+            // Assign department manager if found
+            if ($deptManager) {
+                $overtime->dept_manager_id = $deptManager->manager_id;
+            }
+            
+            $overtime->save();
+            $successCount++;
         }
+        
+        DB::commit();
+        
+        $message = "Successfully created {$successCount} overtime request(s)";
+        if ($skippedCount > 0) {
+            $message .= ". Skipped {$skippedCount} duplicate entries.";
+        }
+        
+        if (!empty($errorMessages)) {
+            return redirect()->back()->with([
+                'message' => $message,
+                'errors' => $errorMessages
+            ]);
+        }
+        
+        return redirect()->back()->with('message', $message);
+    } catch (\Exception $e) {
+        DB::rollBack();
+        return redirect()->back()->with('error', 'Error creating overtime requests: ' . $e->getMessage());
     }
+}
 
     private function calculateRateMultiplier($date, $startTime, $endTime, $baseMultiplier)
     {
