@@ -498,6 +498,13 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
     try {
       console.log('Form submission - Current data:', formData);
       
+      // Basic validation - at least time_in is required
+      if (!formData.time_in) {
+        setError('Time In is required');
+        setLoading(false);
+        return;
+      }
+
       // Enhanced validation for night shifts
       if (formData.is_nightshift) {
         // For night shifts, we need either time_out OR next_day_timeout
@@ -507,16 +514,16 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
           return;
         }
         
-        // If both are provided, next_day_timeout takes precedence
+        // If both are provided, prefer next_day_timeout but warn user
         if (formData.time_out && formData.next_day_timeout) {
-          setError('Please provide either "Time Out" OR "Next Day Timeout", not both');
+          setError('Please provide either "Time Out" OR "Next Day Timeout", not both. Next Day Timeout will be used.');
           setLoading(false);
           return;
         }
       } else {
-        // For regular shifts, we need time_in and time_out
-        if (!formData.time_in || !formData.time_out) {
-          setError('Time In and Time Out are required for regular shifts');
+        // For regular shifts, we need time_out (but time_in is already checked above)
+        if (!formData.time_out) {
+          setError('Time Out is required for regular shifts');
           setLoading(false);
           return;
         }
@@ -538,7 +545,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
       
       console.log('Prepared submission data:', submissionData);
       
-      // Enhanced time sequence validation
+      // Enhanced time sequence validation for regular shifts
       if (submissionData.time_in && submissionData.time_out && !formData.is_nightshift) {
         const timeIn = new Date(submissionData.time_in);
         const timeOut = new Date(submissionData.time_out);
@@ -577,9 +584,8 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
       }
       
       // Additional validation - breaks should be between time in and time out
-      if (submissionData.time_in && submissionData.time_out) {
+      if (submissionData.time_in) {
         const timeIn = new Date(submissionData.time_in);
-        const timeOut = new Date(submissionData.time_out);
         
         // Check break_out is after time_in if provided
         if (submissionData.break_out) {
@@ -591,9 +597,10 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
           }
         }
         
-        // Check break_in is before time_out for non-nightshift
-        if (submissionData.break_in && !formData.is_nightshift) {
+        // For regular shifts, check break_in is before time_out
+        if (submissionData.break_in && submissionData.time_out && !formData.is_nightshift) {
           const breakIn = new Date(submissionData.break_in);
+          const timeOut = new Date(submissionData.time_out);
           if (breakIn >= timeOut) {
             setError('Break In must be before Time Out for regular shifts');
             setLoading(false);
@@ -612,9 +619,6 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
       
       // If we reach here, the save was successful
       console.log('Save completed successfully');
-      
-      // Close the modal after successful save
-      onClose();
       
     } catch (error) {
       console.error('Error in form submission:', error);

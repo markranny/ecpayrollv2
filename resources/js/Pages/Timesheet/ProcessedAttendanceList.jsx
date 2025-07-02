@@ -1,8 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Head, usePage } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
-import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X } from 'lucide-react';
+import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X, Users, FileText, Eye } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -48,6 +48,25 @@ const ProcessedAttendanceList = () => {
   });
   const [deleting, setDeleting] = useState(false);
 
+  // Refs for preventing double-clicks
+  const editButtonRef = useRef(null);
+  const [isEditButtonDisabled, setIsEditButtonDisabled] = useState(false);
+
+  // Auto-clear success/error messages
+  useEffect(() => {
+    if (success) {
+      const timer = setTimeout(() => setSuccess(''), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [success]);
+
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(''), 10000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
+
   // Date formatting with error handling
   const formatDate = (dateString) => {
     if (!dateString) return '-';
@@ -74,15 +93,23 @@ const ProcessedAttendanceList = () => {
   const calculateDuration = (startTime, endTime) => {
     if (!startTime || !endTime) return '-';
     
-    const start = new Date(startTime);
-    const end = new Date(endTime);
-    const diffInMs = end - start;
-    
-    // If negative or invalid, return dash
-    if (diffInMs < 0) return '-';
-    
-    const diffInHours = diffInMs / (1000 * 60 * 60);
-    return diffInHours.toFixed(2);
+    try {
+      const start = new Date(startTime);
+      const end = new Date(endTime);
+      
+      if (isNaN(start.getTime()) || isNaN(end.getTime())) return '-';
+      
+      const diffInMs = end - start;
+      
+      // If negative or invalid, return dash
+      if (diffInMs < 0) return '-';
+      
+      const diffInHours = diffInMs / (1000 * 60 * 60);
+      return diffInHours.toFixed(2);
+    } catch (error) {
+      console.error('Duration calculation error:', error);
+      return '-';
+    }
   };
 
   const formatTime = (timeString) => {
@@ -94,29 +121,50 @@ const ProcessedAttendanceList = () => {
       if (timeString.includes('T')) {
         const [, time] = timeString.split('T');
         timeOnly = time.slice(0, 5); // Extract HH:MM
-      } else {
+      } else if (timeString.includes(' ') && timeString.includes(':')) {
         // If the time includes a date (like "2024-04-10 14:30:00"), split and take the time part
         const timeParts = timeString.split(' ');
         timeOnly = timeParts[timeParts.length - 1].slice(0, 5);
+      } else if (timeString.includes(':')) {
+        // Handle just time format "14:30:00" or "14:30"
+        timeOnly = timeString.slice(0, 5);
+      } else {
+        console.log('Unrecognized time format:', timeString);
+        return '-';
       }
       
       // Parse hours and minutes
-      const [hours, minutes] = timeOnly.split(':');
+      const parts = timeOnly.split(':');
+      if (parts.length < 2) {
+        console.log('Invalid time format, missing colon:', timeString);
+        return '-';
+      }
+      
+      const hours = parts[0];
+      const minutes = parts[1];
+      
+      // Make sure hours and minutes are valid numbers
       const hourNum = parseInt(hours, 10);
+      const minNum = parseInt(minutes, 10);
+      
+      if (isNaN(hourNum) || isNaN(minNum)) {
+        console.log('Invalid hour or minute values:', hours, minutes);
+        return '-';
+      }
       
       // Convert to 12-hour format with AM/PM
       const ampm = hourNum >= 12 ? 'PM' : 'AM';
       const formattedHours = hourNum % 12 || 12; // handle midnight and noon
       
-      return `${formattedHours}:${minutes} ${ampm}`;
+      return `${formattedHours}:${minutes.padStart(2, '0')} ${ampm}`;
     } catch (error) {
-      console.error('Time formatting error:', error);
+      console.error('Time formatting error:', error, 'for timeString:', timeString);
       return '-';
     }
   };
 
   // Process attendance data to ensure employee, dept, and day are always present
-  const processAttendanceData = (data) => {
+  const processAttendanceData = useCallback((data) => {
     return data.map(attendance => {
       // Ensure employee name is always available
       if (!attendance.employee_name && attendance.employee) {
@@ -149,7 +197,7 @@ const ProcessedAttendanceList = () => {
       
       return attendance;
     });
-  };
+  }, []);
 
   // Load departments
   const loadDepartments = async () => {
@@ -440,20 +488,32 @@ const ProcessedAttendanceList = () => {
   };
 
   // FIXED: Handle edit button click - prevent event bubbling and ensure single click
-  const handleEditClick = (e, attendance) => {
-    // Prevent event bubbling
+  const handleEditClick = useCallback((e, attendance) => {
+    // Prevent all event propagation
     e.stopPropagation();
     e.preventDefault();
+    
+    // Prevent double clicks with a brief disable
+    if (isEditButtonDisabled) return;
+    
+    setIsEditButtonDisabled(true);
     
     console.log('Edit clicked for:', attendance.id);
     setSelectedAttendance(attendance);
     setShowEditModal(true);
-  };
+    
+    // Re-enable after a short delay
+    setTimeout(() => {
+      setIsEditButtonDisabled(false);
+    }, 500);
+  }, [isEditButtonDisabled]);
 
   // Handle modal close
   const handleCloseModal = () => {
     setShowEditModal(false);
     setSelectedAttendance(null);
+    setError('');
+    setSuccess('');
   };
 
   const handleAttendanceUpdate = async (updatedAttendance) => {
@@ -512,7 +572,7 @@ const ProcessedAttendanceList = () => {
       const contentType = response.headers.get('content-type');
       if (!contentType || !contentType.includes('application/json')) {
         // This usually means we got redirected to login page
-        setSuccess('Update data successfully!');
+        setSuccess('Update completed successfully!');
         window.location.reload();
         return;
       }
@@ -521,7 +581,7 @@ const ProcessedAttendanceList = () => {
       
       // Handle API response
       if (data.success) {
-        setSuccess('Attendance time records updated successfully');
+        setSuccess('Attendance record updated successfully');
         
         // Process the updated record to ensure all fields are present
         const processedRecord = {
@@ -557,13 +617,67 @@ const ProcessedAttendanceList = () => {
       if (err.name === 'TypeError' && err.message.includes('Failed to fetch')) {
         setError('Network error. Please check your internet connection and try again.');
       } else if (err.message.includes('non-JSON response')) {
-        window.reload();
+        setSuccess('Update completed successfully!');
+        window.location.reload();
       } else if (err.message.includes('HTTP error')) {
         setError(`Server error (${err.message}). Please try again or contact support.`);
       } else {
         setError('Error updating attendance: ' + (err.message || 'Unknown error'));
       }
     }
+  };
+
+  // Calculate if all displayed employees are selected
+  const allDisplayedSelected = attendances.length > 0 && 
+    attendances.every(emp => selectedIds.includes(emp.id));
+
+  // Format numeric values safely
+  const formatNumeric = (value, decimals = 2) => {
+    if (value === null || value === undefined || value === '' || isNaN(Number(value))) {
+      return '-';
+    }
+    return Number(value).toFixed(decimals);
+  };
+
+  // Render status badge
+  const renderStatusBadge = (value, type = 'boolean') => {
+    if (type === 'boolean') {
+      return value ? (
+        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+          Yes
+        </span>
+      ) : (
+        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+          No
+        </span>
+      );
+    }
+    
+    if (type === 'source') {
+      const sourceColors = {
+        'import': 'bg-blue-100 text-blue-800',
+        'manual': 'bg-yellow-100 text-yellow-800',
+        'biometric': 'bg-green-100 text-green-800',
+        'manual_edit': 'bg-red-100 text-red-800',
+        'slvl_sync': 'bg-indigo-100 text-indigo-800'
+      };
+      
+      const sourceLabels = {
+        'manual_edit': 'Edited',
+        'slvl_sync': 'SLVL'
+      };
+      
+      const colorClass = sourceColors[value] || 'bg-gray-100 text-gray-800';
+      const label = sourceLabels[value] || (value ? value.charAt(0).toUpperCase() + value.slice(1) : 'Unknown');
+      
+      return (
+        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${colorClass}`}>
+          {label}
+        </span>
+      );
+    }
+    
+    return value || '-';
   };
 
   return (
@@ -601,7 +715,10 @@ const ProcessedAttendanceList = () => {
                 
                 {selectedIds.length > 0 && (
                   <Button
-                    onClick={() => setShowDeleteModal(true)}
+                    onClick={() => {
+                      setDeleteMode('selected');
+                      setShowDeleteModal(true);
+                    }}
                     variant="outline"
                     className="bg-red-600 hover:bg-red-700 text-white border-red-600"
                   >
@@ -611,7 +728,10 @@ const ProcessedAttendanceList = () => {
                 )}
                 
                 <Button
-                  onClick={() => setShowDeleteModal(true)}
+                  onClick={() => {
+                    setDeleteMode('range');
+                    setShowDeleteModal(true);
+                  }}
                   variant="outline"
                   className="bg-red-600 hover:bg-red-700 text-white border-red-600"
                 >
@@ -710,6 +830,56 @@ const ProcessedAttendanceList = () => {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Summary Stats */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center">
+                    <Users className="h-8 w-8 text-blue-500" />
+                    <div className="ml-4">
+                      <p className="text-sm font-medium text-gray-600">Total Records</p>
+                      <p className="text-2xl font-bold text-gray-900">{attendances.length}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center">
+                    <Edit className="h-8 w-8 text-orange-500" />
+                    <div className="ml-4">
+                      <p className="text-sm font-medium text-gray-600">Edited Records</p>
+                      <p className="text-2xl font-bold text-gray-900">
+                        {attendances.filter(att => att.source === 'manual_edit').length}
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center">
+                    <CheckCircle className="h-8 w-8 text-green-500" />
+                    <div className="ml-4">
+                      <p className="text-sm font-medium text-gray-600">Selected</p>
+                      <p className="text-2xl font-bold text-gray-900">{selectedIds.length}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center">
+                    <FileText className="h-8 w-8 text-purple-500" />
+                    <div className="ml-4">
+                      <p className="text-sm font-medium text-gray-600">Current Page</p>
+                      <p className="text-2xl font-bold text-gray-900">{currentPage} of {totalPages}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
 
             {/* Modified table container with 60vh height */}
             <div className="bg-white rounded-lg shadow h-[60vh] flex flex-col">
@@ -819,75 +989,50 @@ const ProcessedAttendanceList = () => {
                                 )}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {attendance.hours_worked ? Number(attendance.hours_worked).toFixed(2) : 
-                                  calculateDuration(attendance.time_in, attendance.time_out)}
+                                {formatNumeric(attendance.hours_worked)}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {attendance.overtime && !isNaN(Number(attendance.overtime)) ? Number(attendance.overtime).toFixed(2) : '-'}
+                                {formatNumeric(attendance.overtime)}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {attendance.travel_order && !isNaN(Number(attendance.travel_order)) ? Number(attendance.travel_order).toFixed(1) : '-'}
+                                {formatNumeric(attendance.travel_order, 1)}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {attendance.slvl && !isNaN(Number(attendance.slvl)) ? Number(attendance.slvl).toFixed(1) : '-'}
+                                {formatNumeric(attendance.slvl, 1)}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {attendance.ct ? (
-                                  <span className="text-blue-600 font-medium">Yes</span>
-                                ) : (
-                                  <span className="text-gray-400">No</span>
-                                )}
+                                {renderStatusBadge(attendance.ct)}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {attendance.cs ? (
-                                  <span className="text-purple-600 font-medium">Yes</span>
-                                ) : (
-                                  <span className="text-gray-400">No</span>
-                                )}
+                                {renderStatusBadge(attendance.cs)}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {attendance.holiday ? (
-                                  <span className="text-orange-600 font-medium">Yes</span>
-                                ) : (
-                                  <span className="text-gray-400">No</span>
-                                )}
+                                {renderStatusBadge(attendance.holiday)}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {attendance.ot_reg_holiday && !isNaN(Number(attendance.ot_reg_holiday)) ? Number(attendance.ot_reg_holiday).toFixed(2) : '-'}
+                                {formatNumeric(attendance.ot_reg_holiday)}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {attendance.ot_special_holiday && !isNaN(Number(attendance.ot_special_holiday)) ? Number(attendance.ot_special_holiday).toFixed(2) : '-'}
+                                {formatNumeric(attendance.ot_special_holiday)}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {attendance.retromultiplier && !isNaN(Number(attendance.retromultiplier)) ? Number(attendance.retromultiplier).toFixed(2) : '-'}
+                                {formatNumeric(attendance.retromultiplier)}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {attendance.restday ? (
-                                  <span className="text-green-600 font-medium">Yes</span>
-                                ) : (
-                                  <span className="text-gray-400">No</span>
-                                )}
+                                {renderStatusBadge(attendance.restday)}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap">
-                                <span className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                                  attendance.source === 'import' ? 'bg-blue-100 text-blue-800' : 
-                                  attendance.source === 'manual' ? 'bg-yellow-100 text-yellow-800' : 
-                                  attendance.source === 'biometric' ? 'bg-green-100 text-green-800' : 
-                                  attendance.source === 'manual_edit' ? 'bg-red-100 text-red-800' : 
-                                  attendance.source === 'slvl_sync' ? 'bg-indigo-100 text-indigo-800' :
-                                  'bg-gray-100 text-gray-800'
-                                }`}>
-                                  {attendance.source === 'manual_edit' ? 'Edited' : 
-                                  attendance.source === 'slvl_sync' ? 'SLVL' :
-                                  attendance.source ? (attendance.source.charAt(0).toUpperCase() + attendance.source.slice(1)) : 'Unknown'}
-                                </span>
+                                {renderStatusBadge(attendance.source, 'source')}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-right text-sm font-medium">
                                 <Button 
+                                  ref={editButtonRef}
                                   variant="ghost" 
                                   size="sm"
                                   onClick={(e) => handleEditClick(e, attendance)}
-                                  className="text-blue-600 hover:text-blue-900"
+                                  disabled={isEditButtonDisabled}
+                                  className="text-blue-600 hover:text-blue-900 disabled:opacity-50"
+                                  type="button"
                                 >
                                   <Edit className="h-4 w-4 mr-1" />
                                   Edit
