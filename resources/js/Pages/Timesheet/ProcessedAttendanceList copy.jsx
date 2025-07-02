@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Head, usePage } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
-import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X, Users, FileText, Eye, Moon, Sun, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X, Users, FileText, Eye } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -27,7 +27,6 @@ const ProcessedAttendanceList = () => {
   const [dateFilter, setDateFilter] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [editsOnlyFilter, setEditsOnlyFilter] = useState(false);
-  const [postingStatusFilter, setPostingStatusFilter] = useState(''); // NEW
   const [departments, setDepartments] = useState([]);
   
   // Modal state
@@ -244,7 +243,6 @@ const ProcessedAttendanceList = () => {
       if (dateFilter) params.append('date', dateFilter);
       if (departmentFilter) params.append('department', departmentFilter);
       if (editsOnlyFilter) params.append('edits_only', 'true');
-      if (postingStatusFilter) params.append('posting_status', postingStatusFilter); // NEW
       
       const response = await fetch('/attendance/list?' + params.toString(), {
         headers: {
@@ -275,50 +273,6 @@ const ProcessedAttendanceList = () => {
     }
   };
 
-  // NEW: Handle posting status change
-  const handlePostingStatusChange = async (action) => {
-    if (selectedIds.length === 0) {
-      setError('Please select at least one record');
-      return;
-    }
-
-    try {
-      setError('');
-      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-      
-      const endpoint = action === 'mark_posted' 
-        ? '/attendance/mark-as-posted' 
-        : '/attendance/mark-as-not-posted';
-      
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          ids: selectedIds
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setSuccess(data.message);
-        setSelectedIds([]);
-        setSelectAll(false);
-        await loadAttendanceData();
-      } else {
-        setError(data.message || 'Failed to update posting status');
-      }
-    } catch (err) {
-      console.error('Error updating posting status:', err);
-      setError('Error updating posting status: ' + (err.message || 'Unknown error'));
-    }
-  };
-
   // Export attendance data
   const handleExport = async () => {
     setExporting(true);
@@ -332,7 +286,6 @@ const ProcessedAttendanceList = () => {
       if (dateFilter) params.append('date', dateFilter);
       if (departmentFilter) params.append('department', departmentFilter);
       if (editsOnlyFilter) params.append('edits_only', 'true');
-      if (postingStatusFilter) params.append('posting_status', postingStatusFilter); // NEW
       
       // Create a link and trigger download
       const downloadUrl = '/attendance/export?' + params.toString();
@@ -535,7 +488,6 @@ const ProcessedAttendanceList = () => {
     setDateFilter('');
     setDepartmentFilter('');
     setEditsOnlyFilter(false);
-    setPostingStatusFilter(''); // NEW
     setCurrentPage(1);
     
     // Need to wait for state update
@@ -618,6 +570,7 @@ const ProcessedAttendanceList = () => {
     }
   };
 
+  // Updated handleAttendanceUpdate method
   const handleAttendanceUpdate = async (updatedAttendance) => {
     try {
       setError('');
@@ -795,111 +748,6 @@ const ProcessedAttendanceList = () => {
     return Number(value).toFixed(decimals);
   };
 
-  // NEW: Render Late/Under column
-  const renderLateUndertime = (attendance) => {
-    if (attendance.late_undertime_display) {
-      return attendance.late_undertime_display;
-    }
-    
-    const late = attendance.late_minutes || 0;
-    const undertime = attendance.undertime_minutes || 0;
-    
-    if (late === 0 && undertime === 0) {
-      return <span className="text-green-600 text-sm">On time</span>;
-    }
-    
-    const parts = [];
-    if (late > 0) {
-      const hours = Math.floor(late / 60);
-      const mins = late % 60;
-      parts.push(
-        <span key="late" className="text-red-600">
-          {hours > 0 ? `${hours}h ${mins}m` : `${mins}m`} late
-        </span>
-      );
-    }
-    
-    if (undertime > 0) {
-      const hours = Math.floor(undertime / 60);
-      const mins = undertime % 60;
-      parts.push(
-        <span key="under" className="text-orange-600">
-          {hours > 0 ? `${hours}h ${mins}m` : `${mins}m`} under
-        </span>
-      );
-    }
-    
-    return (
-      <div className="text-sm">
-        {parts.map((part, index) => (
-          <div key={index}>{part}</div>
-        ))}
-      </div>
-    );
-  };
-
-  // NEW: Render Night Shift column
-  const renderNightShift = (attendance) => {
-    if (attendance.is_nightshift) {
-      const timeIn = formatTime(attendance.time_in);
-      const timeOut = attendance.next_day_timeout 
-        ? formatTime(attendance.next_day_timeout)
-        : formatTime(attendance.time_out);
-      
-      return (
-        <div className="flex items-center space-x-1">
-          <Moon className="h-4 w-4 text-purple-600" />
-          <div className="text-sm">
-            <div className="text-purple-800 font-medium">Night Shift</div>
-            <div className="text-purple-600 text-xs">
-              {timeIn} → {timeOut}
-              {attendance.next_day_timeout && <span className="ml-1">(+1)</span>}
-            </div>
-          </div>
-        </div>
-      );
-    }
-    
-    return (
-      <div className="flex items-center space-x-1">
-        <Sun className="h-4 w-4 text-yellow-600" />
-        <span className="text-sm text-gray-600">Regular</span>
-      </div>
-    );
-  };
-
-  // NEW: Render Status column
-  const renderPostingStatus = (attendance) => {
-    const isPosted = attendance.posting_status === 'posted';
-    
-    return (
-      <div className="text-sm">
-        <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-          isPosted 
-            ? 'bg-green-100 text-green-800' 
-            : 'bg-yellow-100 text-yellow-800'
-        }`}>
-          {isPosted ? (
-            <>
-              <CheckCircle2 className="h-3 w-3 mr-1" />
-              Posted
-            </>
-          ) : (
-            <>
-              <AlertCircle className="h-3 w-3 mr-1" />
-              Not Posted
-            </>
-          )}
-        </div>
-        {isPosted && attendance.posted_at && (
-          <div className="text-xs text-gray-500 mt-1">
-            {new Date(attendance.posted_at).toLocaleDateString()}
-          </div>
-        )}
-      </div>
-    );
-  };
-
   // Render status badge
   const renderStatusBadge = (value, type = 'boolean') => {
     if (type === 'boolean') {
@@ -947,7 +795,7 @@ const ProcessedAttendanceList = () => {
       <div className="flex min-h-screen bg-gray-50/50">
         <Sidebar />
         <div className="flex-1 p-8">
-          <div className="max-w-full mx-auto">
+          <div className="max-w-7xl mx-auto">
             <div className="flex items-center justify-between mb-8">
               <div>
                 <h1 className="text-2xl font-bold text-gray-900 mb-1">
@@ -963,28 +811,6 @@ const ProcessedAttendanceList = () => {
               
               {/* Action Buttons */}
               <div className="flex items-center space-x-3">
-                {selectedIds.length > 0 && (
-                  <>
-                    <Button
-                      onClick={() => handlePostingStatusChange('mark_posted')}
-                      variant="outline"
-                      className="bg-green-600 hover:bg-green-700 text-white border-green-600"
-                    >
-                      <CheckCircle2 className="h-4 w-4 mr-2" />
-                      Mark Posted ({selectedIds.length})
-                    </Button>
-                    
-                    <Button
-                      onClick={() => handlePostingStatusChange('mark_not_posted')}
-                      variant="outline"
-                      className="bg-yellow-600 hover:bg-yellow-700 text-white border-yellow-600"
-                    >
-                      <AlertCircle className="h-4 w-4 mr-2" />
-                      Mark Not Posted ({selectedIds.length})
-                    </Button>
-                  </>
-                )}
-                
                 <Button
                   onClick={handleExport}
                   disabled={exporting}
@@ -1059,7 +885,7 @@ const ProcessedAttendanceList = () => {
                 <CardTitle className="text-lg">Filters</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
                   <div className="relative">
                     <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
                     <input
@@ -1096,17 +922,6 @@ const ProcessedAttendanceList = () => {
                     </select>
                   </div>
                   <div>
-                    <select
-                      className="w-full pl-4 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      value={postingStatusFilter}
-                      onChange={(e) => setPostingStatusFilter(e.target.value)}
-                    >
-                      <option value="">All Status</option>
-                      <option value="posted">Posted</option>
-                      <option value="not_posted">Not Posted</option>
-                    </select>
-                  </div>
-                  <div>
                     <label className="flex items-center space-x-2 cursor-pointer">
                       <input
                         type="checkbox"
@@ -1129,7 +944,7 @@ const ProcessedAttendanceList = () => {
             </Card>
 
             {/* Summary Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center">
@@ -1161,19 +976,6 @@ const ProcessedAttendanceList = () => {
                     <div className="ml-4">
                       <p className="text-sm font-medium text-gray-600">Selected</p>
                       <p className="text-2xl font-bold text-gray-900">{selectedIds.length}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardContent className="p-4">
-                  <div className="flex items-center">
-                    <CheckCircle2 className="h-8 w-8 text-green-500" />
-                    <div className="ml-4">
-                      <p className="text-sm font-medium text-gray-600">Posted</p>
-                      <p className="text-2xl font-bold text-gray-900">
-                        {attendances.filter(att => att.posting_status === 'posted').length}
-                      </p>
                     </div>
                   </div>
                 </CardContent>
@@ -1227,8 +1029,7 @@ const ProcessedAttendanceList = () => {
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break Out</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break In</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time Out</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Late/Under</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Night Shift</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Next Day</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hours</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Travel</th>
@@ -1242,7 +1043,6 @@ const ProcessedAttendanceList = () => {
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rest Day</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Offset</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                             <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                           </tr>
                         </thead>
@@ -1296,11 +1096,12 @@ const ProcessedAttendanceList = () => {
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
                                 {formatTime(attendance.time_out)}
                               </td>
-                              <td className="px-2 py-4 whitespace-nowrap">
-                                {renderLateUndertime(attendance)}
-                              </td>
-                              <td className="px-2 py-4 whitespace-nowrap">
-                                {renderNightShift(attendance)}
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {attendance.is_nightshift && attendance.next_day_timeout ? (
+                                  <span className="text-purple-600 font-medium">{formatTime(attendance.next_day_timeout)}</span>
+                                ) : (
+                                  '-'
+                                )}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
                                 {formatNumeric(attendance.hours_worked)}
@@ -1340,9 +1141,6 @@ const ProcessedAttendanceList = () => {
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap">
                                 {renderStatusBadge(attendance.source, 'source')}
-                              </td>
-                              <td className="px-2 py-4 whitespace-nowrap">
-                                {renderPostingStatus(attendance)}
                               </td>
                               <td 
                                 className="px-2 py-4 whitespace-nowrap text-right text-sm font-medium"
@@ -1466,7 +1264,7 @@ const ProcessedAttendanceList = () => {
         </div>
       </div>
       
-      {/* Edit Modal - Updated with onSync callback */}
+      {/* Edit Modal */}
       {showEditModal && selectedAttendance && (
         <AttendanceEditModal
           isOpen={showEditModal}

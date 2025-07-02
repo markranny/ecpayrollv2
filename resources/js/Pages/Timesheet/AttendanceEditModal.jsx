@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Clock, AlertTriangle, RotateCcw, Trash2, Loader2, Info, Moon, Sun } from 'lucide-react';
+import { X, Save, Clock, AlertTriangle, RotateCcw, Trash2, Loader2, Info, Moon, Sun, RefreshCw, CheckCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 
@@ -271,6 +271,7 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
   });
   
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
   const [syncLoading, setSyncLoading] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
@@ -517,6 +518,61 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
     }
   };
 
+  // Handle sync for this specific attendance record
+  const handleSync = async () => {
+    setSyncLoading(true);
+    setError('');
+    setSuccess('');
+    
+    try {
+      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+      
+      if (!csrfToken) {
+        setError('Session expired. Please refresh the page and try again.');
+        setSyncLoading(false);
+        return;
+      }
+      
+      // Sync this specific attendance record by ID
+      const response = await fetch(`/attendance/${attendance.id}/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setSuccess('Attendance record synced successfully');
+        
+        // Call onSync callback if provided to refresh parent data
+        if (onSync) {
+          onSync(attendance.id);
+        }
+        
+        // Optionally close modal after successful sync
+        setTimeout(() => {
+          onClose();
+        }, 2000);
+      } else {
+        setError('Sync failed: ' + (data.message || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Error syncing attendance record:', err);
+      setError('Error syncing attendance record: ' + (err.message || 'Unknown error'));
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
   // FIXED: Enhanced form submission with better night shift validation
   const handleSubmit = async () => {
     setError('');
@@ -717,6 +773,13 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
             <Alert variant="destructive">
               <AlertTriangle className="h-4 w-4 mr-2" />
               <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
+          {success && (
+            <Alert className="border-green-200 bg-green-50">
+              <CheckCircle className="h-4 w-4 mr-2 text-green-600" />
+              <AlertDescription className="text-green-800">{success}</AlertDescription>
             </Alert>
           )}
 
@@ -994,6 +1057,28 @@ const AttendanceEditModal = ({ isOpen, attendance, onClose, onSave, onDelete, on
               >
                 <Trash2 className="h-4 w-4 mr-2" />
                 Delete
+              </Button>
+              
+              {/* NEW: Sync Button */}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={handleSync}
+                disabled={syncLoading}
+                className="text-blue-600 border-blue-300 hover:bg-blue-50"
+                title="Sync this attendance record with related data (Travel Orders, SLVL, Overtime, etc.)"
+              >
+                {syncLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Syncing...
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Sync Record
+                  </>
+                )}
               </Button>
             </div>
             <div className="flex space-x-3">

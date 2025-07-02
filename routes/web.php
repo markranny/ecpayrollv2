@@ -264,16 +264,19 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
     // Sync and Delete functionality
     Route::post('/attendance/sync', [ProcessedAttendanceController::class, 'sync'])
         ->name('attendance.sync');
-    Route::post('/attendance/{id}/sync', [ProcessedAttendanceController::class, 'sync'])
-        ->name('attendance.sync');
+    Route::post('/attendance/{id}/sync', [ProcessedAttendanceController::class, 'syncIndividual'])
+        ->name('attendance.sync.individual');
     Route::delete('/attendance/{id}', [ProcessedAttendanceController::class, 'destroy'])
         ->name('attendance.destroy');
-    
-    // ⭐ ADD THIS MISSING ROUTE ⭐
     Route::post('/attendance/bulk-delete', [ProcessedAttendanceController::class, 'bulkDestroy'])
         ->name('attendance.bulk-delete');
     
-    // Existing routes continue...
+    // ⭐ NEW: Posting Status Routes ⭐
+    Route::post('/attendance/mark-as-posted', [ProcessedAttendanceController::class, 'markAsPosted'])
+        ->name('attendance.mark-as-posted');
+    Route::post('/attendance/mark-as-not-posted', [ProcessedAttendanceController::class, 'markAsNotPosted'])
+        ->name('attendance.mark-as-not-posted');
+    
     Route::get('/attendance/departments', [ProcessedAttendanceController::class, 'getDepartments'])
         ->name('attendance.departments');
     Route::get('/attendance/export', [ProcessedAttendanceController::class, 'export'])

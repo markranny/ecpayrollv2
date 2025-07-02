@@ -655,6 +655,9 @@ class ProcessedAttendanceController extends Controller
                 $createdRecords = 0;
                 
                 // Get date range for sync - default to current month if not provided
+                /* $startDate = $request->input('start_date', now()->startOfMonth()->format('Y-m-d'));
+                $endDate = $request->input('end_date', now()->endOfMonth()->format('Y-m-d')); */
+
                 $startDate = '2025-01-01';
                 $endDate = '2025-01-31';
                 
@@ -814,145 +817,6 @@ class ProcessedAttendanceController extends Controller
                 return response()->json([
                     'success' => false,
                     'message' => 'Sync failed: ' . $e->getMessage()
-                ], 500);
-            }
-        });
-    }
-
-    /**
-     * NEW: Sync individual processed attendance record with all related data sources
-     */
-    public function syncIndividual($id)
-    {
-        return DB::transaction(function () use ($id) {
-            try {
-                Log::info("Starting individual attendance sync for ID: {$id}");
-                
-                // Find the specific attendance record
-                $attendance = ProcessedAttendance::with('employee')->findOrFail($id);
-                
-                $updated = false;
-                $employeeId = $attendance->employee_id;
-                $attendanceDate = $attendance->attendance_date;
-                
-                Log::info("Syncing attendance for employee {$employeeId} on {$attendanceDate}");
-                
-                // Validate models exist and are accessible
-                $this->validateSyncModels();
-                
-                // Sync all related data for this specific record
-                
-                // 1. Sync Travel Order Data
-                $travelOrderValue = $this->calculateTravelOrderValue($employeeId, $attendanceDate);
-                if ($attendance->travel_order != $travelOrderValue) {
-                    $attendance->travel_order = $travelOrderValue;
-                    $updated = true;
-                    Log::debug("Updated travel_order: {$travelOrderValue}");
-                }
-                
-                // 2. Sync SLVL Data
-                $slvlValue = $this->calculateSLVLValue($employeeId, $attendanceDate);
-                if ($attendance->slvl != $slvlValue) {
-                    $attendance->slvl = $slvlValue;
-                    $updated = true;
-                    Log::debug("Updated slvl: {$slvlValue}");
-                }
-                
-                // 3. Sync CT (Compensatory Time) Data
-                $ctValue = $this->calculateCTValue($employeeId, $attendanceDate);
-                if ($attendance->ct != $ctValue) {
-                    $attendance->ct = $ctValue;
-                    $updated = true;
-                    Log::debug("Updated ct: " . ($ctValue ? 'true' : 'false'));
-                }
-                
-                // 4. Sync CS (Compressed Schedule) Data
-                $csValue = $this->calculateCSValue($employeeId, $attendanceDate);
-                if ($attendance->cs != $csValue) {
-                    $attendance->cs = $csValue;
-                    $updated = true;
-                    Log::debug("Updated cs: " . ($csValue ? 'true' : 'false'));
-                }
-                
-                // 5. Sync Regular Holiday Overtime Data
-                $otRegHolidayValue = $this->calculateOTRegHolidayValue($employeeId, $attendanceDate);
-                if ($attendance->ot_reg_holiday != $otRegHolidayValue) {
-                    $attendance->ot_reg_holiday = $otRegHolidayValue;
-                    $updated = true;
-                    Log::debug("Updated ot_reg_holiday: {$otRegHolidayValue}");
-                }
-                
-                // 6. Sync Special Holiday Overtime Data
-                $otSpecialHolidayValue = $this->calculateOTSpecialHolidayValue($employeeId, $attendanceDate);
-                if ($attendance->ot_special_holiday != $otSpecialHolidayValue) {
-                    $attendance->ot_special_holiday = $otSpecialHolidayValue;
-                    $updated = true;
-                    Log::debug("Updated ot_special_holiday: {$otSpecialHolidayValue}");
-                }
-                
-                // 7. Sync Rest Day Data
-                $restDayValue = $this->calculateRestDayValue($employeeId, $attendanceDate);
-                if ($attendance->restday != $restDayValue) {
-                    $attendance->restday = $restDayValue;
-                    $updated = true;
-                    Log::debug("Updated restday: " . ($restDayValue ? 'true' : 'false'));
-                }
-                
-                // 8. Sync Retro Multiplier Data
-                $retroMultiplierValue = $this->calculateRetroMultiplierValue($employeeId, $attendanceDate);
-                if ($attendance->retromultiplier != $retroMultiplierValue) {
-                    $attendance->retromultiplier = $retroMultiplierValue;
-                    $updated = true;
-                    Log::debug("Updated retromultiplier: {$retroMultiplierValue}");
-                }
-                
-                // 9. Sync Overtime Data
-                $overtimeValue = $this->calculateOvertimeHours($employeeId, $attendanceDate);
-                if ($attendance->overtime != $overtimeValue) {
-                    $attendance->overtime = $overtimeValue;
-                    $updated = true;
-                    Log::debug("Updated overtime: {$overtimeValue}");
-                }
-                
-                // 10. Sync Offset Data
-                $offsetValue = $this->calculateOffsetValue($employeeId, $attendanceDate);
-                if ($attendance->offset != $offsetValue) {
-                    $attendance->offset = $offsetValue;
-                    $updated = true;
-                    Log::debug("Updated offset: {$offsetValue}");
-                }
-                
-                // Save if any changes were made
-                if ($updated) {
-                    $attendance->save();
-                    Log::info("Individual attendance sync completed for ID {$id} - record updated");
-                    
-                    $message = "Attendance record synced successfully - data updated from related records";
-                } else {
-                    Log::info("Individual attendance sync completed for ID {$id} - no changes needed");
-                    $message = "Attendance record synced successfully - all data is already up to date";
-                }
-                
-                // Return the updated attendance record
-                $attendance->refresh();
-                $attendance->load('employee');
-                
-                return response()->json([
-                    'success' => true,
-                    'message' => $message,
-                    'data' => $attendance,
-                    'updated' => $updated
-                ]);
-                
-            } catch (\Exception $e) {
-                Log::error("Error in individual attendance sync for ID {$id}: " . $e->getMessage(), [
-                    'exception' => $e,
-                    'trace' => $e->getTraceAsString()
-                ]);
-                
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Individual sync failed: ' . $e->getMessage()
                 ], 500);
             }
         });
