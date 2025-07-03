@@ -2,11 +2,12 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Head, usePage } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
-import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X, Users, FileText, Eye, Moon, Sun, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X, Users, FileText, Eye, Moon, Sun, AlertCircle, CheckCircle2, Info } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import AttendanceEditModal from './AttendanceEditModal';
+import AttendanceInfoModal from './AttendanceInfoModal';
 
 const ProcessedAttendanceList = () => {
   const { auth, attendances: initialAttendances = [], pagination = {} } = usePage().props;
@@ -27,12 +28,15 @@ const ProcessedAttendanceList = () => {
   const [dateFilter, setDateFilter] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [editsOnlyFilter, setEditsOnlyFilter] = useState(false);
-  const [postingStatusFilter, setPostingStatusFilter] = useState(''); // NEW
+  const [postingStatusFilter, setPostingStatusFilter] = useState('');
   const [departments, setDepartments] = useState([]);
+  const [holdTimer, setHoldTimer] = useState(null);
+  const [isHolding, setIsHolding] = useState(false);
   
   // Modal state
   const [selectedAttendance, setSelectedAttendance] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showInfoModal, setShowInfoModal] = useState(false); // NEW: Info modal state
   
   // Multi-select state
   const [selectedIds, setSelectedIds] = useState([]);
@@ -70,12 +74,85 @@ const ProcessedAttendanceList = () => {
 
   // Clean up timeouts on unmount
   useEffect(() => {
-    return () => {
-      if (editClickTimeoutRef.current) {
-        clearTimeout(editClickTimeoutRef.current);
+  return () => {
+    if (editClickTimeoutRef.current) {
+      clearTimeout(editClickTimeoutRef.current);
+    }
+    if (holdTimer) {
+      clearTimeout(holdTimer);
+    }
+  };
+}, [holdTimer]);
+
+  // Calculate late/undertime with improved logic
+  const calculateLateUndertime = (attendance) => {
+    const timeIn = attendance.time_in;
+    const timeOut = attendance.is_nightshift && attendance.next_day_timeout 
+      ? attendance.next_day_timeout 
+      : attendance.time_out;
+    
+    if (!timeIn) return { late: 0, undertime: 0, isComplete: false, totalHours: 0 };
+    
+    try {
+      // Standard work schedule: 8:00 AM - 5:00 PM (9 hours with 1 hour break = 8 working hours)
+      const attendanceDate = new Date(attendance.attendance_date);
+      const standardStart = new Date(attendanceDate);
+      standardStart.setHours(8, 0, 0, 0); // 8:00 AM
+      
+      const standardEnd = new Date(attendanceDate);
+      standardEnd.setHours(17, 0, 0, 0); // 5:00 PM
+      
+      const actualStart = new Date(timeIn);
+      const actualEnd = timeOut ? new Date(timeOut) : null;
+      
+      // Calculate late minutes (grace period of 5 minutes)
+      let lateMinutes = 0;
+      const gracePeriod = 5 * 60 * 1000; // 5 minutes in milliseconds
+      if (actualStart > new Date(standardStart.getTime() + gracePeriod)) {
+        lateMinutes = Math.floor((actualStart - standardStart) / (1000 * 60));
       }
-    };
-  }, []);
+      
+      // Calculate total worked hours
+      let totalWorkedHours = 0;
+      if (actualEnd) {
+        const workDuration = actualEnd - actualStart;
+        
+        // Subtract break time if both break times are recorded
+        let breakDuration = 0;
+        if (attendance.break_out && attendance.break_in) {
+          const breakOut = new Date(attendance.break_out);
+          const breakIn = new Date(attendance.break_in);
+          if (breakIn > breakOut) {
+            breakDuration = breakIn - breakOut;
+          }
+        } else {
+          // Default 1-hour break
+          breakDuration = 60 * 60 * 1000; // 1 hour
+        }
+        
+        totalWorkedHours = Math.max(0, (workDuration - breakDuration) / (1000 * 60 * 60));
+      }
+      
+      // Calculate undertime based on 8-hour standard working day
+      let undertimeMinutes = 0;
+      const standardWorkingHours = 8;
+      
+      if (actualEnd && totalWorkedHours < standardWorkingHours) {
+        const shortfallHours = standardWorkingHours - totalWorkedHours;
+        undertimeMinutes = Math.floor(shortfallHours * 60);
+      }
+      
+      return {
+        late: lateMinutes,
+        undertime: undertimeMinutes,
+        isComplete: !!actualEnd,
+        totalHours: totalWorkedHours
+      };
+    } catch (error) {
+      console.error('Error calculating late/undertime:', error);
+      return { late: 0, undertime: 0, isComplete: false, totalHours: 0 };
+    }
+  };
 
   // Date formatting with error handling
   const formatDate = (dateString) => {
@@ -95,29 +172,6 @@ const ProcessedAttendanceList = () => {
       });
     } catch (error) {
       console.error('Date formatting error:', error);
-      return '-';
-    }
-  };
-
-  // Calculate duration between two times
-  const calculateDuration = (startTime, endTime) => {
-    if (!startTime || !endTime) return '-';
-    
-    try {
-      const start = new Date(startTime);
-      const end = new Date(endTime);
-      
-      if (isNaN(start.getTime()) || isNaN(end.getTime())) return '-';
-      
-      const diffInMs = end - start;
-      
-      // If negative or invalid, return dash
-      if (diffInMs < 0) return '-';
-      
-      const diffInHours = diffInMs / (1000 * 60 * 60);
-      return diffInHours.toFixed(2);
-    } catch (error) {
-      console.error('Duration calculation error:', error);
       return '-';
     }
   };
@@ -244,7 +298,7 @@ const ProcessedAttendanceList = () => {
       if (dateFilter) params.append('date', dateFilter);
       if (departmentFilter) params.append('department', departmentFilter);
       if (editsOnlyFilter) params.append('edits_only', 'true');
-      if (postingStatusFilter) params.append('posting_status', postingStatusFilter); // NEW
+      if (postingStatusFilter) params.append('posting_status', postingStatusFilter);
       
       const response = await fetch('/attendance/list?' + params.toString(), {
         headers: {
@@ -275,7 +329,7 @@ const ProcessedAttendanceList = () => {
     }
   };
 
-  // NEW: Handle posting status change
+  // Handle posting status change
   const handlePostingStatusChange = async (action) => {
     if (selectedIds.length === 0) {
       setError('Please select at least one record');
@@ -332,7 +386,7 @@ const ProcessedAttendanceList = () => {
       if (dateFilter) params.append('date', dateFilter);
       if (departmentFilter) params.append('department', departmentFilter);
       if (editsOnlyFilter) params.append('edits_only', 'true');
-      if (postingStatusFilter) params.append('posting_status', postingStatusFilter); // NEW
+      if (postingStatusFilter) params.append('posting_status', postingStatusFilter);
       
       // Create a link and trigger download
       const downloadUrl = '/attendance/export?' + params.toString();
@@ -535,7 +589,7 @@ const ProcessedAttendanceList = () => {
     setDateFilter('');
     setDepartmentFilter('');
     setEditsOnlyFilter(false);
-    setPostingStatusFilter(''); // NEW
+    setPostingStatusFilter('');
     setCurrentPage(1);
     
     // Need to wait for state update
@@ -543,6 +597,42 @@ const ProcessedAttendanceList = () => {
       loadAttendanceData();
     }, 0);
   };
+
+  
+
+  // NEW: Handle row click to show info modal
+  const handleMouseDown = useCallback((e, attendance) => {
+  // Prevent opening modal if clicking on checkbox or action buttons
+  if (e.target.type === 'checkbox' || e.target.closest('button')) {
+    return;
+  }
+  
+  setIsHolding(true);
+  const timer = setTimeout(() => {
+    console.log('Hold completed for:', attendance.id, attendance.employee_name);
+    setSelectedAttendance(attendance);
+    setShowInfoModal(true);
+    setIsHolding(false);
+  }, 1000); // 1 second hold
+  
+  setHoldTimer(timer);
+}, []);
+
+const handleMouseUp = useCallback(() => {
+  if (holdTimer) {
+    clearTimeout(holdTimer);
+    setHoldTimer(null);
+  }
+  setIsHolding(false);
+}, [holdTimer]);
+
+const handleMouseLeave = useCallback(() => {
+  if (holdTimer) {
+    clearTimeout(holdTimer);
+    setHoldTimer(null);
+  }
+  setIsHolding(false);
+}, [holdTimer]);
 
   // Improved handleEditClick with proper debouncing
   const handleEditClick = useCallback((e, attendance) => {
@@ -607,6 +697,7 @@ const ProcessedAttendanceList = () => {
   // Reset editing flag when modal closes
   const handleCloseModal = () => {
     setShowEditModal(false);
+    setShowInfoModal(false);
     setSelectedAttendance(null);
     setError('');
     setSuccess('');
@@ -729,7 +820,7 @@ const ProcessedAttendanceList = () => {
     }
   };
 
-  // NEW: Handle individual sync for a specific attendance record
+  // Handle individual sync for a specific attendance record
   const handleIndividualSync = async (attendanceId) => {
     try {
       setError('');
@@ -795,67 +886,56 @@ const ProcessedAttendanceList = () => {
     return Number(value).toFixed(decimals);
   };
 
-  // NEW: Render Late/Under column
-  const renderLateUndertime = (attendance) => {
-    if (attendance.late_undertime_display) {
-      return attendance.late_undertime_display;
+  // Format minutes to hours and minutes display
+  const formatMinutes = (minutes) => {
+    if (minutes <= 0) return null;
+    const hours = Math.floor(minutes / 60);
+    const mins = minutes % 60;
+    if (hours > 0) {
+      return `${hours}h ${mins}m`;
     }
+    return `${mins}m`;
+  };
+
+  // NEW: Render Late/Under column with enhanced calculation
+  const renderLateUndertime = (attendance) => {
+    const lateUndertimeInfo = calculateLateUndertime(attendance);
     
-    const late = attendance.late_minutes || 0;
-    const undertime = attendance.undertime_minutes || 0;
-    
-    if (late === 0 && undertime === 0) {
-      return <span className="text-green-600 text-sm">On time</span>;
+    if (lateUndertimeInfo.late === 0 && lateUndertimeInfo.undertime === 0) {
+      return <span className="text-green-600 text-sm font-medium">On time</span>;
     }
     
     const parts = [];
-    if (late > 0) {
-      const hours = Math.floor(late / 60);
-      const mins = late % 60;
+    if (lateUndertimeInfo.late > 0) {
       parts.push(
-        <span key="late" className="text-red-600">
-          {hours > 0 ? `${hours}h ${mins}m` : `${mins}m`} late
+        <span key="late" className="text-red-600 text-xs block">
+          {formatMinutes(lateUndertimeInfo.late)} late
         </span>
       );
     }
     
-    if (undertime > 0) {
-      const hours = Math.floor(undertime / 60);
-      const mins = undertime % 60;
+    if (lateUndertimeInfo.undertime > 0) {
       parts.push(
-        <span key="under" className="text-orange-600">
-          {hours > 0 ? `${hours}h ${mins}m` : `${mins}m`} under
+        <span key="under" className="text-orange-600 text-xs block">
+          {formatMinutes(lateUndertimeInfo.undertime)} under
         </span>
       );
     }
     
     return (
       <div className="text-sm">
-        {parts.map((part, index) => (
-          <div key={index}>{part}</div>
-        ))}
+        {parts}
       </div>
     );
   };
 
-  // NEW: Render Night Shift column
+  // Render Night Shift column
   const renderNightShift = (attendance) => {
     if (attendance.is_nightshift) {
-      const timeIn = formatTime(attendance.time_in);
-      const timeOut = attendance.next_day_timeout 
-        ? formatTime(attendance.next_day_timeout)
-        : formatTime(attendance.time_out);
-      
       return (
         <div className="flex items-center space-x-1">
           <Moon className="h-4 w-4 text-purple-600" />
-          <div className="text-sm">
-            <div className="text-purple-800 font-medium">Night Shift</div>
-            <div className="text-purple-600 text-xs">
-              {timeIn} → {timeOut}
-              {attendance.next_day_timeout && <span className="ml-1">(+1)</span>}
-            </div>
-          </div>
+          <span className="text-xs text-purple-800">Night</span>
         </div>
       );
     }
@@ -863,12 +943,12 @@ const ProcessedAttendanceList = () => {
     return (
       <div className="flex items-center space-x-1">
         <Sun className="h-4 w-4 text-yellow-600" />
-        <span className="text-sm text-gray-600">Regular</span>
+        <span className="text-xs text-gray-600">Regular</span>
       </div>
     );
   };
 
-  // NEW: Render Status column
+  // Render Status column
   const renderPostingStatus = (attendance) => {
     const isPosted = attendance.posting_status === 'posted';
     
@@ -891,11 +971,6 @@ const ProcessedAttendanceList = () => {
             </>
           )}
         </div>
-        {isPosted && attendance.posted_at && (
-          <div className="text-xs text-gray-500 mt-1">
-            {new Date(attendance.posted_at).toLocaleDateString()}
-          </div>
-        )}
       </div>
     );
   };
@@ -944,11 +1019,13 @@ const ProcessedAttendanceList = () => {
   return (
     <AuthenticatedLayout user={auth.user}>
       <Head title="Processed Attendance List" />
+      {/* FIXED: Full width container without max-width restrictions */}
       <div className="flex min-h-screen bg-gray-50/50">
         <Sidebar />
-        <div className="flex-1 p-8">
-          <div className="max-w-full mx-auto">
-            <div className="flex items-center justify-between mb-8">
+        {/* FIXED: Changed from max-w-full mx-auto to full width */}
+        <div className="flex-1 p-4">
+          <div className="max-w-7xl mx-auto">
+            <div className="flex items-center justify-between mb-6">
               <div>
                 <h1 className="text-2xl font-bold text-gray-900 mb-1">
                   Processed Attendance Records
@@ -957,44 +1034,47 @@ const ProcessedAttendanceList = () => {
                   View and manage processed attendance records with edit history tracking.
                 </p>
                 <p className="text-sm text-blue-600 mt-1">
-                  💡 Tip: Double-click any row to quickly edit attendance times
+                  💡 Tip: Hold any row for 1 second to view details, double-click to edit attendance times
                 </p>
               </div>
               
               {/* Action Buttons */}
-              <div className="flex items-center space-x-3">
+              <div className="flex items-center space-x-2">
                 {selectedIds.length > 0 && (
                   <>
                     <Button
                       onClick={() => handlePostingStatusChange('mark_posted')}
                       variant="outline"
+                      size="sm"
                       className="bg-green-600 hover:bg-green-700 text-white border-green-600"
                     >
-                      <CheckCircle2 className="h-4 w-4 mr-2" />
+                      <CheckCircle2 className="h-4 w-4 mr-1" />
                       Mark Posted ({selectedIds.length})
                     </Button>
                     
                     <Button
                       onClick={() => handlePostingStatusChange('mark_not_posted')}
                       variant="outline"
+                      size="sm"
                       className="bg-yellow-600 hover:bg-yellow-700 text-white border-yellow-600"
                     >
-                      <AlertCircle className="h-4 w-4 mr-2" />
+                      <AlertCircle className="h-4 w-4 mr-1" />
                       Mark Not Posted ({selectedIds.length})
                     </Button>
-                  </>
-                )}
+                  </> 
+                  )}
                 
                 <Button
                   onClick={handleExport}
                   disabled={exporting}
                   variant="outline"
+                  size="sm"
                   className="bg-green-600 hover:bg-green-700 text-white border-green-600"
                 >
                   {exporting ? (
-                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
                   ) : (
-                    <Download className="h-4 w-4 mr-2" />
+                    <Download className="h-4 w-4 mr-1" />
                   )}
                   {exporting ? 'Exporting...' : 'Export'}
                 </Button>
@@ -1006,9 +1086,10 @@ const ProcessedAttendanceList = () => {
                       setShowDeleteModal(true);
                     }}
                     variant="outline"
+                    size="sm"
                     className="bg-red-600 hover:bg-red-700 text-white border-red-600"
                   >
-                    <Trash2 className="h-4 w-4 mr-2" />
+                    <Trash2 className="h-4 w-4 mr-1" />
                     Delete ({selectedIds.length})
                   </Button>
                 )}
@@ -1019,21 +1100,23 @@ const ProcessedAttendanceList = () => {
                     setShowDeleteModal(true);
                   }}
                   variant="outline"
+                  size="sm"
                   className="bg-red-600 hover:bg-red-700 text-white border-red-600"
                 >
-                  <Trash2 className="h-4 w-4 mr-2" />
+                  <Trash2 className="h-4 w-4 mr-1" />
                   Delete Range
                 </Button>
                 
                 <Button
                   onClick={handleSync}
                   disabled={syncing}
+                  size="sm"
                   className="bg-blue-600 hover:bg-blue-700 text-white"
                 >
                   {syncing ? (
-                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
                   ) : (
-                    <RefreshCw className="h-4 w-4 mr-2" />
+                    <RefreshCw className="h-4 w-4 mr-1" />
                   )}
                   {syncing ? 'Syncing...' : 'Sync Data'}
                 </Button>
@@ -1054,7 +1137,7 @@ const ProcessedAttendanceList = () => {
               </Alert>
             )}
 
-            <Card className="mb-6">
+            <Card className="mb-4">
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg">Filters</CardTitle>
               </CardHeader>
@@ -1129,7 +1212,7 @@ const ProcessedAttendanceList = () => {
             </Card>
 
             {/* Summary Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center">
@@ -1191,8 +1274,8 @@ const ProcessedAttendanceList = () => {
               </Card>
             </div>
 
-            {/* Modified table container with 60vh height */}
-            <div className="bg-white rounded-lg shadow h-[60vh] flex flex-col">
+            {/* FIXED: Full width table container */}
+            <div className="bg-white rounded-lg shadow h-[70vh] flex flex-col w-full">
               {loading ? (
                 <div className="flex justify-center items-center h-full">
                   <RefreshCw className="h-8 w-8 animate-spin text-blue-500" />
@@ -1206,7 +1289,7 @@ const ProcessedAttendanceList = () => {
                 </div>
               ) : (
                 <>
-                  {/* Table with fixed header and scrollable body */}
+                  {/* FIXED: Full width table with clickable rows */}
                   <div className="flex-1 overflow-hidden flex flex-col">
                     <div className="overflow-x-auto flex-1">
                       <table className="min-w-full divide-y divide-gray-200 h-full">
@@ -1236,11 +1319,6 @@ const ProcessedAttendanceList = () => {
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CT</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CS</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Holiday</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT Reg</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT Spl</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Retro</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rest Day</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Offset</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                             <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
@@ -1250,9 +1328,14 @@ const ProcessedAttendanceList = () => {
                           {attendances.map((attendance) => (
                             <tr 
                               key={attendance.id} 
-                              className={`hover:bg-gray-50 cursor-pointer transition-colors ${attendance.source === 'manual_edit' ? 'bg-red-50' : ''}`}
+                              className={`hover:bg-blue-50 cursor-pointer transition-colors select-none ${
+                                attendance.source === 'manual_edit' ? 'bg-red-50' : ''
+                              } ${isHolding ? 'bg-blue-100' : ''}`}
+                              onMouseDown={(e) => handleMouseDown(e, attendance)}
+                              onMouseUp={handleMouseUp}
+                              onMouseLeave={handleMouseLeave}
                               onDoubleClick={(e) => handleRowDoubleClick(e, attendance)}
-                              title="Double-click to edit attendance times"
+                              title="Hold for 1 second to view details, double-click to edit attendance times"
                             >
                               <td 
                                 className="px-2 py-4 whitespace-nowrap"
@@ -1294,7 +1377,10 @@ const ProcessedAttendanceList = () => {
                                 {formatTime(attendance.break_in)}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {formatTime(attendance.time_out)}
+                                {attendance.is_nightshift && attendance.next_day_timeout 
+                                  ? formatTime(attendance.next_day_timeout)
+                                  : formatTime(attendance.time_out)
+                                }
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap">
                                 {renderLateUndertime(attendance)}
@@ -1323,21 +1409,6 @@ const ProcessedAttendanceList = () => {
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
                                 {formatNumeric(attendance.holiday)}
                               </td>
-                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {formatNumeric(attendance.ot_reg_holiday)}
-                              </td>
-                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {formatNumeric(attendance.ot_special_holiday)}
-                              </td>
-                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {formatNumeric(attendance.retromultiplier)}
-                              </td>
-                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {renderStatusBadge(attendance.restday)}
-                              </td>
-                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
-                                {formatNumeric(attendance.offset)}
-                              </td>
                               <td className="px-2 py-4 whitespace-nowrap">
                                 {renderStatusBadge(attendance.source, 'source')}
                               </td>
@@ -1348,17 +1419,33 @@ const ProcessedAttendanceList = () => {
                                 className="px-2 py-4 whitespace-nowrap text-right text-sm font-medium"
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                <Button 
-                                  variant="ghost" 
-                                  size="sm"
-                                  onClick={(e) => handleEditClick(e, attendance)}
-                                  disabled={isEditingRef.current}
-                                  className="text-blue-600 hover:text-blue-900 disabled:opacity-50 disabled:cursor-not-allowed"
-                                  type="button"
-                                >
-                                  <Edit className="h-4 w-4 mr-1" />
-                                  Edit
-                                </Button>
+                                <div className="flex justify-end space-x-1">
+                                  <Button 
+                                    variant="ghost" 
+                                    size="sm"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedAttendance(attendance);
+                                      setShowInfoModal(true);
+                                    }}
+                                    className="text-blue-600 hover:text-blue-900"
+                                    type="button"
+                                    title="View Details"
+                                  >
+                                    <Info className="h-4 w-4" />
+                                  </Button>
+                                  <Button 
+                                    variant="ghost" 
+                                    size="sm"
+                                    onClick={(e) => handleEditClick(e, attendance)}
+                                    disabled={isEditingRef.current}
+                                    className="text-blue-600 hover:text-blue-900 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    type="button"
+                                    title="Edit Attendance"
+                                  >
+                                    <Edit className="h-4 w-4" />
+                                  </Button>
+                                </div>
                               </td>
                             </tr>
                           ))}
@@ -1466,7 +1553,7 @@ const ProcessedAttendanceList = () => {
         </div>
       </div>
       
-      {/* Edit Modal - Updated with onSync callback */}
+      {/* Edit Modal */}
       {showEditModal && selectedAttendance && (
         <AttendanceEditModal
           isOpen={showEditModal}
@@ -1474,6 +1561,19 @@ const ProcessedAttendanceList = () => {
           onClose={handleCloseModal}
           onSave={handleAttendanceUpdate}
           onSync={handleIndividualSync}
+        />
+      )}
+
+      {/* NEW: Info Modal */}
+      {showInfoModal && selectedAttendance && (
+        <AttendanceInfoModal
+          isOpen={showInfoModal}
+          attendance={selectedAttendance}
+          onClose={handleCloseModal}
+          onEdit={() => {
+            setShowInfoModal(false);
+            setShowEditModal(true);
+          }}
         />
       )}
 
@@ -1570,29 +1670,34 @@ const ProcessedAttendanceList = () => {
                 </div>
               )}
 
-              <div className="mt-6 bg-red-50 border border-red-200 rounded-lg p-4">
+              <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-lg">
                 <div className="flex items-start">
-                  <AlertTriangle className="h-5 w-5 text-red-400 mt-0.5 mr-2" />
-                  <div className="flex-1">
-                    <h3 className="text-sm font-medium text-red-800">Warning</h3>
-                    <p className="text-sm text-red-700 mt-1">
-                      This action cannot be undone. Are you sure you want to delete the selected attendance records?
+                  <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5 mr-2" />
+                  <div>
+                    <h4 className="text-sm font-medium text-red-800 mb-1">Warning</h4>
+                    <p className="text-sm text-red-700">
+                      {deleteMode === 'selected' 
+                        ? `This will permanently delete ${selectedIds.length} selected attendance records.`
+                        : 'This will permanently delete all attendance records within the specified date range and filters.'
+                      }
+                      This action cannot be undone.
                     </p>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="bg-gray-50 px-6 py-4 flex justify-end space-x-3 border-t">
+            <div className="bg-gray-50 px-6 py-4 flex justify-end space-x-3 rounded-b-lg">
               <Button
                 variant="outline"
                 onClick={() => setShowDeleteModal(false)}
+                disabled={deleting}
               >
                 Cancel
               </Button>
               <Button
                 onClick={handleBulkDelete}
-                disabled={deleting}
+                disabled={deleting || (deleteMode === 'selected' && selectedIds.length === 0)}
                 className="bg-red-600 hover:bg-red-700 text-white"
               >
                 {deleting ? (
@@ -1603,7 +1708,7 @@ const ProcessedAttendanceList = () => {
                 ) : (
                   <>
                     <Trash2 className="h-4 w-4 mr-2" />
-                    Delete
+                    Delete Records
                   </>
                 )}
               </Button>
