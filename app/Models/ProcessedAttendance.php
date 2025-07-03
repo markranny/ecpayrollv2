@@ -151,10 +151,12 @@ class ProcessedAttendance extends Model
             if ($this->break_out && $this->break_in) {
                 $breakOut = Carbon::parse($this->break_out);
                 $breakIn = Carbon::parse($this->break_in);
-                $breakMinutes = $breakIn->diffInMinutes($breakOut);
+                if ($breakIn->gt($breakOut)) {
+                    $breakMinutes = $breakIn->diffInMinutes($breakOut);
+                }
             }
             
-            $netWorkedMinutes = $totalWorkedMinutes - $breakMinutes;
+            $netWorkedMinutes = max(0, $totalWorkedMinutes - $breakMinutes);
             $standardWorkMinutes = $standardWorkingHours * 60; // Convert hours to minutes
             
             // Calculate undertime if worked less than standard
@@ -170,28 +172,106 @@ class ProcessedAttendance extends Model
     }
 
     /**
-     * Auto-calculate late and undertime when model is saved
+     * Calculate hours worked
+     */
+    public function calculateHoursWorked()
+    {
+        if (!$this->time_in) {
+            return 0;
+        }
+
+        // For night shifts, use next_day_timeout if available
+        $timeOut = $this->is_nightshift && $this->next_day_timeout 
+            ? $this->next_day_timeout 
+            : $this->time_out;
+
+        if (!$timeOut) {
+            return 0;
+        }
+
+        try {
+            $timeIn = Carbon::parse($this->time_in);
+            $timeOut = Carbon::parse($timeOut);
+            
+            // Calculate total worked minutes
+            $totalWorkedMinutes = $timeOut->diffInMinutes($timeIn);
+            
+            // Subtract break time
+            $breakMinutes = 60; // Default 1-hour break
+            if ($this->break_out && $this->break_in) {
+                $breakOut = Carbon::parse($this->break_out);
+                $breakIn = Carbon::parse($this->break_in);
+                if ($breakIn->gt($breakOut)) {
+                    $breakMinutes = $breakIn->diffInMinutes($breakOut);
+                }
+            }
+            
+            $netWorkedMinutes = max(0, $totalWorkedMinutes - $breakMinutes);
+            
+            return round($netWorkedMinutes / 60, 2);
+        } catch (\Exception $e) {
+            \Log::error('Error calculating hours worked: ' . $e->getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * Auto-calculate late, undertime, and hours when model is saved
      */
     protected static function boot()
     {
         parent::boot();
 
         static::saving(function ($attendance) {
-            // Only auto-calculate if not manually set and time_in exists
+            // Only auto-calculate if time_in exists
             if ($attendance->time_in) {
-                // Auto-calculate late minutes if not already set
-                if (!$attendance->isDirty('late_minutes') || $attendance->late_minutes === null) {
-                    $attendance->late_minutes = $attendance->calculateLateMinutes();
+                // Calculate late minutes
+                $calculatedLateMinutes = $attendance->calculateLateMinutes();
+                
+                // Calculate undertime minutes
+                $calculatedUndertimeMinutes = $attendance->calculateUndertimeMinutes();
+                
+                // Calculate hours worked
+                $calculatedHoursWorked = $attendance->calculateHoursWorked();
+                
+                // Only update if not manually set or if values are null/zero
+                if (!$attendance->isDirty('late_minutes') || $attendance->late_minutes === null || $attendance->late_minutes == 0) {
+                    $attendance->late_minutes = $calculatedLateMinutes;
                 }
                 
-                // Auto-calculate undertime minutes if not already set
-                if (!$attendance->isDirty('undertime_minutes') || $attendance->undertime_minutes === null) {
-                    $attendance->undertime_minutes = $attendance->calculateUndertimeMinutes();
+                if (!$attendance->isDirty('undertime_minutes') || $attendance->undertime_minutes === null || $attendance->undertime_minutes == 0) {
+                    $attendance->undertime_minutes = $calculatedUndertimeMinutes;
                 }
+                
+                if (!$attendance->isDirty('hours_worked') || $attendance->hours_worked === null || $attendance->hours_worked == 0) {
+                    $attendance->hours_worked = $calculatedHoursWorked;
+                }
+                
+                \Log::info('Auto-calculated attendance metrics', [
+                    'id' => $attendance->id ?? 'new',
+                    'late_minutes' => $attendance->late_minutes,
+                    'undertime_minutes' => $attendance->undertime_minutes,
+                    'hours_worked' => $attendance->hours_worked
+                ]);
             }
             
             // Set night shift display flag
             $attendance->is_night_shift_display = $attendance->is_nightshift;
+        });
+
+        static::updating(function ($attendance) {
+            // Force recalculation on update if times have changed
+            if ($attendance->isDirty(['time_in', 'time_out', 'break_in', 'break_out', 'next_day_timeout', 'is_nightshift'])) {
+                \Log::info('Time fields changed, forcing recalculation', [
+                    'id' => $attendance->id,
+                    'dirty_fields' => array_keys($attendance->getDirty())
+                ]);
+                
+                // Force recalculation
+                $attendance->late_minutes = $attendance->calculateLateMinutes();
+                $attendance->undertime_minutes = $attendance->calculateUndertimeMinutes();
+                $attendance->hours_worked = $attendance->calculateHoursWorked();
+            }
         });
     }
 
@@ -349,8 +429,10 @@ class ProcessedAttendance extends Model
             if ($this->break_out && $this->break_in) {
                 $breakOut = Carbon::parse($this->break_out);
                 $breakIn = Carbon::parse($this->break_in);
-                $breakMinutes = $breakIn->diffInMinutes($breakOut);
-                $totalMinutes -= $breakMinutes;
+                if ($breakIn->gt($breakOut)) {
+                    $breakMinutes = $breakIn->diffInMinutes($breakOut);
+                    $totalMinutes -= $breakMinutes;
+                }
             } else {
                 // Default 1-hour break
                 $totalMinutes -= 60;
@@ -432,5 +514,26 @@ class ProcessedAttendance extends Model
         return $this->posting_status === 'posted' 
             ? 'bg-green-100 text-green-800'
             : 'bg-yellow-100 text-yellow-800';
+    }
+
+    /**
+     * Force recalculate all attendance metrics
+     */
+    public function recalculateMetrics()
+    {
+        if ($this->time_in) {
+            $this->late_minutes = $this->calculateLateMinutes();
+            $this->undertime_minutes = $this->calculateUndertimeMinutes();
+            $this->hours_worked = $this->calculateHoursWorked();
+            
+            \Log::info('Force recalculated attendance metrics', [
+                'id' => $this->id,
+                'late_minutes' => $this->late_minutes,
+                'undertime_minutes' => $this->undertime_minutes,
+                'hours_worked' => $this->hours_worked
+            ]);
+        }
+        
+        return $this;
     }
 }
