@@ -98,22 +98,23 @@ class ProcessedAttendance extends Model
     }
 
     /**
-     * Calculate late minutes based on expected time in
-     * You can customize this logic based on your business rules
+     * Calculate late minutes based on expected time in (8:00 AM with 5-minute grace period)
      */
-    public function calculateLateMinutes($expectedTimeIn = '08:00')
+    public function calculateLateMinutes($expectedTimeIn = '08:00', $gracePeriodMinutes = 5)
     {
         if (!$this->time_in) {
             return 0;
         }
 
         try {
-            // Parse expected time in (default 8:00 AM)
-            $expected = Carbon::parse($this->attendance_date->format('Y-m-d') . ' ' . $expectedTimeIn);
+            // Parse expected time in (default 8:00 AM with 5-minute grace period)
+            $attendanceDate = Carbon::parse($this->attendance_date);
+            $expected = $attendanceDate->copy()->setTime(8, 0, 0); // 8:00 AM
+            $graceTime = $expected->copy()->addMinutes($gracePeriodMinutes); // 8:05 AM
             $actual = Carbon::parse($this->time_in);
 
-            // If actual time is after expected time, calculate late minutes
-            if ($actual->gt($expected)) {
+            // If actual time is after grace time, calculate late minutes
+            if ($actual->gt($graceTime)) {
                 return $actual->diffInMinutes($expected);
             }
 
@@ -125,34 +126,40 @@ class ProcessedAttendance extends Model
     }
 
     /**
-     * Calculate undertime minutes based on expected time out
-     * You can customize this logic based on your business rules
+     * Calculate undertime minutes based on standard 8-hour workday
      */
-    public function calculateUndertimeMinutes($expectedTimeOut = '17:00')
+    public function calculateUndertimeMinutes($standardWorkingHours = 8)
     {
         // For night shifts, use next_day_timeout if available
         $timeOut = $this->is_nightshift && $this->next_day_timeout 
             ? $this->next_day_timeout 
             : $this->time_out;
 
-        if (!$timeOut) {
+        if (!$timeOut || !$this->time_in) {
             return 0;
         }
 
         try {
-            // For night shifts, expected time out might be next day
-            if ($this->is_nightshift && $this->next_day_timeout) {
-                $expectedDate = $this->attendance_date->copy()->addDay()->format('Y-m-d');
-                $expected = Carbon::parse($expectedDate . ' ' . $expectedTimeOut);
-            } else {
-                $expected = Carbon::parse($this->attendance_date->format('Y-m-d') . ' ' . $expectedTimeOut);
+            $timeIn = Carbon::parse($this->time_in);
+            $timeOut = Carbon::parse($timeOut);
+            
+            // Calculate total worked minutes
+            $totalWorkedMinutes = $timeOut->diffInMinutes($timeIn);
+            
+            // Subtract break time
+            $breakMinutes = 60; // Default 1-hour break
+            if ($this->break_out && $this->break_in) {
+                $breakOut = Carbon::parse($this->break_out);
+                $breakIn = Carbon::parse($this->break_in);
+                $breakMinutes = $breakIn->diffInMinutes($breakOut);
             }
             
-            $actual = Carbon::parse($timeOut);
-
-            // If actual time is before expected time, calculate undertime minutes
-            if ($actual->lt($expected)) {
-                return $expected->diffInMinutes($actual);
+            $netWorkedMinutes = $totalWorkedMinutes - $breakMinutes;
+            $standardWorkMinutes = $standardWorkingHours * 60; // Convert hours to minutes
+            
+            // Calculate undertime if worked less than standard
+            if ($netWorkedMinutes < $standardWorkMinutes) {
+                return $standardWorkMinutes - $netWorkedMinutes;
             }
 
             return 0;
@@ -170,11 +177,18 @@ class ProcessedAttendance extends Model
         parent::boot();
 
         static::saving(function ($attendance) {
-            // Auto-calculate late minutes
-            $attendance->late_minutes = $attendance->calculateLateMinutes();
-            
-            // Auto-calculate undertime minutes
-            $attendance->undertime_minutes = $attendance->calculateUndertimeMinutes();
+            // Only auto-calculate if not manually set and time_in exists
+            if ($attendance->time_in) {
+                // Auto-calculate late minutes if not already set
+                if (!$attendance->isDirty('late_minutes') || $attendance->late_minutes === null) {
+                    $attendance->late_minutes = $attendance->calculateLateMinutes();
+                }
+                
+                // Auto-calculate undertime minutes if not already set
+                if (!$attendance->isDirty('undertime_minutes') || $attendance->undertime_minutes === null) {
+                    $attendance->undertime_minutes = $attendance->calculateUndertimeMinutes();
+                }
+            }
             
             // Set night shift display flag
             $attendance->is_night_shift_display = $attendance->is_nightshift;
@@ -228,7 +242,7 @@ class ProcessedAttendance extends Model
     }
 
     /**
-     * Get late/undertime summary
+     * Get late/undertime summary for display
      */
     public function getLateUndertimeSummary()
     {
@@ -259,5 +273,164 @@ class ProcessedAttendance extends Model
     public function getPostingStatusLabel()
     {
         return $this->posting_status === 'posted' ? 'Posted' : 'Not Posted';
+    }
+
+    /**
+     * Get human-readable time format
+     */
+    public function getFormattedTimeIn()
+    {
+        return $this->time_in ? $this->time_in->format('h:i A') : null;
+    }
+
+    /**
+     * Get human-readable time format
+     */
+    public function getFormattedTimeOut()
+    {
+        $timeOut = $this->is_nightshift && $this->next_day_timeout 
+            ? $this->next_day_timeout 
+            : $this->time_out;
+            
+        return $timeOut ? $timeOut->format('h:i A') : null;
+    }
+
+    /**
+     * Get human-readable break out time format
+     */
+    public function getFormattedBreakOut()
+    {
+        return $this->break_out ? $this->break_out->format('h:i A') : null;
+    }
+
+    /**
+     * Get human-readable break in time format
+     */
+    public function getFormattedBreakIn()
+    {
+        return $this->break_in ? $this->break_in->format('h:i A') : null;
+    }
+
+    /**
+     * Check if attendance is complete (has both time in and time out)
+     */
+    public function isComplete()
+    {
+        if (!$this->time_in) {
+            return false;
+        }
+        
+        if ($this->is_nightshift) {
+            return $this->next_day_timeout || $this->time_out;
+        }
+        
+        return $this->time_out;
+    }
+
+    /**
+     * Get total worked hours (calculated property)
+     */
+    public function getTotalWorkedHours()
+    {
+        if (!$this->isComplete()) {
+            return 0;
+        }
+
+        try {
+            $timeIn = Carbon::parse($this->time_in);
+            $timeOut = $this->is_nightshift && $this->next_day_timeout 
+                ? Carbon::parse($this->next_day_timeout)
+                : Carbon::parse($this->time_out);
+            
+            // Calculate total minutes
+            $totalMinutes = $timeOut->diffInMinutes($timeIn);
+            
+            // Subtract break time
+            if ($this->break_out && $this->break_in) {
+                $breakOut = Carbon::parse($this->break_out);
+                $breakIn = Carbon::parse($this->break_in);
+                $breakMinutes = $breakIn->diffInMinutes($breakOut);
+                $totalMinutes -= $breakMinutes;
+            } else {
+                // Default 1-hour break
+                $totalMinutes -= 60;
+            }
+            
+            return round($totalMinutes / 60, 2);
+        } catch (\Exception $e) {
+            \Log::error('Error calculating total worked hours: ' . $e->getMessage());
+            return 0;
+        }
+    }
+
+    /**
+     * Check if employee was late
+     */
+    public function isLate()
+    {
+        return $this->late_minutes > 0;
+    }
+
+    /**
+     * Check if employee has undertime
+     */
+    public function hasUndertime()
+    {
+        return $this->undertime_minutes > 0;
+    }
+
+    /**
+     * Get the effective timeout (considers night shift)
+     */
+    public function getEffectiveTimeOut()
+    {
+        return $this->is_nightshift && $this->next_day_timeout 
+            ? $this->next_day_timeout 
+            : $this->time_out;
+    }
+
+    /**
+     * Check if this is a manual edit
+     */
+    public function isManualEdit()
+    {
+        return $this->source === 'manual_edit';
+    }
+
+    /**
+     * Check if this came from SLVL sync
+     */
+    public function isFromSLVL()
+    {
+        return $this->source === 'slvl_sync';
+    }
+
+    /**
+     * Get status badge color class
+     */
+    public function getStatusBadgeClass()
+    {
+        switch ($this->source) {
+            case 'manual_edit':
+                return 'bg-red-100 text-red-800';
+            case 'slvl_sync':
+                return 'bg-indigo-100 text-indigo-800';
+            case 'import':
+                return 'bg-blue-100 text-blue-800';
+            case 'biometric':
+                return 'bg-green-100 text-green-800';
+            default:
+                return 'bg-gray-100 text-gray-800';
+        }
+    }
+
+    /**
+     * Get posting status badge class
+     */
+    public function getPostingStatusBadgeClass()
+    {
+        return $this->posting_status === 'posted' 
+            ? 'bg-green-100 text-green-800'
+            : 'bg-yellow-100 text-yellow-800';
     }
 }
