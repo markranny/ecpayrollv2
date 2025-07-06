@@ -1852,4 +1852,441 @@ public function update(Request $request, $id)
             return 0.0;
         }
     }
+
+    /**
+ * Download attendance data template/current data
+ */
+public function downloadTemplate(Request $request)
+{
+    try {
+        // Get query parameters for filtering (same as main list)
+        $searchTerm = $request->input('search');
+        $dateFilter = $request->input('date');
+        $departmentFilter = $request->input('department');
+        $editsOnlyFilter = $request->boolean('edits_only');
+        $nightShiftFilter = $request->boolean('night_shift_only');
+        
+        // Build query with filters
+        $query = ProcessedAttendance::with('employee')
+            ->where('posting_status', '!=', 'posted'); // Only non-posted records
+        
+        // Apply same filters as main list
+        if ($searchTerm) {
+            $query->whereHas('employee', function ($q) use ($searchTerm) {
+                $q->where('idno', 'LIKE', "%{$searchTerm}%")
+                  ->orWhere('Fname', 'LIKE', "%{$searchTerm}%")
+                  ->orWhere('Lname', 'LIKE', "%{$searchTerm}%");
+            });
+        }
+        
+        if ($dateFilter) {
+            $query->whereDate('attendance_date', $dateFilter);
+        }
+        
+        if ($departmentFilter) {
+            $query->whereHas('employee', function ($q) use ($departmentFilter) {
+                $q->where('Department', $departmentFilter);
+            });
+        }
+        
+        if ($editsOnlyFilter) {
+            $query->where('source', 'manual_edit');
+        }
+        
+        if ($nightShiftFilter) {
+            $query->where('is_nightshift', true);
+        }
+        
+        // Get the data
+        $attendances = $query->orderBy('attendance_date', 'asc')
+                           ->orderBy('employee_id', 'asc')
+                           ->get();
+        
+        // Prepare file name
+        $fileName = 'attendance_data_' . date('Y-m-d_H-i-s') . '.csv';
+        
+        // Define headers
+        $headers = [
+            'Content-Type' => 'text/csv',
+            'Content-Disposition' => 'attachment; filename="' . $fileName . '"',
+            'Pragma' => 'no-cache',
+            'Cache-Control' => 'must-revalidate, post-check=0, pre-check=0',
+            'Expires' => '0'
+        ];
+        
+        // Create callback for streamed response
+        $callback = function() use ($attendances) {
+            $file = fopen('php://output', 'w');
+            
+            // Add CSV header row
+            fputcsv($file, [
+                'Employee Number',
+                'Employee Name',
+                'Department',
+                'Date',
+                'Day',
+                'Time In',
+                'Break Out',
+                'Break In',
+                'Time Out',
+                'Next Day Timeout',
+                'Hours Worked', // This will be calculated on import
+                'Night Shift',
+                'Trip'
+            ]);
+            
+            // Add data rows
+            foreach ($attendances as $attendance) {
+                $employee = $attendance->employee;
+                
+                // Format times to simple HH:MM format for Excel compatibility
+                $timeIn = $attendance->time_in ? $attendance->time_in->format('H:i') : '';
+                $timeOut = $attendance->time_out ? $attendance->time_out->format('H:i') : '';
+                $breakOut = $attendance->break_out ? $attendance->break_out->format('H:i') : '';
+                $breakIn = $attendance->break_in ? $attendance->break_in->format('H:i') : '';
+                $nextDayTimeout = $attendance->next_day_timeout ? $attendance->next_day_timeout->format('H:i') : '';
+                
+                $row = [
+                    $employee ? $employee->idno : '',
+                    $employee ? trim($employee->Fname . ' ' . $employee->Lname) : '',
+                    $employee ? $employee->Department : '',
+                    $attendance->attendance_date ? $attendance->attendance_date->format('Y-m-d') : '',
+                    $attendance->day ?: ($attendance->attendance_date ? $attendance->attendance_date->format('l') : ''),
+                    $timeIn,
+                    $breakOut,
+                    $breakIn,
+                    $timeOut,
+                    $nextDayTimeout,
+                    $attendance->hours_worked ?: '', // Current hours (will be recalculated on import)
+                    $attendance->is_nightshift ? 'Yes' : 'No',
+                    $attendance->trip ?: 0
+                ];
+                
+                fputcsv($file, $row);
+            }
+            
+            fclose($file);
+        };
+        
+        return response()->stream($callback, 200, $headers);
+        
+    } catch (\Exception $e) {
+        Log::error('Error downloading attendance data: ' . $e->getMessage());
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to download attendance data: ' . $e->getMessage()
+        ], 500);
+    }
+}
+
+/**
+ * Import attendance data with automatic hours calculation
+ */
+public function importAttendance(Request $request)
+{
+    try {
+        $validator = Validator::make($request->all(), [
+            'file' => 'required|file|mimes:csv,txt|max:10240', // 10MB max
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $file = $request->file('file');
+        $csvData = array_map('str_getcsv', file($file->path()));
+        
+        // Remove header row
+        $header = array_shift($csvData);
+        
+        $imported = 0;
+        $updated = 0;
+        $errors = [];
+        
+        DB::transaction(function () use ($csvData, &$imported, &$updated, &$errors) {
+            foreach ($csvData as $lineNumber => $row) {
+                try {
+                    // Skip empty rows
+                    if (empty(array_filter($row))) {
+                        continue;
+                    }
+                    
+                    // Map CSV columns (adjust indices based on your CSV structure)
+                    $employeeNumber = trim($row[0] ?? '');
+                    $employeeName = trim($row[1] ?? '');
+                    $department = trim($row[2] ?? '');
+                    $date = trim($row[3] ?? '');
+                    $day = trim($row[4] ?? '');
+                    $timeIn = trim($row[5] ?? '');
+                    $breakOut = trim($row[6] ?? '');
+                    $breakIn = trim($row[7] ?? '');
+                    $timeOut = trim($row[8] ?? '');
+                    $nextDayTimeout = trim($row[9] ?? '');
+                    // $hoursWorked = trim($row[10] ?? ''); // Will be calculated
+                    $nightShift = trim($row[11] ?? '');
+                    $trip = trim($row[12] ?? '0');
+                    
+                    // Validate required fields
+                    if (empty($employeeNumber) || empty($date)) {
+                        $errors[] = "Line " . ($lineNumber + 2) . ": Employee Number and Date are required";
+                        continue;
+                    }
+                    
+                    // Find employee
+                    $employee = Employee::where('idno', $employeeNumber)->first();
+                    if (!$employee) {
+                        $errors[] = "Line " . ($lineNumber + 2) . ": Employee with ID {$employeeNumber} not found";
+                        continue;
+                    }
+                    
+                    // Parse date
+                    $attendanceDate = Carbon::parse($date);
+                    
+                    // Parse times with validation
+                    $timeInParsed = $this->parseTimeForImport($timeIn, $attendanceDate);
+                    $timeOutParsed = $this->parseTimeForImport($timeOut, $attendanceDate);
+                    $breakOutParsed = $this->parseTimeForImport($breakOut, $attendanceDate);
+                    $breakInParsed = $this->parseTimeForImport($breakIn, $attendanceDate);
+                    $nextDayTimeoutParsed = null;
+                    
+                    // Handle night shift
+                    $isNightShift = strtolower($nightShift) === 'yes' || $nightShift === '1';
+                    
+                    if ($isNightShift && !empty($nextDayTimeout)) {
+                        $nextDay = $attendanceDate->copy()->addDay();
+                        $nextDayTimeoutParsed = $this->parseTimeForImport($nextDayTimeout, $nextDay);
+                    }
+                    
+                    // Calculate hours worked automatically
+                    $hoursWorked = $this->calculateHoursFromTimes(
+                        $timeInParsed,
+                        $isNightShift ? $nextDayTimeoutParsed : $timeOutParsed,
+                        $breakOutParsed,
+                        $breakInParsed
+                    );
+                    
+                    // Check if record exists
+                    $existingRecord = ProcessedAttendance::where('employee_id', $employee->id)
+                        ->where('attendance_date', $attendanceDate->format('Y-m-d'))
+                        ->first();
+                    
+                    $attendanceData = [
+                        'employee_id' => $employee->id,
+                        'attendance_date' => $attendanceDate->format('Y-m-d'),
+                        'day' => $day ?: $attendanceDate->format('l'),
+                        'time_in' => $timeInParsed,
+                        'time_out' => $timeOutParsed,
+                        'break_out' => $breakOutParsed,
+                        'break_in' => $breakInParsed,
+                        'next_day_timeout' => $nextDayTimeoutParsed,
+                        'hours_worked' => $hoursWorked,
+                        'is_nightshift' => $isNightShift,
+                        'trip' => floatval($trip),
+                        'source' => 'import',
+                        'posting_status' => 'not_posted'
+                    ];
+                    
+                    if ($existingRecord) {
+                        // Update existing record
+                        $existingRecord->update($attendanceData);
+                        $updated++;
+                    } else {
+                        // Create new record
+                        ProcessedAttendance::create($attendanceData);
+                        $imported++;
+                    }
+                    
+                } catch (\Exception $e) {
+                    $errors[] = "Line " . ($lineNumber + 2) . ": " . $e->getMessage();
+                    Log::error("Import error on line " . ($lineNumber + 2), [
+                        'error' => $e->getMessage(),
+                        'row' => $row
+                    ]);
+                }
+            }
+        });
+        
+        $message = "Import completed. {$imported} records imported, {$updated} records updated";
+        if (count($errors) > 0) {
+            $message .= ". " . count($errors) . " errors occurred.";
+        }
+        
+        return response()->json([
+            'success' => true,
+            'message' => $message,
+            'imported' => $imported,
+            'updated' => $updated,
+            'errors' => array_slice($errors, 0, 10) // Limit errors shown
+        ]);
+        
+    } catch (\Exception $e) {
+        Log::error('Error importing attendance data: ' . $e->getMessage());
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'Import failed: ' . $e->getMessage()
+        ], 500);
+    }
+}
+
+/**
+ * Helper method to parse time for import
+ */
+private function parseTimeForImport($timeString, $date)
+{
+    if (empty($timeString)) {
+        return null;
+    }
+    
+    try {
+        // Handle various time formats: HH:MM, H:MM, HH:MM:SS
+        if (preg_match('/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/', $timeString, $matches)) {
+            $hour = intval($matches[1]);
+            $minute = intval($matches[2]);
+            $second = isset($matches[3]) ? intval($matches[3]) : 0;
+            
+            return $date->copy()->setTime($hour, $minute, $second);
+        }
+        
+        return null;
+    } catch (\Exception $e) {
+        Log::warning("Could not parse time: {$timeString}");
+        return null;
+    }
+}
+
+/**
+ * Helper method to calculate hours from time values
+ */
+private function calculateHoursFromTimes($timeIn, $timeOut, $breakOut, $breakIn)
+{
+    if (!$timeIn || !$timeOut) {
+        return 0;
+    }
+    
+    try {
+        // Calculate total worked minutes
+        $totalMinutes = $timeOut->diffInMinutes($timeIn);
+        
+        // Subtract break time if available
+        $breakMinutes = 0;
+        if ($breakOut && $breakIn && $breakIn->gt($breakOut)) {
+            $breakMinutes = $breakIn->diffInMinutes($breakOut);
+        } else {
+            // Default 1-hour break if no break times provided
+            $breakMinutes = 60;
+        }
+        
+        $netMinutes = max(0, $totalMinutes - $breakMinutes);
+        return round($netMinutes / 60, 2);
+        
+    } catch (\Exception $e) {
+        Log::warning("Could not calculate hours: " . $e->getMessage());
+        return 0;
+    }
+}
+
+/**
+ * Set holiday for multiple employees on a specific date
+ */
+public function setHoliday(Request $request)
+{
+    try {
+        $validator = Validator::make($request->all(), [
+            'date' => 'required|date',
+            'multiplier' => 'required|numeric|min:0.1|max:10',
+            'department' => 'nullable|string',
+            'employee_ids' => 'nullable|array',
+            'employee_ids.*' => 'integer|exists:employees,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $date = $request->input('date');
+        $multiplier = $request->input('multiplier');
+        $department = $request->input('department');
+        $employeeIds = $request->input('employee_ids', []);
+
+        // Build query for affected attendance records
+        $query = ProcessedAttendance::whereDate('attendance_date', $date)
+            ->where('posting_status', '!=', 'posted') // Only non-posted records
+            // Only set holiday for records that don't have overtime
+            ->where(function ($q) {
+                $q->where('overtime', 0)
+                  ->orWhereNull('overtime');
+            })
+            ->where(function ($q) {
+                $q->where('ot_reg_holiday', 0)
+                  ->orWhereNull('ot_reg_holiday');
+            })
+            ->where(function ($q) {
+                $q->where('ot_special_holiday', 0)
+                  ->orWhereNull('ot_special_holiday');
+            });
+
+        // Filter by department if specified
+        if ($department) {
+            $query->whereHas('employee', function ($q) use ($department) {
+                $q->where('Department', $department);
+            });
+        }
+
+        // Filter by specific employees if specified
+        if (!empty($employeeIds)) {
+            $query->whereIn('employee_id', $employeeIds);
+        }
+
+        // Get affected records
+        $affectedRecords = $query->get();
+
+        if ($affectedRecords->isEmpty()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No eligible attendance records found for the specified date and criteria. Records with existing overtime are excluded.'
+            ]);
+        }
+
+        // Update records
+        $updatedCount = 0;
+        foreach ($affectedRecords as $record) {
+            $record->update([
+                'holiday' => $multiplier,
+                'source' => 'holiday_set'
+            ]);
+            $updatedCount++;
+        }
+
+        Log::info("Holiday set for {$updatedCount} records", [
+            'date' => $date,
+            'multiplier' => $multiplier,
+            'department' => $department,
+            'employee_count' => count($employeeIds)
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Holiday multiplier ({$multiplier}) set for {$updatedCount} attendance records on {$date}",
+            'updated_count' => $updatedCount
+        ]);
+
+    } catch (\Exception $e) {
+        Log::error('Error setting holiday: ' . $e->getMessage());
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to set holiday: ' . $e->getMessage()
+        ], 500);
+    }
+}
 }

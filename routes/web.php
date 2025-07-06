@@ -277,6 +277,18 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
     Route::post('/attendance/recalculate-all', [ProcessedAttendanceController::class, 'recalculateAll'])
         ->name('attendance.recalculate-all');
     
+    // NEW: Download template/data route
+    Route::get('/attendance/download-template', [ProcessedAttendanceController::class, 'downloadTemplate'])
+        ->name('attendance.download-template');
+    
+    // NEW: Import attendance data route
+    Route::post('/attendance/import', [ProcessedAttendanceController::class, 'importAttendance'])
+        ->name('attendance.import');
+    
+    // NEW: Set holiday route
+    Route::post('/attendance/set-holiday', [ProcessedAttendanceController::class, 'setHoliday'])
+        ->name('attendance.set-holiday');
+    
     // Sync and Delete functionality
     Route::post('/attendance/sync', [ProcessedAttendanceController::class, 'sync'])
         ->name('attendance.sync');

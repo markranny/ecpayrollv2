@@ -29,7 +29,7 @@ const ProcessedAttendanceList = () => {
   const [dateFilter, setDateFilter] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [editsOnlyFilter, setEditsOnlyFilter] = useState(false);
-  const [nightShiftFilter, setNightShiftFilter] = useState(false); // NEW: Night shift filter
+  const [nightShiftFilter, setNightShiftFilter] = useState(false);
   const [postingStatusFilter, setPostingStatusFilter] = useState('');
   const [departments, setDepartments] = useState([]);
   const [holdTimer, setHoldTimer] = useState(null);
@@ -59,50 +59,38 @@ const ProcessedAttendanceList = () => {
   const editClickTimeoutRef = useRef(null);
   const isEditingRef = useRef(false);
 
-  // Show recalculation message if records were auto-recalculated
-  useEffect(() => {
-    if (recalculated_count > 0) {
-      setSuccess(`Auto-recalculated ${recalculated_count} attendance records for accurate display`);
-    }
-  }, [recalculated_count]);
+  // Process attendance data for display
+  const processAttendanceData = (data) => {
+    return data.map(attendance => ({
+      ...attendance,
+      // Ensure all necessary fields are present
+      employee_name: attendance.employee_name || 'Unknown Employee',
+      idno: attendance.idno || 'N/A',
+      department: attendance.department || 'N/A',
+      line: attendance.line || 'N/A',
+      hours_worked: attendance.hours_worked || 0,
+      late_minutes: attendance.late_minutes || 0,
+      undertime_minutes: attendance.undertime_minutes || 0,
+      overtime: attendance.overtime || 0,
+      travel_order: attendance.travel_order || 0,
+      slvl: attendance.slvl || 0,
+      trip: attendance.trip || 0,
+      ct: attendance.ct || false,
+      cs: attendance.cs || false,
+      holiday: attendance.holiday || 0,
+      ot_reg_holiday: attendance.ot_reg_holiday || 0,
+      ot_special_holiday: attendance.ot_special_holiday || 0,
+      retromultiplier: attendance.retromultiplier || 1,
+      restday: attendance.restday || false,
+      offset: attendance.offset || 0,
+      ob: attendance.ob || false,
+      is_nightshift: attendance.is_nightshift || false,
+      source: attendance.source || 'unknown',
+      posting_status: attendance.posting_status || 'not_posted'
+    }));
+  };
 
-  // Auto-clear success/error messages
-  useEffect(() => {
-    if (success) {
-      const timer = setTimeout(() => setSuccess(''), 5000);
-      return () => clearTimeout(timer);
-    }
-  }, [success]);
-
-  useEffect(() => {
-    if (error) {
-      const timer = setTimeout(() => setError(''), 10000);
-      return () => clearTimeout(timer);
-    }
-  }, [error]);
-
-  // Clean up timeouts on unmount
-  useEffect(() => {
-    return () => {
-      if (editClickTimeoutRef.current) {
-        clearTimeout(editClickTimeoutRef.current);
-      }
-      if (holdTimer) {
-        clearTimeout(holdTimer);
-      }
-    };
-  }, [holdTimer]);
-
-  // Auto-recalculate on component mount and when filters change
-  useEffect(() => {
-    const shouldAutoRecalculate = true;
-    
-    if (shouldAutoRecalculate && attendances.length > 0) {
-      handleAutoRecalculate();
-    }
-  }, [searchTerm, dateFilter, departmentFilter, editsOnlyFilter, nightShiftFilter]); // Added nightShiftFilter
-
-  // Enhanced load attendance data with recalculation
+  // Load attendance data with recalculation
   const loadAttendanceData = async (showRecalcMessage = false) => {
     setLoading(true);
     setError('');
@@ -116,7 +104,7 @@ const ProcessedAttendanceList = () => {
       if (dateFilter) params.append('date', dateFilter);
       if (departmentFilter) params.append('department', departmentFilter);
       if (editsOnlyFilter) params.append('edits_only', 'true');
-      if (nightShiftFilter) params.append('night_shift_only', 'true'); // NEW: Night shift filter
+      if (nightShiftFilter) params.append('night_shift_only', 'true');
       if (postingStatusFilter) params.append('posting_status', postingStatusFilter);
       
       const response = await fetch('/attendance/list?' + params.toString(), {
@@ -151,13 +139,19 @@ const ProcessedAttendanceList = () => {
     }
   };
 
+  // Apply filters and reload data
+  const applyFilters = async () => {
+    setCurrentPage(1);
+    await loadAttendanceData(true);
+  };
+
   // Enhanced reset filters with auto-recalculation
   const resetFilters = async () => {
     setSearchTerm('');
     setDateFilter('');
     setDepartmentFilter('');
     setEditsOnlyFilter(false);
-    setNightShiftFilter(false); // NEW: Reset night shift filter
+    setNightShiftFilter(false);
     setPostingStatusFilter('');
     setCurrentPage(1);
     
@@ -166,7 +160,218 @@ const ProcessedAttendanceList = () => {
     }, 0);
   };
 
-  // Handle attendance update (UPDATED to include trip)
+  // Handle export functionality
+  const handleExport = async () => {
+    setExporting(true);
+    setError('');
+    
+    try {
+      const params = new URLSearchParams();
+      
+      // Add current filters to export
+      if (searchTerm) params.append('search', searchTerm);
+      if (dateFilter) params.append('date', dateFilter);
+      if (departmentFilter) params.append('department', departmentFilter);
+      if (editsOnlyFilter) params.append('edits_only', 'true');
+      if (nightShiftFilter) params.append('night_shift_only', 'true');
+      if (postingStatusFilter) params.append('posting_status', postingStatusFilter);
+      
+      const response = await fetch('/attendance/export?' + params.toString(), {
+        method: 'GET',
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/octet-stream'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Export failed with status: ${response.status}`);
+      }
+      
+      // Get the blob data
+      const blob = await response.blob();
+      
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      
+      // Generate filename with current date and filters
+      const now = new Date();
+      const dateString = now.toISOString().split('T')[0];
+      let filename = `attendance_export_${dateString}`;
+      
+      // Add filter info to filename
+      if (dateFilter) {
+        filename += `_${dateFilter}`;
+      }
+      if (departmentFilter) {
+        filename += `_${departmentFilter.replace(/\s+/g, '_')}`;
+      }
+      if (editsOnlyFilter) {
+        filename += '_edited_only';
+      }
+      if (nightShiftFilter) {
+        filename += '_night_shift';
+      }
+      
+      link.download = `${filename}.csv`;
+      
+      // Trigger download
+      document.body.appendChild(link);
+      link.click();
+      
+      // Cleanup
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      setSuccess('Attendance data exported successfully');
+      
+    } catch (err) {
+      console.error('Export error:', err);
+      setError('Failed to export attendance data: ' + (err.message || 'Unknown error'));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // Handle auto-recalculation
+  const handleAutoRecalculate = async (showMessage = false) => {
+    if (recalculating) return;
+    
+    setRecalculating(true);
+    setError('');
+    
+    try {
+      const params = new URLSearchParams();
+      
+      if (dateFilter) params.append('date', dateFilter);
+      if (departmentFilter) params.append('department', departmentFilter);
+      
+      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+      
+      const response = await fetch('/attendance/recalculate-all', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          date: dateFilter,
+          department: departmentFilter
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Recalculation failed with status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        if (showMessage && data.recalculated_count > 0) {
+          setSuccess(`Recalculated ${data.recalculated_count} attendance records`);
+        }
+        
+        await loadAttendanceData(false);
+      } else {
+        setError('Recalculation failed: ' + (data.message || 'Unknown error'));
+      }
+      
+    } catch (err) {
+      console.error('Recalculation error:', err);
+      setError('Failed to recalculate attendance data: ' + (err.message || 'Unknown error'));
+    } finally {
+      setRecalculating(false);
+    }
+  };
+
+  // Handle sync functionality
+  const handleSync = async () => {
+    if (syncing) return;
+    
+    setSyncing(true);
+    setError('');
+    
+    try {
+      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+      
+      const response = await fetch('/attendance/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Sync failed with status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setSuccess(data.message || 'Sync completed successfully');
+        await loadAttendanceData(false);
+      } else {
+        setError('Sync failed: ' + (data.message || 'Unknown error'));
+      }
+      
+    } catch (err) {
+      console.error('Sync error:', err);
+      setError('Failed to sync attendance data: ' + (err.message || 'Unknown error'));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // Handle individual record sync
+  const handleIndividualSync = async (attendanceId) => {
+    try {
+      setError('');
+      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+      
+      const response = await fetch(`/attendance/${attendanceId}/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Individual sync failed with status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setSuccess(data.message || 'Record synced successfully');
+        
+        if (data.data) {
+          setAttendances(prevAttendances => 
+            prevAttendances.map(att => 
+              att.id === attendanceId ? { ...att, ...data.data } : att
+            )
+          );
+        }
+      } else {
+        setError('Individual sync failed: ' + (data.message || 'Unknown error'));
+      }
+      
+    } catch (err) {
+      console.error('Individual sync error:', err);
+      setError('Failed to sync individual record: ' + (err.message || 'Unknown error'));
+    }
+  };
+
+  // Handle attendance update
   const handleAttendanceUpdate = async (updatedAttendance) => {
     try {
       setError('');
@@ -187,7 +392,7 @@ const ProcessedAttendanceList = () => {
         time_out: updatedAttendance.time_out,
         next_day_timeout: updatedAttendance.next_day_timeout,
         is_nightshift: updatedAttendance.is_nightshift,
-        trip: updatedAttendance.trip // NEW: Include trip in update payload
+        trip: updatedAttendance.trip
       };
       
       const response = await fetch(`/attendance/${updatedAttendance.id}`, {
@@ -266,7 +471,490 @@ const ProcessedAttendanceList = () => {
     }
   };
 
-  // ... (keep all other existing functions)
+  // Handle checkbox selection
+  const handleCheckboxChange = (e, attendanceId) => {
+    e.stopPropagation();
+    
+    if (e.target.checked) {
+      setSelectedIds(prev => [...prev, attendanceId]);
+    } else {
+      setSelectedIds(prev => prev.filter(id => id !== attendanceId));
+    }
+  };
+
+  // Handle select all checkbox
+  const handleSelectAll = (checked) => {
+    setSelectAll(checked);
+    if (checked) {
+      setSelectedIds(attendances.map(att => att.id));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  // Handle mouse interactions for hold-to-view functionality
+  const handleMouseDown = (e, attendance) => {
+    e.preventDefault();
+    
+    setIsHolding(true);
+    
+    const timer = setTimeout(() => {
+      setSelectedAttendance(attendance);
+      setShowInfoModal(true);
+      setIsHolding(false);
+    }, 1000);
+    
+    setHoldTimer(timer);
+  };
+
+  const handleMouseUp = () => {
+    if (holdTimer) {
+      clearTimeout(holdTimer);
+      setHoldTimer(null);
+    }
+    setIsHolding(false);
+  };
+
+  const handleMouseLeave = () => {
+    if (holdTimer) {
+      clearTimeout(holdTimer);
+      setHoldTimer(null);
+    }
+    setIsHolding(false);
+  };
+
+  // Handle row double-click for editing
+  const handleRowDoubleClick = (e, attendance) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (holdTimer) {
+      clearTimeout(holdTimer);
+      setHoldTimer(null);
+    }
+    
+    if (isEditingRef.current) return;
+    
+    if (editClickTimeoutRef.current) {
+      clearTimeout(editClickTimeoutRef.current);
+    }
+    
+    isEditingRef.current = true;
+    
+    setSelectedAttendance(attendance);
+    setShowEditModal(true);
+    
+    editClickTimeoutRef.current = setTimeout(() => {
+      isEditingRef.current = false;
+    }, 500);
+  };
+
+  // Handle edit button click
+  const handleEditClick = (e, attendance) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (isEditingRef.current) return;
+    
+    if (editClickTimeoutRef.current) {
+      clearTimeout(editClickTimeoutRef.current);
+    }
+    
+    isEditingRef.current = true;
+    
+    setSelectedAttendance(attendance);
+    setShowEditModal(true);
+    
+    editClickTimeoutRef.current = setTimeout(() => {
+      isEditingRef.current = false;
+    }, 500);
+  };
+
+  // Handle modal close
+  const handleCloseModal = () => {
+    setShowEditModal(false);
+    setShowInfoModal(false);
+    setSelectedAttendance(null);
+    
+    isEditingRef.current = false;
+    
+    if (editClickTimeoutRef.current) {
+      clearTimeout(editClickTimeoutRef.current);
+    }
+  };
+
+  // Handle posting status changes
+  const handlePostingStatusChange = async (action) => {
+    if (selectedIds.length === 0) {
+      setError('Please select attendance records first');
+      return;
+    }
+    
+    try {
+      setError('');
+      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+      
+      const endpoint = action === 'mark_posted' ? '/attendance/mark-as-posted' : '/attendance/mark-as-not-posted';
+      
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          ids: selectedIds
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Status update failed with status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        const statusText = action === 'mark_posted' ? 'posted' : 'not posted';
+        setSuccess(`${selectedIds.length} records marked as ${statusText}`);
+        
+        const newStatus = action === 'mark_posted' ? 'posted' : 'not_posted';
+        setAttendances(prevAttendances =>
+          prevAttendances.map(att =>
+            selectedIds.includes(att.id)
+              ? { ...att, posting_status: newStatus }
+              : att
+          )
+        );
+        
+        setSelectedIds([]);
+        setSelectAll(false);
+      } else {
+        setError('Failed to update posting status: ' + (data.message || 'Unknown error'));
+      }
+      
+    } catch (err) {
+      console.error('Posting status update error:', err);
+      setError('Failed to update posting status: ' + (err.message || 'Unknown error'));
+    }
+  };
+
+  // Handle bulk delete
+  const handleBulkDelete = async () => {
+    try {
+      setDeleting(true);
+      setError('');
+      
+      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+      
+      let requestBody = {};
+      
+      if (deleteMode === 'selected') {
+        if (selectedIds.length === 0) {
+          setError('Please select attendance records to delete');
+          return;
+        }
+        requestBody = { ids: selectedIds };
+      } else {
+        if (!deleteRange.start_date || !deleteRange.end_date) {
+          setError('Please provide both start and end dates');
+          return;
+        }
+        requestBody = {
+          start_date: deleteRange.start_date,
+          end_date: deleteRange.end_date,
+          employee_id: deleteRange.employee_id || null,
+          department: deleteRange.department || null
+        };
+      }
+      
+      const response = await fetch('/attendance/bulk-delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Delete failed with status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setSuccess(data.message || `Deleted ${data.deleted_count} records successfully`);
+        
+        await loadAttendanceData(false);
+        
+        setSelectedIds([]);
+        setSelectAll(false);
+        setShowDeleteModal(false);
+        setDeleteRange({
+          start_date: '',
+          end_date: '',
+          employee_id: '',
+          department: ''
+        });
+      } else {
+        setError('Delete failed: ' + (data.message || 'Unknown error'));
+      }
+      
+    } catch (err) {
+      console.error('Bulk delete error:', err);
+      setError('Failed to delete records: ' + (err.message || 'Unknown error'));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // Load departments for filter
+  const loadDepartments = async () => {
+    try {
+      const response = await fetch('/attendance/departments', {
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          setDepartments(data.data);
+        }
+      }
+    } catch (err) {
+      console.error('Error loading departments:', err);
+    }
+  };
+
+  // Format date for display
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      });
+    } catch (err) {
+      return 'Invalid Date';
+    }
+  };
+
+  // Format time for display
+  const formatTime = (timeString) => {
+    if (!timeString) return '-';
+    try {
+      const time = new Date(timeString);
+      return time.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+    } catch (err) {
+      return 'Invalid Time';
+    }
+  };
+
+  // Format numeric values
+  const formatNumeric = (value, decimals = 2) => {
+    if (value === null || value === undefined || value === '') return '-';
+    const num = parseFloat(value);
+    return isNaN(num) ? '-' : num.toFixed(decimals);
+  };
+
+  // Render late/undertime status
+  const renderLateUndertime = (attendance) => {
+    const lateMinutes = parseFloat(attendance.late_minutes || 0);
+    const undertimeMinutes = parseFloat(attendance.undertime_minutes || 0);
+    
+    if (lateMinutes === 0 && undertimeMinutes === 0) {
+      return (
+        <div className="flex items-center space-x-1">
+          <CheckCircle className="h-4 w-4 text-green-500" />
+          <span className="text-xs text-green-600 font-medium">On Time</span>
+        </div>
+      );
+    }
+    
+    return (
+      <div className="space-y-1">
+        {lateMinutes > 0 && (
+          <div className="flex items-center space-x-1">
+            <Clock className="h-3 w-3 text-red-500" />
+            <span className="text-xs text-red-600">
+              {Math.floor(lateMinutes / 60) > 0 ? `${Math.floor(lateMinutes / 60)}h ` : ''}
+              {Math.round(lateMinutes % 60)}m late
+            </span>
+          </div>
+        )}
+        {undertimeMinutes > 0 && (
+          <div className="flex items-center space-x-1">
+            <AlertTriangle className="h-3 w-3 text-orange-500" />
+            <span className="text-xs text-orange-600">
+              {Math.floor(undertimeMinutes / 60) > 0 ? `${Math.floor(undertimeMinutes / 60)}h ` : ''}
+              {Math.round(undertimeMinutes % 60)}m under
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Render night shift indicator
+  const renderNightShift = (attendance) => {
+    if (attendance.is_nightshift) {
+      return (
+        <div className="flex items-center space-x-1 px-2 py-1 bg-purple-100 text-purple-800 rounded-full text-xs">
+          <Moon className="h-3 w-3" />
+          <span>Night</span>
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-center space-x-1 px-2 py-1 bg-yellow-100 text-yellow-800 rounded-full text-xs">
+        <Sun className="h-3 w-3" />
+        <span>Day</span>
+      </div>
+    );
+  };
+
+  // Render status badges
+  const renderStatusBadge = (value, type = 'boolean') => {
+    if (type === 'source') {
+      const sourceColors = {
+        'manual_edit': 'bg-red-100 text-red-800',
+        'slvl_sync': 'bg-indigo-100 text-indigo-800',
+        'import': 'bg-blue-100 text-blue-800',
+        'biometric': 'bg-green-100 text-green-800',
+        'unknown': 'bg-gray-100 text-gray-800'
+      };
+      
+      const colorClass = sourceColors[value] || sourceColors['unknown'];
+      const displayText = value === 'manual_edit' ? 'Edited' : 
+                         value === 'slvl_sync' ? 'SLVL' :
+                         value === 'import' ? 'Import' :
+                         value === 'biometric' ? 'Bio' : 'Unknown';
+      
+      return (
+        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${colorClass}`}>
+          {displayText}
+        </span>
+      );
+    }
+    
+    if (value) {
+      return (
+        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+          ✓
+        </span>
+      );
+    }
+    
+    return (
+      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+        -
+      </span>
+    );
+  };
+
+  // Render posting status
+  const renderPostingStatus = (attendance) => {
+    if (attendance.posting_status === 'posted') {
+      return (
+        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+          <CheckCircle2 className="h-3 w-3 mr-1" />
+          Posted
+        </span>
+      );
+    }
+    
+    return (
+      <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+        <AlertCircle className="h-3 w-3 mr-1" />
+        Not Posted
+      </span>
+    );
+  };
+
+  // Show recalculation message if records were auto-recalculated
+  useEffect(() => {
+    if (recalculated_count > 0) {
+      setSuccess(`Auto-recalculated ${recalculated_count} attendance records for accurate display`);
+    }
+  }, [recalculated_count]);
+
+  // Auto-clear success/error messages
+  useEffect(() => {
+    if (success) {
+      const timer = setTimeout(() => setSuccess(''), 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [success]);
+
+  useEffect(() => {
+    if (error) {
+      const timer = setTimeout(() => setError(''), 10000);
+      return () => clearTimeout(timer);
+    }
+  }, [error]);
+
+  // Clean up timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (editClickTimeoutRef.current) {
+        clearTimeout(editClickTimeoutRef.current);
+      }
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+      }
+    };
+  }, [holdTimer]);
+
+  // Auto-recalculate on component mount and when filters change
+  useEffect(() => {
+    const shouldAutoRecalculate = true;
+    
+    if (shouldAutoRecalculate && attendances.length > 0) {
+      handleAutoRecalculate();
+    }
+  }, [searchTerm, dateFilter, departmentFilter, editsOnlyFilter, nightShiftFilter]);
+
+  // Initialize component data
+  useEffect(() => {
+    loadDepartments();
+  }, []);
+
+  // Handle page changes
+  useEffect(() => {
+    if (currentPage !== pagination.current_page) {
+      loadAttendanceData(false);
+    }
+  }, [currentPage]);
+
+  // Handle filter changes with debouncing
+  useEffect(() => {
+    const delayedApply = setTimeout(() => {
+      if (searchTerm !== '' || dateFilter !== '' || departmentFilter !== '' || 
+          editsOnlyFilter !== false || nightShiftFilter !== false || postingStatusFilter !== '') {
+        applyFilters();
+      }
+    }, 500);
+
+    return () => clearTimeout(delayedApply);
+  }, [searchTerm]);
+
+  // Apply filters immediately for other filter types
+  useEffect(() => {
+    applyFilters();
+  }, [dateFilter, departmentFilter, editsOnlyFilter, nightShiftFilter, postingStatusFilter]);
 
   return (
     <AuthenticatedLayout user={auth.user}>
@@ -478,7 +1166,7 @@ const ProcessedAttendanceList = () => {
                   </div>
                 </div>
                 
-                {/* NEW: Second row of filters */}
+                {/* Second row of filters */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                   <div>
                     <label className="flex items-center space-x-2 cursor-pointer">
