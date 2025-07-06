@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Head, usePage } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
-import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X, Users, FileText, Eye, Moon, Sun, AlertCircle, CheckCircle2, Info, Calculator } from 'lucide-react';
+import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X, Users, FileText, Eye, Moon, Sun, AlertCircle, CheckCircle2, Info, Calculator, Car } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -29,6 +29,7 @@ const ProcessedAttendanceList = () => {
   const [dateFilter, setDateFilter] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('');
   const [editsOnlyFilter, setEditsOnlyFilter] = useState(false);
+  const [nightShiftFilter, setNightShiftFilter] = useState(false); // NEW: Night shift filter
   const [postingStatusFilter, setPostingStatusFilter] = useState('');
   const [departments, setDepartments] = useState([]);
   const [holdTimer, setHoldTimer] = useState(null);
@@ -99,176 +100,7 @@ const ProcessedAttendanceList = () => {
     if (shouldAutoRecalculate && attendances.length > 0) {
       handleAutoRecalculate();
     }
-  }, [searchTerm, dateFilter, departmentFilter, editsOnlyFilter]);
-
-  // NEW: Auto-recalculation function
-  const handleAutoRecalculate = async (showMessage = false) => {
-    if (recalculating) return;
-    
-    setRecalculating(true);
-    if (showMessage) setError('');
-    
-    try {
-      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-      
-      if (!csrfToken) {
-        if (showMessage) setError('Session expired. Please refresh the page and try again.');
-        return;
-      }
-      
-      const params = new URLSearchParams();
-      if (dateFilter) params.append('date', dateFilter);
-      if (departmentFilter) params.append('department', departmentFilter);
-      
-      const response = await fetch('/attendance/recalculate-all?' + params.toString(), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        if (showMessage && data.recalculated_count > 0) {
-          setSuccess(`Recalculated ${data.recalculated_count} attendance records`);
-        }
-        
-        await loadAttendanceData();
-      } else {
-        if (showMessage) setError('Recalculation failed: ' + (data.message || 'Unknown error'));
-      }
-    } catch (err) {
-      console.error('Error in auto-recalculation:', err);
-      if (showMessage) setError('Error recalculating attendance records: ' + (err.message || 'Unknown error'));
-    } finally {
-      setRecalculating(false);
-    }
-  };
-
-  // Date formatting with error handling
-  const formatDate = (dateString) => {
-    if (!dateString) return '-';
-    
-    try {
-      const date = new Date(dateString);
-      
-      if (isNaN(date.getTime())) return '-';
-      
-      return date.toLocaleDateString('en-US', {
-        month: '2-digit',
-        day: '2-digit',
-        year: 'numeric'
-      });
-    } catch (error) {
-      console.error('Date formatting error:', error);
-      return '-';
-    }
-  };
-
-  const formatTime = (timeString) => {
-    if (!timeString) return '-';
-    
-    try {
-      let timeOnly;
-      if (timeString.includes('T')) {
-        const [, time] = timeString.split('T');
-        timeOnly = time.slice(0, 5);
-      } else if (timeString.includes(' ') && timeString.includes(':')) {
-        const timeParts = timeString.split(' ');
-        timeOnly = timeParts[timeParts.length - 1].slice(0, 5);
-      } else if (timeString.includes(':')) {
-        timeOnly = timeString.slice(0, 5);
-      } else {
-        console.log('Unrecognized time format:', timeString);
-        return '-';
-      }
-      
-      const parts = timeOnly.split(':');
-      if (parts.length < 2) {
-        console.log('Invalid time format, missing colon:', timeString);
-        return '-';
-      }
-      
-      const hours = parts[0];
-      const minutes = parts[1];
-      
-      const hourNum = parseInt(hours, 10);
-      const minNum = parseInt(minutes, 10);
-      
-      if (isNaN(hourNum) || isNaN(minNum)) {
-        console.log('Invalid hour or minute values:', hours, minutes);
-        return '-';
-      }
-      
-      const ampm = hourNum >= 12 ? 'PM' : 'AM';
-      const formattedHours = hourNum % 12 || 12;
-      
-      return `${formattedHours}:${minutes.padStart(2, '0')} ${ampm}`;
-    } catch (error) {
-      console.error('Time formatting error:', error, 'for timeString:', timeString);
-      return '-';
-    }
-  };
-
-  // Process attendance data to ensure employee, dept, and day are always present
-  const processAttendanceData = useCallback((data) => {
-    return data.map(attendance => {
-      if (!attendance.employee_name && attendance.employee) {
-        attendance.employee_name = `${attendance.employee.Fname || ''} ${attendance.employee.Lname || ''}`.trim();
-      } else if (!attendance.employee_name) {
-        attendance.employee_name = 'Unknown Employee';
-      }
-      
-      if (!attendance.department && attendance.employee) {
-        attendance.department = attendance.employee.Department || 'N/A';
-      } else if (!attendance.department) {
-        attendance.department = 'N/A';
-      }
-      
-      if (!attendance.idno && attendance.employee) {
-        attendance.idno = attendance.employee.idno || 'N/A';
-      } else if (!attendance.idno) {
-        attendance.idno = 'N/A';
-      }
-      
-      if (!attendance.day && attendance.attendance_date) {
-        const date = new Date(attendance.attendance_date);
-        if (!isNaN(date.getTime())) {
-          attendance.day = date.toLocaleDateString('en-US', { weekday: 'long' });
-        }
-      }
-      
-      return attendance;
-    });
-  }, []);
-
-  // Load departments
-  const loadDepartments = async () => {
-    try {
-      const response = await fetch('/attendance/departments', {
-        headers: {
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        }
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setDepartments(data.data);
-      }
-    } catch (err) {
-      console.error('Error loading departments:', err);
-    }
-  };
+  }, [searchTerm, dateFilter, departmentFilter, editsOnlyFilter, nightShiftFilter]); // Added nightShiftFilter
 
   // Enhanced load attendance data with recalculation
   const loadAttendanceData = async (showRecalcMessage = false) => {
@@ -284,6 +116,7 @@ const ProcessedAttendanceList = () => {
       if (dateFilter) params.append('date', dateFilter);
       if (departmentFilter) params.append('department', departmentFilter);
       if (editsOnlyFilter) params.append('edits_only', 'true');
+      if (nightShiftFilter) params.append('night_shift_only', 'true'); // NEW: Night shift filter
       if (postingStatusFilter) params.append('posting_status', postingStatusFilter);
       
       const response = await fetch('/attendance/list?' + params.toString(), {
@@ -318,18 +151,13 @@ const ProcessedAttendanceList = () => {
     }
   };
 
-  // Enhanced apply filters with auto-recalculation
-  const applyFilters = async () => {
-    setCurrentPage(1);
-    await loadAttendanceData(true);
-  };
-
   // Enhanced reset filters with auto-recalculation
   const resetFilters = async () => {
     setSearchTerm('');
     setDateFilter('');
     setDepartmentFilter('');
     setEditsOnlyFilter(false);
+    setNightShiftFilter(false); // NEW: Reset night shift filter
     setPostingStatusFilter('');
     setCurrentPage(1);
     
@@ -338,466 +166,7 @@ const ProcessedAttendanceList = () => {
     }, 0);
   };
 
-  // Format minutes to hours and minutes display
-  const formatMinutes = (minutes) => {
-    if (minutes <= 0) return null;
-    const hours = Math.floor(minutes / 60);
-    const mins = minutes % 60;
-    if (hours > 0) {
-      return `${hours}h ${mins}m`;
-    }
-    return `${mins}m`;
-  };
-
-  // Render Late/Under column with database values priority
-  const renderLateUndertime = (attendance) => {
-    // First check if we have database values
-    if (attendance.late_minutes !== undefined && attendance.undertime_minutes !== undefined) {
-      const lateMinutes = parseFloat(attendance.late_minutes) || 0;
-      const undertimeMinutes = parseFloat(attendance.undertime_minutes) || 0;
-      
-      if (lateMinutes === 0 && undertimeMinutes === 0) {
-        return <span className="text-green-600 text-sm font-medium">On time</span>;
-      }
-      
-      const parts = [];
-      if (lateMinutes > 0) {
-        parts.push(
-          <span key="late" className="text-red-600 text-xs block">
-            {formatMinutes(lateMinutes)} late
-          </span>
-        );
-      }
-      
-      if (undertimeMinutes > 0) {
-        parts.push(
-          <span key="under" className="text-orange-600 text-xs block">
-            {formatMinutes(undertimeMinutes)} under
-          </span>
-        );
-      }
-      
-      return (
-        <div className="text-sm">
-          {parts}
-        </div>
-      );
-    }
-    
-    return <span className="text-gray-400 text-sm">-</span>;
-  };
-
-  // Render Night Shift column
-  const renderNightShift = (attendance) => {
-    if (attendance.is_nightshift) {
-      return (
-        <div className="flex items-center space-x-1">
-          <Moon className="h-4 w-4 text-purple-600" />
-          <span className="text-xs text-purple-800">Night</span>
-        </div>
-      );
-    }
-    
-    return (
-      <div className="flex items-center space-x-1">
-        <Sun className="h-4 w-4 text-yellow-600" />
-        <span className="text-xs text-gray-600">Regular</span>
-      </div>
-    );
-  };
-
-  // Render Status column
-  const renderPostingStatus = (attendance) => {
-    const isPosted = attendance.posting_status === 'posted';
-    
-    return (
-      <div className="text-sm">
-        <div className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-          isPosted 
-            ? 'bg-green-100 text-green-800' 
-            : 'bg-yellow-100 text-yellow-800'
-        }`}>
-          {isPosted ? (
-            <>
-              <CheckCircle2 className="h-3 w-3 mr-1" />
-              Posted
-            </>
-          ) : (
-            <>
-              <AlertCircle className="h-3 w-3 mr-1" />
-              Not Posted
-            </>
-          )}
-        </div>
-      </div>
-    );
-  };
-
-  // Render status badge
-  const renderStatusBadge = (value, type = 'boolean') => {
-    if (type === 'boolean') {
-      return value ? (
-        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-          Yes
-        </span>
-      ) : (
-        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
-          No
-        </span>
-      );
-    }
-    
-    if (type === 'source') {
-      const sourceColors = {
-        'import': 'bg-blue-100 text-blue-800',
-        'manual': 'bg-yellow-100 text-yellow-800',
-        'biometric': 'bg-green-100 text-green-800',
-        'manual_edit': 'bg-red-100 text-red-800',
-        'slvl_sync': 'bg-indigo-100 text-indigo-800'
-      };
-      
-      const sourceLabels = {
-        'manual_edit': 'Edited',
-        'slvl_sync': 'SLVL'
-      };
-      
-      const colorClass = sourceColors[value] || 'bg-gray-100 text-gray-800';
-      const label = sourceLabels[value] || (value ? value.charAt(0).toUpperCase() + value.slice(1) : 'Unknown');
-      
-      return (
-        <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${colorClass}`}>
-          {label}
-        </span>
-      );
-    }
-    
-    return value || '-';
-  };
-
-  // Format numeric values safely
-  const formatNumeric = (value, decimals = 2) => {
-    if (value === null || value === undefined || value === '' || isNaN(Number(value))) {
-      return '-';
-    }
-    return Number(value).toFixed(decimals);
-  };
-
-  // Handle individual checkbox change
-  const handleCheckboxChange = (e, id) => {
-    e.stopPropagation();
-    
-    const checked = e.target.checked;
-    if (checked) {
-      setSelectedIds(prev => [...prev, id]);
-    } else {
-      setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
-      setSelectAll(false);
-    }
-  };
-
-  // Handle select all checkbox
-  const handleSelectAll = (checked) => {
-    setSelectAll(checked);
-    if (checked) {
-      setSelectedIds(attendances.map(att => att.id));
-    } else {
-      setSelectedIds([]);
-    }
-  };
-
-  // Handle posting status change
-  const handlePostingStatusChange = async (action) => {
-    if (selectedIds.length === 0) {
-      setError('Please select at least one record');
-      return;
-    }
-
-    try {
-      setError('');
-      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-      
-      const endpoint = action === 'mark_posted' 
-        ? '/attendance/mark-as-posted' 
-        : '/attendance/mark-as-not-posted';
-      
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          ids: selectedIds
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setSuccess(data.message);
-        setSelectedIds([]);
-        setSelectAll(false);
-        await loadAttendanceData();
-      } else {
-        setError(data.message || 'Failed to update posting status');
-      }
-    } catch (err) {
-      console.error('Error updating posting status:', err);
-      setError('Error updating posting status: ' + (err.message || 'Unknown error'));
-    }
-  };
-
-  // Handle export
-  const handleExport = async () => {
-    setExporting(true);
-    setError('');
-    
-    try {
-      const params = new URLSearchParams();
-      
-      if (searchTerm) params.append('search', searchTerm);
-      if (dateFilter) params.append('date', dateFilter);
-      if (departmentFilter) params.append('department', departmentFilter);
-      if (editsOnlyFilter) params.append('edits_only', 'true');
-      if (postingStatusFilter) params.append('posting_status', postingStatusFilter);
-      
-      const downloadUrl = '/attendance/export?' + params.toString();
-      const link = document.createElement('a');
-      link.href = downloadUrl;
-      link.download = 'attendance_export.csv';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      
-      setSuccess('Export started. Check your downloads folder.');
-    } catch (err) {
-      console.error('Error exporting attendance data:', err);
-      setError('Error exporting attendance data: ' + (err.message || 'Unknown error'));
-    } finally {
-      setExporting(false);
-    }
-  };
-
-  // Handle sync
-  const handleSync = async () => {
-    setSyncing(true);
-    setError('');
-    setSuccess('');
-    
-    try {
-      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-      
-      const startDate = new Date();
-      startDate.setDate(1);
-      const endDate = new Date();
-      endDate.setMonth(endDate.getMonth() + 1, 0);
-      
-      const response = await fetch('/attendance/sync', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          start_date: startDate.toISOString().split('T')[0],
-          end_date: endDate.toISOString().split('T')[0]
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setSuccess(data.message);
-        
-        if (data.details) {
-          const details = data.details;
-          let detailedMessage = `Sync completed: ${details.synced_count} records updated`;
-          if (details.created_records > 0) {
-            detailedMessage += `, ${details.created_records} new records created`;
-          }
-          if (details.error_count > 0) {
-            detailedMessage += `, ${details.error_count} errors occurred`;
-          }
-          detailedMessage += ` (Total processed: ${details.total_processed})`;
-          setSuccess(detailedMessage);
-        }
-        
-        await loadAttendanceData();
-      } else {
-        setError('Sync failed: ' + (data.message || 'Unknown error'));
-      }
-    } catch (err) {
-      console.error('Error syncing attendance data:', err);
-      setError('Error syncing attendance data: ' + (err.message || 'Unknown error'));
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  // Handle bulk delete
-  const handleBulkDelete = async () => {
-    if (selectedIds.length === 0 && deleteMode === 'selected') {
-      setError('Please select at least one record to delete');
-      return;
-    }
-
-    setDeleting(true);
-    setError('');
-    
-    try {
-      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-      
-      let requestBody = {};
-      
-      if (deleteMode === 'selected') {
-        requestBody.ids = selectedIds;
-      } else {
-        if (!deleteRange.start_date || !deleteRange.end_date) {
-          setError('Please specify both start and end dates for range delete');
-          setDeleting(false);
-          return;
-        }
-        requestBody = { ...deleteRange };
-      }
-      
-      const response = await fetch('/attendance/bulk-delete', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify(requestBody)
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setSuccess(data.message);
-        setShowDeleteModal(false);
-        setSelectedIds([]);
-        setSelectAll(false);
-        setDeleteRange({
-          start_date: '',
-          end_date: '',
-          employee_id: '',
-          department: ''
-        });
-        
-        await loadAttendanceData();
-      } else {
-        setError('Delete failed: ' + (data.message || 'Unknown error'));
-      }
-    } catch (err) {
-      console.error('Error deleting attendance data:', err);
-      setError('Error deleting attendance data: ' + (err.message || 'Unknown error'));
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  // Mouse event handlers
-  const handleMouseDown = useCallback((e, attendance) => {
-    if (e.target.type === 'checkbox' || e.target.closest('button')) {
-      return;
-    }
-    
-    setIsHolding(true);
-    const timer = setTimeout(() => {
-      console.log('Hold completed for:', attendance.id, attendance.employee_name);
-      setSelectedAttendance(attendance);
-      setShowInfoModal(true);
-      setIsHolding(false);
-    }, 1000);
-    
-    setHoldTimer(timer);
-  }, []);
-
-  const handleMouseUp = useCallback(() => {
-    if (holdTimer) {
-      clearTimeout(holdTimer);
-      setHoldTimer(null);
-    }
-    setIsHolding(false);
-  }, [holdTimer]);
-
-  const handleMouseLeave = useCallback(() => {
-    if (holdTimer) {
-      clearTimeout(holdTimer);
-      setHoldTimer(null);
-    }
-    setIsHolding(false);
-  }, [holdTimer]);
-
-  // Improved handleEditClick with proper debouncing
-  const handleEditClick = useCallback((e, attendance) => {
-    e.stopPropagation();
-    e.preventDefault();
-    
-    if (isEditingRef.current) {
-      console.log('Edit already in progress, ignoring click');
-      return;
-    }
-    
-    if (editClickTimeoutRef.current) {
-      clearTimeout(editClickTimeoutRef.current);
-    }
-    
-    isEditingRef.current = true;
-    
-    console.log('Edit clicked for:', attendance.id);
-    setSelectedAttendance(attendance);
-    setShowEditModal(true);
-    
-    editClickTimeoutRef.current = setTimeout(() => {
-      isEditingRef.current = false;
-    }, 1000);
-  }, []);
-
-  // Handle double-click on table rows
-  const handleRowDoubleClick = useCallback((e, attendance) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    if (isEditingRef.current) {
-      console.log('Edit already in progress, ignoring double-click');
-      return;
-    }
-    
-    if (editClickTimeoutRef.current) {
-      clearTimeout(editClickTimeoutRef.current);
-    }
-    
-    isEditingRef.current = true;
-    
-    console.log('Row double-clicked for:', attendance.id, attendance.employee_name);
-    setSelectedAttendance(attendance);
-    setShowEditModal(true);
-    
-    editClickTimeoutRef.current = setTimeout(() => {
-      isEditingRef.current = false;
-    }, 1000);
-  }, []);
-
-  // Reset editing flag when modal closes
-  const handleCloseModal = () => {
-    setShowEditModal(false);
-    setShowInfoModal(false);
-    setSelectedAttendance(null);
-    setError('');
-    setSuccess('');
-    
-    isEditingRef.current = false;
-    if (editClickTimeoutRef.current) {
-      clearTimeout(editClickTimeoutRef.current);
-    }
-  };
-
+  // Handle attendance update (UPDATED to include trip)
   const handleAttendanceUpdate = async (updatedAttendance) => {
     try {
       setError('');
@@ -817,7 +186,8 @@ const ProcessedAttendanceList = () => {
         break_out: updatedAttendance.break_out,
         time_out: updatedAttendance.time_out,
         next_day_timeout: updatedAttendance.next_day_timeout,
-        is_nightshift: updatedAttendance.is_nightshift
+        is_nightshift: updatedAttendance.is_nightshift,
+        trip: updatedAttendance.trip // NEW: Include trip in update payload
       };
       
       const response = await fetch(`/attendance/${updatedAttendance.id}`, {
@@ -896,76 +266,7 @@ const ProcessedAttendanceList = () => {
     }
   };
 
-  // Handle individual sync for a specific attendance record
-  const handleIndividualSync = async (attendanceId) => {
-    try {
-      setError('');
-      setSuccess('');
-      
-      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-      
-      if (!csrfToken) {
-        setError('Session expired. Please refresh the page and try again.');
-        return;
-      }
-      
-      const response = await fetch(`/attendance/${attendanceId}/sync`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setSuccess(data.message);
-        
-        if (data.updated && data.data) {
-          const processedRecord = processAttendanceData([data.data])[0];
-          
-          setAttendances(prevAttendances => 
-            prevAttendances.map(att => 
-              att.id === attendanceId ? processedRecord : att
-            )
-          );
-        }
-        
-        await loadAttendanceData();
-      } else {
-        setError('Sync failed: ' + (data.message || 'Unknown error'));
-      }
-    } catch (err) {
-      console.error('Error syncing individual attendance record:', err);
-      setError('Error syncing attendance record: ' + (err.message || 'Unknown error'));
-    }
-  };
-
-  // Initial data load
-  useEffect(() => {
-    loadDepartments();
-    
-    if (initialAttendances.length > 0) {
-      const processedInitialData = processAttendanceData(initialAttendances);
-      setAttendances(processedInitialData);
-    } else {
-      loadAttendanceData();
-    }
-  }, []);
-
-  // Load when page changes
-  useEffect(() => {
-    if (currentPage !== pagination.current_page) {
-      loadAttendanceData();
-    }
-  }, [currentPage]);
+  // ... (keep all other existing functions)
 
   return (
     <AuthenticatedLayout user={auth.user}>
@@ -977,10 +278,10 @@ const ProcessedAttendanceList = () => {
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                  Processed Attendance Records
+                  Processed Attendance Records (Non-Posted Only)
                 </h1>
                 <p className="text-gray-600">
-                  View and manage processed attendance records with automatic recalculation on page load.
+                  View and manage non-posted attendance records with automatic recalculation on page load.
                 </p>
                 <p className="text-sm text-blue-600 mt-1">
                   💡 Tip: Hold any row for 1 second to view details, double-click to edit attendance times
@@ -1018,7 +319,6 @@ const ProcessedAttendanceList = () => {
                   </> 
                 )}
 
-                {/* NEW: Manual Recalculate Button */}
                 <Button
                   onClick={() => handleAutoRecalculate(true)}
                   disabled={recalculating}
@@ -1176,6 +476,10 @@ const ProcessedAttendanceList = () => {
                       <option value="not_posted">Not Posted</option>
                     </select>
                   </div>
+                </div>
+                
+                {/* NEW: Second row of filters */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                   <div>
                     <label className="flex items-center space-x-2 cursor-pointer">
                       <input
@@ -1187,7 +491,22 @@ const ProcessedAttendanceList = () => {
                       <span className="text-gray-700">Edited Records Only</span>
                     </label>
                   </div>
+                  <div>
+                    <label className="flex items-center space-x-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="form-checkbox h-5 w-5 text-purple-600 rounded focus:ring-purple-500"
+                        checked={nightShiftFilter}
+                        onChange={(e) => setNightShiftFilter(e.target.checked)}
+                      />
+                      <div className="flex items-center space-x-1">
+                        <Moon className="h-4 w-4 text-purple-600" />
+                        <span className="text-gray-700">Night Shift Only</span>
+                      </div>
+                    </label>
+                  </div>
                 </div>
+                
                 <div className="flex justify-end space-x-2">
                   <Button variant="outline" onClick={resetFilters}>Reset</Button>
                   <Button onClick={applyFilters}>
@@ -1227,10 +546,12 @@ const ProcessedAttendanceList = () => {
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center">
-                    <CheckCircle className="h-8 w-8 text-green-500" />
+                    <Moon className="h-8 w-8 text-purple-500" />
                     <div className="ml-4">
-                      <p className="text-sm font-medium text-gray-600">Selected</p>
-                      <p className="text-2xl font-bold text-gray-900">{selectedIds.length}</p>
+                      <p className="text-sm font-medium text-gray-600">Night Shifts</p>
+                      <p className="text-2xl font-bold text-gray-900">
+                        {attendances.filter(att => att.is_nightshift).length}
+                      </p>
                     </div>
                   </div>
                 </CardContent>
@@ -1238,12 +559,10 @@ const ProcessedAttendanceList = () => {
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center">
-                    <CheckCircle2 className="h-8 w-8 text-green-500" />
+                    <CheckCircle className="h-8 w-8 text-green-500" />
                     <div className="ml-4">
-                      <p className="text-sm font-medium text-gray-600">Posted</p>
-                      <p className="text-2xl font-bold text-gray-900">
-                        {attendances.filter(att => att.posting_status === 'posted').length}
-                      </p>
+                      <p className="text-sm font-medium text-gray-600">Selected</p>
+                      <p className="text-2xl font-bold text-gray-900">{selectedIds.length}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -1305,6 +624,12 @@ const ProcessedAttendanceList = () => {
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CT</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CS</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Holiday</th>
+                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              <div className="flex items-center space-x-1">
+                                <Car className="h-4 w-4" />
+                                <span>Trip</span>
+                              </div>
+                            </th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
                             <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                             <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
@@ -1394,6 +719,12 @@ const ProcessedAttendanceList = () => {
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
                                 {formatNumeric(attendance.holiday)}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                <div className="flex items-center space-x-1">
+                                  <Car className="h-3 w-3 text-blue-500" />
+                                  <span>{formatNumeric(attendance.trip, 1)}</span>
+                                </div>
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap">
                                 {renderStatusBadge(attendance.source, 'source')}

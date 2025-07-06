@@ -39,6 +39,7 @@ class ProcessedAttendance extends Model
         'restday',
         'offset',
         'ob',
+        'trip', // Added trip field
         'status',
         'source',
         'remarks',
@@ -76,6 +77,7 @@ class ProcessedAttendance extends Model
         'restday' => 'boolean',
         'offset' => 'decimal:2',
         'ob' => 'boolean',
+        'trip' => 'decimal:2', // Added trip casting
         'is_nightshift' => 'boolean',
         'is_night_shift_display' => 'boolean',
         'posted_at' => 'datetime',
@@ -98,238 +100,19 @@ class ProcessedAttendance extends Model
     }
 
     /**
-     * Calculate late minutes based on expected time in (8:00 AM with 5-minute grace period)
-     */
-    public function calculateLateMinutes($expectedTimeIn = '08:00', $gracePeriodMinutes = 0)
-    {
-        if (!$this->time_in) {
-            return 0;
-        }
-
-        try {
-            // Parse expected time in (8:00 AM sharp)
-            $attendanceDate = Carbon::parse($this->attendance_date);
-            $expected = $attendanceDate->copy()->setTime(8, 0, 0); // 8:00 AM exactly
-            $actual = Carbon::parse($this->time_in);
-
-            // FIXED: If actual time is after expected time, calculate late minutes
-            if ($actual->gt($expected)) {
-                $lateMinutes = $actual->diffInMinutes($expected);
-                \Log::info("Late calculation", [
-                    'employee_id' => $this->employee_id,
-                    'expected' => $expected->format('H:i:s'),
-                    'actual' => $actual->format('H:i:s'),
-                    'late_minutes' => $lateMinutes
-                ]);
-                return $lateMinutes;
-            }
-
-            return 0;
-        } catch (\Exception $e) {
-            \Log::error('Error calculating late minutes: ' . $e->getMessage(), [
-                'attendance_id' => $this->id,
-                'time_in' => $this->time_in
-            ]);
-            return 0;
-        }
-    }
-
-    /**
-     * FIXED: Calculate undertime minutes based on standard 8-hour workday
-     */
-    public function calculateUndertimeMinutes($standardWorkingHours = 8)
-    {
-        // For night shifts, use next_day_timeout if available
-        $timeOut = $this->is_nightshift && $this->next_day_timeout 
-            ? $this->next_day_timeout 
-            : $this->time_out;
-
-        if (!$timeOut || !$this->time_in) {
-            return 0;
-        }
-
-        try {
-            $timeIn = Carbon::parse($this->time_in);
-            $timeOut = Carbon::parse($timeOut);
-            
-            // Handle next day scenarios for night shifts
-            if ($this->is_nightshift && $timeOut->lt($timeIn)) {
-                $timeOut->addDay();
-            }
-            
-            // Calculate total worked minutes
-            $totalWorkedMinutes = $timeOut->diffInMinutes($timeIn);
-            
-            // Subtract break time
-            $breakMinutes = 60; // Default 1-hour break
-            if ($this->break_out && $this->break_in) {
-                $breakOut = Carbon::parse($this->break_out);
-                $breakIn = Carbon::parse($this->break_in);
-                
-                // Handle same day break times
-                if ($breakIn->gt($breakOut)) {
-                    $breakMinutes = $breakIn->diffInMinutes($breakOut);
-                }
-            }
-            
-            $netWorkedMinutes = max(0, $totalWorkedMinutes - $breakMinutes);
-            $standardWorkMinutes = $standardWorkingHours * 60; // Convert hours to minutes
-            
-            // FIXED: Calculate undertime if worked less than standard
-            if ($netWorkedMinutes < $standardWorkMinutes) {
-                $undertimeMinutes = $standardWorkMinutes - $netWorkedMinutes;
-                \Log::info("Undertime calculation", [
-                    'employee_id' => $this->employee_id,
-                    'net_worked_minutes' => $netWorkedMinutes,
-                    'standard_work_minutes' => $standardWorkMinutes,
-                    'undertime_minutes' => $undertimeMinutes
-                ]);
-                return $undertimeMinutes;
-            }
-
-            return 0;
-        } catch (\Exception $e) {
-            \Log::error('Error calculating undertime minutes: ' . $e->getMessage(), [
-                'attendance_id' => $this->id,
-                'time_in' => $this->time_in,
-                'time_out' => $timeOut
-            ]);
-            return 0;
-        }
-    }
-
-    /**
-     * FIXED: Calculate hours worked correctly
-     */
-    public function calculateHoursWorked()
-    {
-        if (!$this->time_in) {
-            return 0;
-        }
-
-        // For night shifts, use next_day_timeout if available
-        $timeOut = $this->is_nightshift && $this->next_day_timeout 
-            ? $this->next_day_timeout 
-            : $this->time_out;
-
-        if (!$timeOut) {
-            return 0;
-        }
-
-        try {
-            $timeIn = Carbon::parse($this->time_in);
-            $timeOut = Carbon::parse($timeOut);
-            
-            // Handle next day scenarios for night shifts
-            if ($this->is_nightshift && $timeOut->lt($timeIn)) {
-                $timeOut->addDay();
-            }
-            
-            // Calculate total worked minutes
-            $totalWorkedMinutes = $timeOut->diffInMinutes($timeIn);
-            
-            // Subtract break time
-            $breakMinutes = 60; // Default 1-hour break
-            if ($this->break_out && $this->break_in) {
-                $breakOut = Carbon::parse($this->break_out);
-                $breakIn = Carbon::parse($this->break_in);
-                
-                if ($breakIn->gt($breakOut)) {
-                    $breakMinutes = $breakIn->diffInMinutes($breakOut);
-                }
-            }
-            
-            $netWorkedMinutes = max(0, $totalWorkedMinutes - $breakMinutes);
-            $hoursWorked = round($netWorkedMinutes / 60, 2);
-            
-            \Log::info("Hours worked calculation", [
-                'employee_id' => $this->employee_id,
-                'total_worked_minutes' => $totalWorkedMinutes,
-                'break_minutes' => $breakMinutes,
-                'net_worked_minutes' => $netWorkedMinutes,
-                'hours_worked' => $hoursWorked
-            ]);
-            
-            return $hoursWorked;
-        } catch (\Exception $e) {
-            \Log::error('Error calculating hours worked: ' . $e->getMessage(), [
-                'attendance_id' => $this->id,
-                'time_in' => $this->time_in,
-                'time_out' => $timeOut
-            ]);
-            return 0;
-        }
-    }
-
-    /**
-     * FIXED: Auto-calculate late, undertime, and hours when model is saved
-     */
-    protected static function boot()
-    {
-        parent::boot();
-
-        static::saving(function ($attendance) {
-            // Only auto-calculate if time_in exists
-            if ($attendance->time_in) {
-                // FIXED: Calculate late minutes (NO grace period)
-                $calculatedLateMinutes = $attendance->calculateLateMinutes();
-                
-                // FIXED: Calculate undertime minutes
-                $calculatedUndertimeMinutes = $attendance->calculateUndertimeMinutes();
-                
-                // FIXED: Calculate hours worked
-                $calculatedHoursWorked = $attendance->calculateHoursWorked();
-                
-                // Always update the values to ensure sync
-                $attendance->late_minutes = $calculatedLateMinutes;
-                $attendance->undertime_minutes = $calculatedUndertimeMinutes;
-                $attendance->hours_worked = $calculatedHoursWorked;
-                
-                \Log::info('Auto-calculated attendance metrics', [
-                    'id' => $attendance->id ?? 'new',
-                    'employee_id' => $attendance->employee_id,
-                    'time_in' => $attendance->time_in,
-                    'time_out' => $attendance->time_out,
-                    'late_minutes' => $attendance->late_minutes,
-                    'undertime_minutes' => $attendance->undertime_minutes,
-                    'hours_worked' => $attendance->hours_worked
-                ]);
-            }
-            
-            // Set night shift display flag
-            $attendance->is_night_shift_display = $attendance->is_nightshift;
-        });
-
-        static::updating(function ($attendance) {
-            // Force recalculation on update if times have changed
-            if ($attendance->isDirty(['time_in', 'time_out', 'break_in', 'break_out', 'next_day_timeout', 'is_nightshift'])) {
-                \Log::info('Time fields changed, forcing recalculation', [
-                    'id' => $attendance->id,
-                    'dirty_fields' => array_keys($attendance->getDirty())
-                ]);
-                
-                // Force recalculation
-                $attendance->late_minutes = $attendance->calculateLateMinutes();
-                $attendance->undertime_minutes = $attendance->calculateUndertimeMinutes();
-                $attendance->hours_worked = $attendance->calculateHoursWorked();
-            }
-        });
-    }
-
-    /**
-     * Scope for posted records
-     */
-    public function scopePosted($query)
-    {
-        return $query->where('posting_status', 'posted');
-    }
-
-    /**
      * Scope for not posted records
      */
     public function scopeNotPosted($query)
     {
-        return $query->where('posting_status', 'not_posted');
+        return $query->where('posting_status', '!=', 'posted');
+    }
+
+    /**
+     * Scope for night shift records
+     */
+    public function scopeNightShift($query)
+    {
+        return $query->where('is_nightshift', true);
     }
 
     /**

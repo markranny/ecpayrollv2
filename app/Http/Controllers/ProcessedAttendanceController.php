@@ -689,223 +689,189 @@ public function recalculateAll(Request $request)
         }
     }
 
-    /**
-     * Build attendance query with filters
-     */
+    
+    
     private function buildAttendanceQuery(Request $request)
-    {
+{
+    // Get query parameters for filtering
+    $searchTerm = $request->input('search');
+    $dateFilter = $request->input('date');
+    $departmentFilter = $request->input('department');
+    $editsOnlyFilter = $request->boolean('edits_only');
+    $nightShiftFilter = $request->boolean('night_shift_only'); // NEW: Night shift filter
+    
+    // Start building the query - UPDATED to show only non-posted records by default
+    $query = ProcessedAttendance::with('employee')
+        ->where('posting_status', '!=', 'posted'); // Only show non-posted records
+    
+    // Apply filters if present
+    if ($searchTerm) {
+        $query->whereHas('employee', function ($q) use ($searchTerm) {
+            $q->where('idno', 'LIKE', "%{$searchTerm}%")
+              ->orWhere('Fname', 'LIKE', "%{$searchTerm}%")
+              ->orWhere('Lname', 'LIKE', "%{$searchTerm}%");
+        });
+    }
+    
+    if ($dateFilter) {
+        $query->whereDate('attendance_date', $dateFilter);
+    }
+    
+    if ($departmentFilter) {
+        $query->whereHas('employee', function ($q) use ($departmentFilter) {
+            $q->where('Department', $departmentFilter);
+        });
+    }
+    
+    if ($editsOnlyFilter) {
+        $query->where('source', 'manual_edit');
+    }
+    
+    // NEW: Night shift filter
+    if ($nightShiftFilter) {
+        $query->where('is_nightshift', true);
+    }
+    
+    return $query;
+}
+
+/**
+ * Update processed attendance record (UPDATED to include trip)
+ */
+public function update(Request $request, $id)
+{
+    try {
+        // Log incoming request data
+        Log::info('Attendance update request for ID: ' . $id, [
+            'request_data' => $request->all()
+        ]);
+
+        $validator = Validator::make($request->all(), [
+            'time_in' => 'nullable|date',
+            'time_out' => 'nullable|date',
+            'break_in' => 'nullable|date',
+            'break_out' => 'nullable|date',
+            'next_day_timeout' => 'nullable|date',
+            'is_nightshift' => 'boolean',
+            'trip' => 'nullable|numeric|min:0|max:999.99', // NEW: Trip validation
+        ]);
+
+        if ($validator->fails()) {
+            Log::warning('Validation failed for attendance update ID: ' . $id, [
+                'errors' => $validator->errors()->toArray()
+            ]);
+            
+            return back()->withErrors($validator)->withInput();
+        }
+
+        // Find the attendance record
+        $attendance = ProcessedAttendance::findOrFail($id);
+        
+        // Log the existing record before update
+        Log::info('Existing attendance record before update', [
+            'id' => $attendance->id,
+            'employee_id' => $attendance->employee_id,
+            'current_is_nightshift' => $attendance->is_nightshift,
+            'current_trip' => $attendance->trip
+        ]);
+        
+        // Parse booleans correctly - cast explicitly to boolean
+        $isNightshift = (bool)$request->is_nightshift;
+        
+        // Log the sanitized value
+        Log::info('Sanitized values', [
+            'is_nightshift_original' => $request->is_nightshift,
+            'is_nightshift_sanitized' => $isNightshift,
+            'trip' => $request->trip
+        ]);
+        
+        // Prepare update data
+        $updateData = [
+            'time_in' => $request->time_in ?: null,
+            'time_out' => $request->time_out ?: null,
+            'break_in' => $request->break_in ?: null,
+            'break_out' => $request->break_out ?: null,
+            'next_day_timeout' => $isNightshift ? ($request->next_day_timeout ?: null) : null,
+            'is_nightshift' => $isNightshift,
+            'trip' => $request->trip ? (float)$request->trip : 0, // NEW: Trip field
+            'source' => 'manual_edit', // Mark as manually edited
+        ];
+        
+        // Log the update data
+        Log::info('Updating attendance record with data', [
+            'id' => $id,
+            'update_data' => $updateData
+        ]);
+        
+        // Update the record
+        $attendance->update($updateData);
+        
+        // Log after successful update
+        Log::info('Attendance record updated successfully', [
+            'id' => $attendance->id,
+            'new_is_nightshift' => $attendance->is_nightshift,
+            'new_trip' => $attendance->trip
+        ]);
+        
+        // Calculate hours worked
+        Log::info('Calculating hours worked for attendance record', ['id' => $attendance->id]);
+        $this->calculateHoursWorked($attendance);
+        Log::info('Hours calculation complete', [
+            'id' => $attendance->id, 
+            'hours_worked' => $attendance->hours_worked
+        ]);
+        
+        // Build query for the list page
+        $query = $this->buildAttendanceQuery($request);
+        $perPage = $request->input('per_page', 25);
+        
+        // Order by date descending and paginate
+        $attendances = $query->orderBy('processed_attendances.attendance_date', 'asc')
+                             ->paginate($perPage);
+
         // Get query parameters for filtering
         $searchTerm = $request->input('search');
         $dateFilter = $request->input('date');
         $departmentFilter = $request->input('department');
         $editsOnlyFilter = $request->boolean('edits_only');
+        $nightShiftFilter = $request->boolean('night_shift_only'); // NEW
         
-        // Start building the query
-        $query = ProcessedAttendance::with('employee');
+        // Return Inertia view with data and success message
+        return Inertia::render('Timesheet/ProcessedAttendanceList', [
+            'attendances' => $attendances->items(),
+            'pagination' => [
+                'total' => $attendances->total(),
+                'per_page' => $attendances->perPage(),
+                'current_page' => $attendances->currentPage(),
+                'last_page' => $attendances->lastPage()
+            ],
+            'filters' => [
+                'search' => $searchTerm,
+                'date' => $dateFilter,
+                'department' => $departmentFilter,
+                'edits_only' => $editsOnlyFilter,
+                'night_shift_only' => $nightShiftFilter, // NEW
+            ],
+            'auth' => [
+                'user' => auth()->user()
+            ],
+            'flash' => [
+                'success' => 'Attendance record updated successfully'
+            ]
+        ]);
         
-        // Apply filters if present
-        if ($searchTerm) {
-            $query->whereHas('employee', function ($q) use ($searchTerm) {
-                $q->where('idno', 'LIKE', "%{$searchTerm}%")
-                  ->orWhere('Fname', 'LIKE', "%{$searchTerm}%")
-                  ->orWhere('Lname', 'LIKE', "%{$searchTerm}%");
-            });
-        }
+    } catch (\Exception $e) {
+        Log::error('Error updating attendance: ' . $e->getMessage(), [
+            'id' => $id,
+            'exception' => get_class($e),
+            'file' => $e->getFile(),
+            'line' => $e->getLine(),
+            'trace' => $e->getTraceAsString()
+        ]);
         
-        if ($dateFilter) {
-            $query->whereDate('attendance_date', $dateFilter);
-        }
-        
-        if ($departmentFilter) {
-            $query->whereHas('employee', function ($q) use ($departmentFilter) {
-                $q->where('Department', $departmentFilter);
-            });
-        }
-        
-        if ($editsOnlyFilter) {
-            $query->where('source', 'manual_edit');
-        }
-        
-        return $query;
+        return back()->withErrors(['error' => 'Failed to update attendance: ' . $e->getMessage()]);
     }
-    
-    /**
-     * Update processed attendance record
-     */
-    public function update(Request $request, $id)
-    {
-        try {
-            // Log incoming request data
-            Log::info('Attendance update request for ID: ' . $id, [
-                'request_data' => $request->all()
-            ]);
-
-            $validator = Validator::make($request->all(), [
-                'time_in' => 'nullable|date',
-                'time_out' => 'nullable|date',
-                'break_in' => 'nullable|date',
-                'break_out' => 'nullable|date',
-                'next_day_timeout' => 'nullable|date',
-                'is_nightshift' => 'boolean', 
-            ]);
-
-            if ($validator->fails()) {
-                Log::warning('Validation failed for attendance update ID: ' . $id, [
-                    'errors' => $validator->errors()->toArray()
-                ]);
-                
-                return back()->withErrors($validator)->withInput();
-            }
-
-            // Find the attendance record
-            $attendance = ProcessedAttendance::findOrFail($id);
-            
-            // Log the existing record before update
-            Log::info('Existing attendance record before update', [
-                'id' => $attendance->id,
-                'employee_id' => $attendance->employee_id,
-                'current_is_nightshift' => $attendance->is_nightshift
-            ]);
-            
-            // Parse booleans correctly - cast explicitly to boolean
-            $isNightshift = (bool)$request->is_nightshift;
-            
-            // Log the sanitized value
-            Log::info('Sanitized is_nightshift value', [
-                'original' => $request->is_nightshift,
-                'sanitized' => $isNightshift
-            ]);
-            
-            // Prepare update data
-            $updateData = [
-                'time_in' => $request->time_in ?: null,
-                'time_out' => $request->time_out ?: null,
-                'break_in' => $request->break_in ?: null,
-                'break_out' => $request->break_out ?: null,
-                'next_day_timeout' => $isNightshift ? ($request->next_day_timeout ?: null) : null,
-                'is_nightshift' => $isNightshift,
-                'source' => 'manual_edit', // Mark as manually edited
-            ];
-            
-            // Log the update data
-            Log::info('Updating attendance record with data', [
-                'id' => $id,
-                'update_data' => $updateData
-            ]);
-            
-            // Update the record
-            $attendance->update($updateData);
-            
-            // Log after successful update
-            Log::info('Attendance record updated successfully', [
-                'id' => $attendance->id,
-                'new_is_nightshift' => $attendance->is_nightshift
-            ]);
-            
-            // Calculate hours worked
-            Log::info('Calculating hours worked for attendance record', ['id' => $attendance->id]);
-            $this->calculateHoursWorked($attendance);
-            Log::info('Hours calculation complete', [
-                'id' => $attendance->id, 
-                'hours_worked' => $attendance->hours_worked
-            ]);
-            
-            // Build query for the list page
-            $query = $this->buildAttendanceQuery($request);
-            $perPage = $request->input('per_page', 25);
-            
-            // Order by date descending and paginate
-            $attendances = $query->orderBy('processed_attendances.attendance_date', 'asc')
-                                 ->paginate($perPage);
-
-            // Get query parameters for filtering
-            $searchTerm = $request->input('search');
-            $dateFilter = $request->input('date');
-            $departmentFilter = $request->input('department');
-            $editsOnlyFilter = $request->boolean('edits_only');
-            
-            // Return Inertia view with data and success message
-            return Inertia::render('Timesheet/ProcessedAttendanceList', [
-                'attendances' => $attendances->items(),
-                'pagination' => [
-                    'total' => $attendances->total(),
-                    'per_page' => $attendances->perPage(),
-                    'current_page' => $attendances->currentPage(),
-                    'last_page' => $attendances->lastPage()
-                ],
-                'filters' => [
-                    'search' => $searchTerm,
-                    'date' => $dateFilter,
-                    'department' => $departmentFilter,
-                    'edits_only' => $editsOnlyFilter
-                ],
-                'auth' => [
-                    'user' => auth()->user()
-                ],
-                'flash' => [
-                    'success' => 'Attendance record updated successfully'
-                ]
-            ]);
-            
-        } catch (\Exception $e) {
-            Log::error('Error updating attendance: ' . $e->getMessage(), [
-                'id' => $id,
-                'exception' => get_class($e),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
-                'trace' => $e->getTraceAsString()
-            ]);
-            
-            return back()->withErrors(['error' => 'Failed to update attendance: ' . $e->getMessage()]);
-        }
-    }
-
-    /**
-     * Delete processed attendance record
-     */
-    public function destroy($id)
-    {
-        try {
-            Log::info('Attendance delete request for ID: ' . $id);
-
-            // Find the attendance record
-            $attendance = ProcessedAttendance::findOrFail($id);
-            
-            // Log the record being deleted
-            Log::info('Deleting attendance record', [
-                'id' => $attendance->id,
-                'employee_id' => $attendance->employee_id,
-                'attendance_date' => $attendance->attendance_date
-            ]);
-            
-            // Store employee info for response
-            $employee = $attendance->employee;
-            $employeeName = $employee ? trim($employee->Fname . ' ' . $employee->Lname) : 'Unknown Employee';
-            $attendanceDate = $attendance->attendance_date->format('Y-m-d');
-            
-            // Delete the record
-            $attendance->delete();
-            
-            Log::info('Attendance record deleted successfully', ['id' => $id]);
-            
-            return response()->json([
-                'success' => true,
-                'message' => "Attendance record for {$employeeName} on {$attendanceDate} has been deleted successfully."
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Error deleting attendance: ' . $e->getMessage(), [
-                'id' => $id,
-                'exception' => get_class($e),
-                'file' => $e->getFile(),
-                'line' => $e->getLine()
-            ]);
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to delete attendance record: ' . $e->getMessage()
-            ], 500);
-        }
-    }
+}
 
     /**
      * Bulk delete attendance records

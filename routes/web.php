@@ -266,6 +266,18 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
         ->name('attendance.recalculate-all');
     
     // Sync and Delete functionality
+    Route::get('/attendance', [ProcessedAttendanceController::class, 'index'])
+        ->name('attendance.index');
+    Route::get('/attendance/list', [ProcessedAttendanceController::class, 'list'])
+        ->name('attendance.list');
+    Route::put('/attendance/{id}', [ProcessedAttendanceController::class, 'update'])
+        ->name('attendance.update');
+    
+    // Auto-recalculation route
+    Route::post('/attendance/recalculate-all', [ProcessedAttendanceController::class, 'recalculateAll'])
+        ->name('attendance.recalculate-all');
+    
+    // Sync and Delete functionality
     Route::post('/attendance/sync', [ProcessedAttendanceController::class, 'sync'])
         ->name('attendance.sync');
     Route::post('/attendance/{id}/sync', [ProcessedAttendanceController::class, 'syncIndividual'])
