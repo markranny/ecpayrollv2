@@ -261,6 +261,10 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
     Route::put('/attendance/{id}', [ProcessedAttendanceController::class, 'update'])
         ->name('attendance.update');
     
+    // NEW: Auto-recalculation route
+    Route::post('/attendance/recalculate-all', [ProcessedAttendanceController::class, 'recalculateAll'])
+        ->name('attendance.recalculate-all');
+    
     // Sync and Delete functionality
     Route::post('/attendance/sync', [ProcessedAttendanceController::class, 'sync'])
         ->name('attendance.sync');
@@ -271,7 +275,7 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
     Route::post('/attendance/bulk-delete', [ProcessedAttendanceController::class, 'bulkDestroy'])
         ->name('attendance.bulk-delete');
     
-    // ⭐ NEW: Posting Status Routes ⭐
+    // Posting Status Routes
     Route::post('/attendance/mark-as-posted', [ProcessedAttendanceController::class, 'markAsPosted'])
         ->name('attendance.mark-as-posted');
     Route::post('/attendance/mark-as-not-posted', [ProcessedAttendanceController::class, 'markAsNotPosted'])

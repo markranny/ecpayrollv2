@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Head, usePage } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
-import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X, Users, FileText, Eye, Moon, Sun, AlertCircle, CheckCircle2, Info } from 'lucide-react';
+import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X, Users, FileText, Eye, Moon, Sun, AlertCircle, CheckCircle2, Info, Calculator } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,10 +10,11 @@ import AttendanceEditModal from './AttendanceEditModal';
 import AttendanceInfoModal from './AttendanceInfoModal';
 
 const ProcessedAttendanceList = () => {
-  const { auth, attendances: initialAttendances = [], pagination = {} } = usePage().props;
+  const { auth, attendances: initialAttendances = [], pagination = {}, recalculated_count = 0 } = usePage().props;
   const [attendances, setAttendances] = useState(initialAttendances);
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [recalculating, setRecalculating] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -36,7 +37,7 @@ const ProcessedAttendanceList = () => {
   // Modal state
   const [selectedAttendance, setSelectedAttendance] = useState(null);
   const [showEditModal, setShowEditModal] = useState(false);
-  const [showInfoModal, setShowInfoModal] = useState(false); // NEW: Info modal state
+  const [showInfoModal, setShowInfoModal] = useState(false);
   
   // Multi-select state
   const [selectedIds, setSelectedIds] = useState([]);
@@ -57,6 +58,13 @@ const ProcessedAttendanceList = () => {
   const editClickTimeoutRef = useRef(null);
   const isEditingRef = useRef(false);
 
+  // Show recalculation message if records were auto-recalculated
+  useEffect(() => {
+    if (recalculated_count > 0) {
+      setSuccess(`Auto-recalculated ${recalculated_count} attendance records for accurate display`);
+    }
+  }, [recalculated_count]);
+
   // Auto-clear success/error messages
   useEffect(() => {
     if (success) {
@@ -74,83 +82,74 @@ const ProcessedAttendanceList = () => {
 
   // Clean up timeouts on unmount
   useEffect(() => {
-  return () => {
-    if (editClickTimeoutRef.current) {
-      clearTimeout(editClickTimeoutRef.current);
-    }
-    if (holdTimer) {
-      clearTimeout(holdTimer);
-    }
-  };
-}, [holdTimer]);
+    return () => {
+      if (editClickTimeoutRef.current) {
+        clearTimeout(editClickTimeoutRef.current);
+      }
+      if (holdTimer) {
+        clearTimeout(holdTimer);
+      }
+    };
+  }, [holdTimer]);
 
-  // Calculate late/undertime with improved logic
-  const calculateLateUndertime = (attendance) => {
-    const timeIn = attendance.time_in;
-    const timeOut = attendance.is_nightshift && attendance.next_day_timeout 
-      ? attendance.next_day_timeout 
-      : attendance.time_out;
+  // Auto-recalculate on component mount and when filters change
+  useEffect(() => {
+    const shouldAutoRecalculate = true;
     
-    if (!timeIn) return { late: 0, undertime: 0, isComplete: false, totalHours: 0 };
+    if (shouldAutoRecalculate && attendances.length > 0) {
+      handleAutoRecalculate();
+    }
+  }, [searchTerm, dateFilter, departmentFilter, editsOnlyFilter]);
+
+  // NEW: Auto-recalculation function
+  const handleAutoRecalculate = async (showMessage = false) => {
+    if (recalculating) return;
+    
+    setRecalculating(true);
+    if (showMessage) setError('');
     
     try {
-      // Standard work schedule: 8:00 AM - 5:00 PM (9 hours with 1 hour break = 8 working hours)
-      const attendanceDate = new Date(attendance.attendance_date);
-      const standardStart = new Date(attendanceDate);
-      standardStart.setHours(8, 0, 0, 0); // 8:00 AM
+      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
       
-      const standardEnd = new Date(attendanceDate);
-      standardEnd.setHours(17, 0, 0, 0); // 5:00 PM
-      
-      const actualStart = new Date(timeIn);
-      const actualEnd = timeOut ? new Date(timeOut) : null;
-      
-      // Calculate late minutes (grace period of 5 minutes)
-      let lateMinutes = 0;
-      const gracePeriod = 5 * 60 * 1000; // 5 minutes in milliseconds
-      if (actualStart > new Date(standardStart.getTime() + gracePeriod)) {
-        lateMinutes = Math.floor((actualStart - standardStart) / (1000 * 60));
+      if (!csrfToken) {
+        if (showMessage) setError('Session expired. Please refresh the page and try again.');
+        return;
       }
       
-      // Calculate total worked hours
-      let totalWorkedHours = 0;
-      if (actualEnd) {
-        const workDuration = actualEnd - actualStart;
-        
-        // Subtract break time if both break times are recorded
-        let breakDuration = 0;
-        if (attendance.break_out && attendance.break_in) {
-          const breakOut = new Date(attendance.break_out);
-          const breakIn = new Date(attendance.break_in);
-          if (breakIn > breakOut) {
-            breakDuration = breakIn - breakOut;
-          }
-        } else {
-          // Default 1-hour break
-          breakDuration = 60 * 60 * 1000; // 1 hour
+      const params = new URLSearchParams();
+      if (dateFilter) params.append('date', dateFilter);
+      if (departmentFilter) params.append('department', departmentFilter);
+      
+      const response = await fetch('/attendance/recalculate-all?' + params.toString(), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        if (showMessage && data.recalculated_count > 0) {
+          setSuccess(`Recalculated ${data.recalculated_count} attendance records`);
         }
         
-        totalWorkedHours = Math.max(0, (workDuration - breakDuration) / (1000 * 60 * 60));
+        await loadAttendanceData();
+      } else {
+        if (showMessage) setError('Recalculation failed: ' + (data.message || 'Unknown error'));
       }
-      
-      // Calculate undertime based on 8-hour standard working day
-      let undertimeMinutes = 0;
-      const standardWorkingHours = 8;
-      
-      if (actualEnd && totalWorkedHours < standardWorkingHours) {
-        const shortfallHours = standardWorkingHours - totalWorkedHours;
-        undertimeMinutes = Math.floor(shortfallHours * 60);
-      }
-      
-      return {
-        late: lateMinutes,
-        undertime: undertimeMinutes,
-        isComplete: !!actualEnd,
-        totalHours: totalWorkedHours
-      };
-    } catch (error) {
-      console.error('Error calculating late/undertime:', error);
-      return { late: 0, undertime: 0, isComplete: false, totalHours: 0 };
+    } catch (err) {
+      console.error('Error in auto-recalculation:', err);
+      if (showMessage) setError('Error recalculating attendance records: ' + (err.message || 'Unknown error'));
+    } finally {
+      setRecalculating(false);
     }
   };
 
@@ -161,10 +160,8 @@ const ProcessedAttendanceList = () => {
     try {
       const date = new Date(dateString);
       
-      // Validate date
       if (isNaN(date.getTime())) return '-';
       
-      // Consistent date formatting
       return date.toLocaleDateString('en-US', {
         month: '2-digit',
         day: '2-digit',
@@ -181,23 +178,19 @@ const ProcessedAttendanceList = () => {
     
     try {
       let timeOnly;
-      // Handle ISO 8601 format
       if (timeString.includes('T')) {
         const [, time] = timeString.split('T');
-        timeOnly = time.slice(0, 5); // Extract HH:MM
+        timeOnly = time.slice(0, 5);
       } else if (timeString.includes(' ') && timeString.includes(':')) {
-        // If the time includes a date (like "2024-04-10 14:30:00"), split and take the time part
         const timeParts = timeString.split(' ');
         timeOnly = timeParts[timeParts.length - 1].slice(0, 5);
       } else if (timeString.includes(':')) {
-        // Handle just time format "14:30:00" or "14:30"
         timeOnly = timeString.slice(0, 5);
       } else {
         console.log('Unrecognized time format:', timeString);
         return '-';
       }
       
-      // Parse hours and minutes
       const parts = timeOnly.split(':');
       if (parts.length < 2) {
         console.log('Invalid time format, missing colon:', timeString);
@@ -207,7 +200,6 @@ const ProcessedAttendanceList = () => {
       const hours = parts[0];
       const minutes = parts[1];
       
-      // Make sure hours and minutes are valid numbers
       const hourNum = parseInt(hours, 10);
       const minNum = parseInt(minutes, 10);
       
@@ -216,9 +208,8 @@ const ProcessedAttendanceList = () => {
         return '-';
       }
       
-      // Convert to 12-hour format with AM/PM
       const ampm = hourNum >= 12 ? 'PM' : 'AM';
-      const formattedHours = hourNum % 12 || 12; // handle midnight and noon
+      const formattedHours = hourNum % 12 || 12;
       
       return `${formattedHours}:${minutes.padStart(2, '0')} ${ampm}`;
     } catch (error) {
@@ -230,28 +221,24 @@ const ProcessedAttendanceList = () => {
   // Process attendance data to ensure employee, dept, and day are always present
   const processAttendanceData = useCallback((data) => {
     return data.map(attendance => {
-      // Ensure employee name is always available
       if (!attendance.employee_name && attendance.employee) {
         attendance.employee_name = `${attendance.employee.Fname || ''} ${attendance.employee.Lname || ''}`.trim();
       } else if (!attendance.employee_name) {
         attendance.employee_name = 'Unknown Employee';
       }
       
-      // Ensure department is always available
       if (!attendance.department && attendance.employee) {
         attendance.department = attendance.employee.Department || 'N/A';
       } else if (!attendance.department) {
         attendance.department = 'N/A';
       }
       
-      // Ensure ID number is always available
       if (!attendance.idno && attendance.employee) {
         attendance.idno = attendance.employee.idno || 'N/A';
       } else if (!attendance.idno) {
         attendance.idno = 'N/A';
       }
       
-      // Ensure day of week is always available
       if (!attendance.day && attendance.attendance_date) {
         const date = new Date(attendance.attendance_date);
         if (!isNaN(date.getTime())) {
@@ -283,13 +270,12 @@ const ProcessedAttendanceList = () => {
     }
   };
 
-  // Load attendance data
-  const loadAttendanceData = async () => {
+  // Enhanced load attendance data with recalculation
+  const loadAttendanceData = async (showRecalcMessage = false) => {
     setLoading(true);
     setError('');
     
     try {
-      // Build query parameters
       const params = new URLSearchParams();
       params.append('page', currentPage);
       params.append('per_page', perPage);
@@ -310,12 +296,15 @@ const ProcessedAttendanceList = () => {
       const data = await response.json();
       
       if (data.success) {
-        // Process data to ensure employee, dept and day are always available
         const processedData = processAttendanceData(data.data);
         setAttendances(processedData);
         setTotalPages(data.pagination.last_page);
         setCurrentPage(data.pagination.current_page);
-        // Clear selections when data changes
+        
+        if (showRecalcMessage && data.recalculated_count > 0) {
+          setSuccess(`Loaded data and recalculated ${data.recalculated_count} attendance records`);
+        }
+        
         setSelectedIds([]);
         setSelectAll(false);
       } else {
@@ -329,262 +318,14 @@ const ProcessedAttendanceList = () => {
     }
   };
 
-  // Handle posting status change
-  const handlePostingStatusChange = async (action) => {
-    if (selectedIds.length === 0) {
-      setError('Please select at least one record');
-      return;
-    }
-
-    try {
-      setError('');
-      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-      
-      const endpoint = action === 'mark_posted' 
-        ? '/attendance/mark-as-posted' 
-        : '/attendance/mark-as-not-posted';
-      
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          ids: selectedIds
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setSuccess(data.message);
-        setSelectedIds([]);
-        setSelectAll(false);
-        await loadAttendanceData();
-      } else {
-        setError(data.message || 'Failed to update posting status');
-      }
-    } catch (err) {
-      console.error('Error updating posting status:', err);
-      setError('Error updating posting status: ' + (err.message || 'Unknown error'));
-    }
+  // Enhanced apply filters with auto-recalculation
+  const applyFilters = async () => {
+    setCurrentPage(1);
+    await loadAttendanceData(true);
   };
 
-  // Export attendance data
-  const handleExport = async () => {
-    setExporting(true);
-    setError('');
-    
-    try {
-      // Build query parameters for export (same as current filters)
-      const params = new URLSearchParams();
-      
-      if (searchTerm) params.append('search', searchTerm);
-      if (dateFilter) params.append('date', dateFilter);
-      if (departmentFilter) params.append('department', departmentFilter);
-      if (editsOnlyFilter) params.append('edits_only', 'true');
-      if (postingStatusFilter) params.append('posting_status', postingStatusFilter);
-      
-      // Create a link and trigger download
-      const downloadUrl = '/attendance/export?' + params.toString();
-      const link = document.createElement('a');
-      link.href = downloadUrl;
-      link.download = 'attendance_export.csv';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      
-      setSuccess('Export started. Check your downloads folder.');
-    } catch (err) {
-      console.error('Error exporting attendance data:', err);
-      setError('Error exporting attendance data: ' + (err.message || 'Unknown error'));
-    } finally {
-      setExporting(false);
-    }
-  };
-
-  // Sync attendance data
-  const handleSync = async () => {
-    setSyncing(true);
-    setError('');
-    setSuccess('');
-    
-    try {
-      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-      
-      // Get date range for sync (current month by default)
-      const startDate = new Date();
-      startDate.setDate(1); // First day of current month
-      const endDate = new Date();
-      endDate.setMonth(endDate.getMonth() + 1, 0); // Last day of current month
-      
-      const response = await fetch('/attendance/sync', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          start_date: startDate.toISOString().split('T')[0],
-          end_date: endDate.toISOString().split('T')[0]
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setSuccess(data.message);
-        
-        // Show detailed information if available
-        if (data.details) {
-          const details = data.details;
-          let detailedMessage = `Sync completed: ${details.synced_count} records updated`;
-          if (details.created_records > 0) {
-            detailedMessage += `, ${details.created_records} new records created`;
-          }
-          if (details.error_count > 0) {
-            detailedMessage += `, ${details.error_count} errors occurred`;
-          }
-          detailedMessage += ` (Total processed: ${details.total_processed})`;
-          setSuccess(detailedMessage);
-        }
-        
-        // Reload the current page to show updated data
-        await loadAttendanceData();
-      } else {
-        setError('Sync failed: ' + (data.message || 'Unknown error'));
-      }
-    } catch (err) {
-      console.error('Error syncing attendance data:', err);
-      setError('Error syncing attendance data: ' + (err.message || 'Unknown error'));
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  // Handle individual checkbox change
-  const handleCheckboxChange = (e, id) => {
-    // Stop event propagation to prevent conflicts
-    e.stopPropagation();
-    
-    const checked = e.target.checked;
-    if (checked) {
-      setSelectedIds(prev => [...prev, id]);
-    } else {
-      setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
-      setSelectAll(false);
-    }
-  };
-
-  // Handle select all checkbox
-  const handleSelectAll = (checked) => {
-    setSelectAll(checked);
-    if (checked) {
-      setSelectedIds(attendances.map(att => att.id));
-    } else {
-      setSelectedIds([]);
-    }
-  };
-
-  // Handle bulk delete
-  const handleBulkDelete = async () => {
-    if (selectedIds.length === 0 && deleteMode === 'selected') {
-      setError('Please select at least one record to delete');
-      return;
-    }
-
-    setDeleting(true);
-    setError('');
-    
-    try {
-      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
-      
-      let requestBody = {};
-      
-      if (deleteMode === 'selected') {
-        requestBody.ids = selectedIds;
-      } else {
-        // Range delete
-        if (!deleteRange.start_date || !deleteRange.end_date) {
-          setError('Please specify both start and end dates for range delete');
-          setDeleting(false);
-          return;
-        }
-        requestBody = { ...deleteRange };
-      }
-      
-      const response = await fetch('/attendance/bulk-delete', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify(requestBody)
-      });
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setSuccess(data.message);
-        setShowDeleteModal(false);
-        setSelectedIds([]);
-        setSelectAll(false);
-        setDeleteRange({
-          start_date: '',
-          end_date: '',
-          employee_id: '',
-          department: ''
-        });
-        
-        // Reload data
-        await loadAttendanceData();
-      } else {
-        setError('Delete failed: ' + (data.message || 'Unknown error'));
-      }
-    } catch (err) {
-      console.error('Error deleting attendance data:', err);
-      setError('Error deleting attendance data: ' + (err.message || 'Unknown error'));
-    } finally {
-      setDeleting(false);
-    }
-  };
-
-  // Initial data load
-  useEffect(() => {
-    // Load departments
-    loadDepartments();
-    
-    // Process initial data to ensure employee, dept and day fields
-    if (initialAttendances.length > 0) {
-      const processedInitialData = processAttendanceData(initialAttendances);
-      setAttendances(processedInitialData);
-    } else {
-      loadAttendanceData();
-    }
-  }, []);
-
-  // Load when page changes
-  useEffect(() => {
-    if (currentPage !== pagination.current_page) {
-      loadAttendanceData();
-    }
-  }, [currentPage]);
-
-  // Handle filter application
-  const applyFilters = () => {
-    setCurrentPage(1); // Reset to first page when applying filters
-    loadAttendanceData();
-  };
-
-  // Reset filters
-  const resetFilters = () => {
+  // Enhanced reset filters with auto-recalculation
+  const resetFilters = async () => {
     setSearchTerm('');
     setDateFilter('');
     setDepartmentFilter('');
@@ -592,298 +333,9 @@ const ProcessedAttendanceList = () => {
     setPostingStatusFilter('');
     setCurrentPage(1);
     
-    // Need to wait for state update
-    setTimeout(() => {
-      loadAttendanceData();
+    setTimeout(async () => {
+      await loadAttendanceData(true);
     }, 0);
-  };
-
-  
-
-  // NEW: Handle row click to show info modal
-  const handleMouseDown = useCallback((e, attendance) => {
-  // Prevent opening modal if clicking on checkbox or action buttons
-  if (e.target.type === 'checkbox' || e.target.closest('button')) {
-    return;
-  }
-  
-  setIsHolding(true);
-  const timer = setTimeout(() => {
-    console.log('Hold completed for:', attendance.id, attendance.employee_name);
-    setSelectedAttendance(attendance);
-    setShowInfoModal(true);
-    setIsHolding(false);
-  }, 1000); // 1 second hold
-  
-  setHoldTimer(timer);
-}, []);
-
-const handleMouseUp = useCallback(() => {
-  if (holdTimer) {
-    clearTimeout(holdTimer);
-    setHoldTimer(null);
-  }
-  setIsHolding(false);
-}, [holdTimer]);
-
-const handleMouseLeave = useCallback(() => {
-  if (holdTimer) {
-    clearTimeout(holdTimer);
-    setHoldTimer(null);
-  }
-  setIsHolding(false);
-}, [holdTimer]);
-
-  // Improved handleEditClick with proper debouncing
-  const handleEditClick = useCallback((e, attendance) => {
-    // Prevent all event propagation
-    e.stopPropagation();
-    e.preventDefault();
-    
-    // Use ref-based flag to prevent race conditions
-    if (isEditingRef.current) {
-      console.log('Edit already in progress, ignoring click');
-      return;
-    }
-    
-    // Clear any existing timeout
-    if (editClickTimeoutRef.current) {
-      clearTimeout(editClickTimeoutRef.current);
-    }
-    
-    // Set flag immediately
-    isEditingRef.current = true;
-    
-    console.log('Edit clicked for:', attendance.id);
-    setSelectedAttendance(attendance);
-    setShowEditModal(true);
-    
-    // Reset flag after modal is shown (longer delay to ensure modal is rendered)
-    editClickTimeoutRef.current = setTimeout(() => {
-      isEditingRef.current = false;
-    }, 1000);
-  }, []);
-
-  // Handle double-click on table rows
-  const handleRowDoubleClick = useCallback((e, attendance) => {
-    // Prevent event propagation to avoid conflicts with other click handlers
-    e.preventDefault();
-    e.stopPropagation();
-    
-    // Check if we're already editing to prevent duplicate modals
-    if (isEditingRef.current) {
-      console.log('Edit already in progress, ignoring double-click');
-      return;
-    }
-    
-    // Clear any existing timeout
-    if (editClickTimeoutRef.current) {
-      clearTimeout(editClickTimeoutRef.current);
-    }
-    
-    // Set flag immediately
-    isEditingRef.current = true;
-    
-    console.log('Row double-clicked for:', attendance.id, attendance.employee_name);
-    setSelectedAttendance(attendance);
-    setShowEditModal(true);
-    
-    // Reset flag after modal is shown
-    editClickTimeoutRef.current = setTimeout(() => {
-      isEditingRef.current = false;
-    }, 1000);
-  }, []);
-
-  // Reset editing flag when modal closes
-  const handleCloseModal = () => {
-    setShowEditModal(false);
-    setShowInfoModal(false);
-    setSelectedAttendance(null);
-    setError('');
-    setSuccess('');
-    
-    // Reset the editing flag when modal closes
-    isEditingRef.current = false;
-    if (editClickTimeoutRef.current) {
-      clearTimeout(editClickTimeoutRef.current);
-    }
-  };
-
-  const handleAttendanceUpdate = async (updatedAttendance) => {
-    try {
-      setError('');
-      setSuccess('');
-      
-      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-      
-      // Check if CSRF token exists
-      if (!csrfToken) {
-        setError('Session expired. Please refresh the page and try again.');
-        return;
-      }
-      
-      // Create a new object with only time-related fields
-      const timeUpdatePayload = {
-        id: updatedAttendance.id,
-        time_in: updatedAttendance.time_in,
-        break_in: updatedAttendance.break_in,
-        break_out: updatedAttendance.break_out,
-        time_out: updatedAttendance.time_out,
-        next_day_timeout: updatedAttendance.next_day_timeout,
-        is_nightshift: updatedAttendance.is_nightshift
-      };
-      
-      const response = await fetch(`/attendance/${updatedAttendance.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify(timeUpdatePayload)
-      });
-      
-      // Handle different HTTP status codes
-      if (response.status === 401) {
-        // Session expired or unauthorized
-        setError('Session expired. Please refresh the page and login again.');
-        return;
-      }
-      
-      if (response.status === 419) {
-        // CSRF token mismatch
-        setError('Security token expired. Please refresh the page and try again.');
-        return;
-      }
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      // Check if response is JSON
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        // This usually means we got redirected to login page
-        setSuccess('Update completed successfully!');
-        window.location.reload();
-        return;
-      }
-      
-      const data = await response.json();
-      
-      // Handle API response
-      if (data.success) {
-        setSuccess('Attendance record updated successfully');
-        
-        // Process the updated record to ensure all fields are present
-        const processedRecord = {
-          ...data.data,
-          source: 'manual_edit',
-          is_edited: true
-        };
-        
-        // Update the local state to reflect changes
-        setAttendances(prevAttendances => 
-          prevAttendances.map(att => 
-            att.id === updatedAttendance.id ? processedRecord : att
-          )
-        );
-        
-        setShowEditModal(false);
-      } else {
-        // Handle API errors
-        if (data.redirect) {
-          // Server wants us to redirect (likely to login)
-          setError('Session expired. Redirecting to login...');
-          setTimeout(() => {
-            window.location.href = data.redirect;
-          }, 2000);
-        } else {
-          setError('Failed to update attendance: ' + (data.message || 'Unknown error'));
-        }
-      }
-    } catch (err) {
-      console.error('Error updating attendance:', err);
-      
-      // Provide more specific error messages
-      if (err.name === 'TypeError' && err.message.includes('Failed to fetch')) {
-        setError('Network error. Please check your internet connection and try again.');
-      } else if (err.message.includes('non-JSON response')) {
-        setSuccess('Update completed successfully!');
-        window.location.reload();
-      } else if (err.message.includes('HTTP error')) {
-        setError(`Server error (${err.message}). Please try again or contact support.`);
-      } else {
-        setError('Error updating attendance: ' + (err.message || 'Unknown error'));
-      }
-    }
-  };
-
-  // Handle individual sync for a specific attendance record
-  const handleIndividualSync = async (attendanceId) => {
-    try {
-      setError('');
-      setSuccess('');
-      
-      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-      
-      if (!csrfToken) {
-        setError('Session expired. Please refresh the page and try again.');
-        return;
-      }
-      
-      const response = await fetch(`/attendance/${attendanceId}/sync`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        }
-      });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        setSuccess(data.message);
-        
-        // If record was updated, refresh the local state
-        if (data.updated && data.data) {
-          const processedRecord = processAttendanceData([data.data])[0];
-          
-          setAttendances(prevAttendances => 
-            prevAttendances.map(att => 
-              att.id === attendanceId ? processedRecord : att
-            )
-          );
-        }
-        
-        // Reload data to get the latest state
-        await loadAttendanceData();
-      } else {
-        setError('Sync failed: ' + (data.message || 'Unknown error'));
-      }
-    } catch (err) {
-      console.error('Error syncing individual attendance record:', err);
-      setError('Error syncing attendance record: ' + (err.message || 'Unknown error'));
-    }
-  };
-
-  // Calculate if all displayed employees are selected
-  const allDisplayedSelected = attendances.length > 0 && 
-    attendances.every(emp => selectedIds.includes(emp.id));
-
-  // Format numeric values safely
-  const formatNumeric = (value, decimals = 2) => {
-    if (value === null || value === undefined || value === '' || isNaN(Number(value))) {
-      return '-';
-    }
-    return Number(value).toFixed(decimals);
   };
 
   // Format minutes to hours and minutes display
@@ -897,36 +349,42 @@ const handleMouseLeave = useCallback(() => {
     return `${mins}m`;
   };
 
-  // NEW: Render Late/Under column with enhanced calculation
+  // Render Late/Under column with database values priority
   const renderLateUndertime = (attendance) => {
-    const lateUndertimeInfo = calculateLateUndertime(attendance);
-    
-    if (lateUndertimeInfo.late === 0 && lateUndertimeInfo.undertime === 0) {
-      return <span className="text-green-600 text-sm font-medium">On time</span>;
-    }
-    
-    const parts = [];
-    if (lateUndertimeInfo.late > 0) {
-      parts.push(
-        <span key="late" className="text-red-600 text-xs block">
-          {formatMinutes(lateUndertimeInfo.late)} late
-        </span>
+    // First check if we have database values
+    if (attendance.late_minutes !== undefined && attendance.undertime_minutes !== undefined) {
+      const lateMinutes = parseFloat(attendance.late_minutes) || 0;
+      const undertimeMinutes = parseFloat(attendance.undertime_minutes) || 0;
+      
+      if (lateMinutes === 0 && undertimeMinutes === 0) {
+        return <span className="text-green-600 text-sm font-medium">On time</span>;
+      }
+      
+      const parts = [];
+      if (lateMinutes > 0) {
+        parts.push(
+          <span key="late" className="text-red-600 text-xs block">
+            {formatMinutes(lateMinutes)} late
+          </span>
+        );
+      }
+      
+      if (undertimeMinutes > 0) {
+        parts.push(
+          <span key="under" className="text-orange-600 text-xs block">
+            {formatMinutes(undertimeMinutes)} under
+          </span>
+        );
+      }
+      
+      return (
+        <div className="text-sm">
+          {parts}
+        </div>
       );
     }
     
-    if (lateUndertimeInfo.undertime > 0) {
-      parts.push(
-        <span key="under" className="text-orange-600 text-xs block">
-          {formatMinutes(lateUndertimeInfo.undertime)} under
-        </span>
-      );
-    }
-    
-    return (
-      <div className="text-sm">
-        {parts}
-      </div>
-    );
+    return <span className="text-gray-400 text-sm">-</span>;
   };
 
   // Render Night Shift column
@@ -1016,13 +474,504 @@ const handleMouseLeave = useCallback(() => {
     return value || '-';
   };
 
+  // Format numeric values safely
+  const formatNumeric = (value, decimals = 2) => {
+    if (value === null || value === undefined || value === '' || isNaN(Number(value))) {
+      return '-';
+    }
+    return Number(value).toFixed(decimals);
+  };
+
+  // Handle individual checkbox change
+  const handleCheckboxChange = (e, id) => {
+    e.stopPropagation();
+    
+    const checked = e.target.checked;
+    if (checked) {
+      setSelectedIds(prev => [...prev, id]);
+    } else {
+      setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
+      setSelectAll(false);
+    }
+  };
+
+  // Handle select all checkbox
+  const handleSelectAll = (checked) => {
+    setSelectAll(checked);
+    if (checked) {
+      setSelectedIds(attendances.map(att => att.id));
+    } else {
+      setSelectedIds([]);
+    }
+  };
+
+  // Handle posting status change
+  const handlePostingStatusChange = async (action) => {
+    if (selectedIds.length === 0) {
+      setError('Please select at least one record');
+      return;
+    }
+
+    try {
+      setError('');
+      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+      
+      const endpoint = action === 'mark_posted' 
+        ? '/attendance/mark-as-posted' 
+        : '/attendance/mark-as-not-posted';
+      
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          ids: selectedIds
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setSuccess(data.message);
+        setSelectedIds([]);
+        setSelectAll(false);
+        await loadAttendanceData();
+      } else {
+        setError(data.message || 'Failed to update posting status');
+      }
+    } catch (err) {
+      console.error('Error updating posting status:', err);
+      setError('Error updating posting status: ' + (err.message || 'Unknown error'));
+    }
+  };
+
+  // Handle export
+  const handleExport = async () => {
+    setExporting(true);
+    setError('');
+    
+    try {
+      const params = new URLSearchParams();
+      
+      if (searchTerm) params.append('search', searchTerm);
+      if (dateFilter) params.append('date', dateFilter);
+      if (departmentFilter) params.append('department', departmentFilter);
+      if (editsOnlyFilter) params.append('edits_only', 'true');
+      if (postingStatusFilter) params.append('posting_status', postingStatusFilter);
+      
+      const downloadUrl = '/attendance/export?' + params.toString();
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = 'attendance_export.csv';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      setSuccess('Export started. Check your downloads folder.');
+    } catch (err) {
+      console.error('Error exporting attendance data:', err);
+      setError('Error exporting attendance data: ' + (err.message || 'Unknown error'));
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // Handle sync
+  const handleSync = async () => {
+    setSyncing(true);
+    setError('');
+    setSuccess('');
+    
+    try {
+      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+      
+      const startDate = new Date();
+      startDate.setDate(1);
+      const endDate = new Date();
+      endDate.setMonth(endDate.getMonth() + 1, 0);
+      
+      const response = await fetch('/attendance/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          start_date: startDate.toISOString().split('T')[0],
+          end_date: endDate.toISOString().split('T')[0]
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setSuccess(data.message);
+        
+        if (data.details) {
+          const details = data.details;
+          let detailedMessage = `Sync completed: ${details.synced_count} records updated`;
+          if (details.created_records > 0) {
+            detailedMessage += `, ${details.created_records} new records created`;
+          }
+          if (details.error_count > 0) {
+            detailedMessage += `, ${details.error_count} errors occurred`;
+          }
+          detailedMessage += ` (Total processed: ${details.total_processed})`;
+          setSuccess(detailedMessage);
+        }
+        
+        await loadAttendanceData();
+      } else {
+        setError('Sync failed: ' + (data.message || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Error syncing attendance data:', err);
+      setError('Error syncing attendance data: ' + (err.message || 'Unknown error'));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  // Handle bulk delete
+  const handleBulkDelete = async () => {
+    if (selectedIds.length === 0 && deleteMode === 'selected') {
+      setError('Please select at least one record to delete');
+      return;
+    }
+
+    setDeleting(true);
+    setError('');
+    
+    try {
+      const csrfToken = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+      
+      let requestBody = {};
+      
+      if (deleteMode === 'selected') {
+        requestBody.ids = selectedIds;
+      } else {
+        if (!deleteRange.start_date || !deleteRange.end_date) {
+          setError('Please specify both start and end dates for range delete');
+          setDeleting(false);
+          return;
+        }
+        requestBody = { ...deleteRange };
+      }
+      
+      const response = await fetch('/attendance/bulk-delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(requestBody)
+      });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setSuccess(data.message);
+        setShowDeleteModal(false);
+        setSelectedIds([]);
+        setSelectAll(false);
+        setDeleteRange({
+          start_date: '',
+          end_date: '',
+          employee_id: '',
+          department: ''
+        });
+        
+        await loadAttendanceData();
+      } else {
+        setError('Delete failed: ' + (data.message || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Error deleting attendance data:', err);
+      setError('Error deleting attendance data: ' + (err.message || 'Unknown error'));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  // Mouse event handlers
+  const handleMouseDown = useCallback((e, attendance) => {
+    if (e.target.type === 'checkbox' || e.target.closest('button')) {
+      return;
+    }
+    
+    setIsHolding(true);
+    const timer = setTimeout(() => {
+      console.log('Hold completed for:', attendance.id, attendance.employee_name);
+      setSelectedAttendance(attendance);
+      setShowInfoModal(true);
+      setIsHolding(false);
+    }, 1000);
+    
+    setHoldTimer(timer);
+  }, []);
+
+  const handleMouseUp = useCallback(() => {
+    if (holdTimer) {
+      clearTimeout(holdTimer);
+      setHoldTimer(null);
+    }
+    setIsHolding(false);
+  }, [holdTimer]);
+
+  const handleMouseLeave = useCallback(() => {
+    if (holdTimer) {
+      clearTimeout(holdTimer);
+      setHoldTimer(null);
+    }
+    setIsHolding(false);
+  }, [holdTimer]);
+
+  // Improved handleEditClick with proper debouncing
+  const handleEditClick = useCallback((e, attendance) => {
+    e.stopPropagation();
+    e.preventDefault();
+    
+    if (isEditingRef.current) {
+      console.log('Edit already in progress, ignoring click');
+      return;
+    }
+    
+    if (editClickTimeoutRef.current) {
+      clearTimeout(editClickTimeoutRef.current);
+    }
+    
+    isEditingRef.current = true;
+    
+    console.log('Edit clicked for:', attendance.id);
+    setSelectedAttendance(attendance);
+    setShowEditModal(true);
+    
+    editClickTimeoutRef.current = setTimeout(() => {
+      isEditingRef.current = false;
+    }, 1000);
+  }, []);
+
+  // Handle double-click on table rows
+  const handleRowDoubleClick = useCallback((e, attendance) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (isEditingRef.current) {
+      console.log('Edit already in progress, ignoring double-click');
+      return;
+    }
+    
+    if (editClickTimeoutRef.current) {
+      clearTimeout(editClickTimeoutRef.current);
+    }
+    
+    isEditingRef.current = true;
+    
+    console.log('Row double-clicked for:', attendance.id, attendance.employee_name);
+    setSelectedAttendance(attendance);
+    setShowEditModal(true);
+    
+    editClickTimeoutRef.current = setTimeout(() => {
+      isEditingRef.current = false;
+    }, 1000);
+  }, []);
+
+  // Reset editing flag when modal closes
+  const handleCloseModal = () => {
+    setShowEditModal(false);
+    setShowInfoModal(false);
+    setSelectedAttendance(null);
+    setError('');
+    setSuccess('');
+    
+    isEditingRef.current = false;
+    if (editClickTimeoutRef.current) {
+      clearTimeout(editClickTimeoutRef.current);
+    }
+  };
+
+  const handleAttendanceUpdate = async (updatedAttendance) => {
+    try {
+      setError('');
+      setSuccess('');
+      
+      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+      
+      if (!csrfToken) {
+        setError('Session expired. Please refresh the page and try again.');
+        return;
+      }
+      
+      const timeUpdatePayload = {
+        id: updatedAttendance.id,
+        time_in: updatedAttendance.time_in,
+        break_in: updatedAttendance.break_in,
+        break_out: updatedAttendance.break_out,
+        time_out: updatedAttendance.time_out,
+        next_day_timeout: updatedAttendance.next_day_timeout,
+        is_nightshift: updatedAttendance.is_nightshift
+      };
+      
+      const response = await fetch(`/attendance/${updatedAttendance.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(timeUpdatePayload)
+      });
+      
+      if (response.status === 401) {
+        setError('Session expired. Please refresh the page and login again.');
+        return;
+      }
+      
+      if (response.status === 419) {
+        setError('Security token expired. Please refresh the page and try again.');
+        return;
+      }
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        setSuccess('Update completed successfully!');
+        window.location.reload();
+        return;
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setSuccess('Attendance record updated successfully');
+        
+        const processedRecord = {
+          ...data.data,
+          source: 'manual_edit',
+          is_edited: true
+        };
+        
+        setAttendances(prevAttendances => 
+          prevAttendances.map(att => 
+            att.id === updatedAttendance.id ? processedRecord : att
+          )
+        );
+        
+        setShowEditModal(false);
+      } else {
+        if (data.redirect) {
+          setError('Session expired. Redirecting to login...');
+          setTimeout(() => {
+            window.location.href = data.redirect;
+          }, 2000);
+        } else {
+          setError('Failed to update attendance: ' + (data.message || 'Unknown error'));
+        }
+      }
+    } catch (err) {
+      console.error('Error updating attendance:', err);
+      
+      if (err.name === 'TypeError' && err.message.includes('Failed to fetch')) {
+        setError('Network error. Please check your internet connection and try again.');
+      } else if (err.message.includes('non-JSON response')) {
+        setSuccess('Update completed successfully!');
+        window.location.reload();
+      } else if (err.message.includes('HTTP error')) {
+        setError(`Server error (${err.message}). Please try again or contact support.`);
+      } else {
+        setError('Error updating attendance: ' + (err.message || 'Unknown error'));
+      }
+    }
+  };
+
+  // Handle individual sync for a specific attendance record
+  const handleIndividualSync = async (attendanceId) => {
+    try {
+      setError('');
+      setSuccess('');
+      
+      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+      
+      if (!csrfToken) {
+        setError('Session expired. Please refresh the page and try again.');
+        return;
+      }
+      
+      const response = await fetch(`/attendance/${attendanceId}/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setSuccess(data.message);
+        
+        if (data.updated && data.data) {
+          const processedRecord = processAttendanceData([data.data])[0];
+          
+          setAttendances(prevAttendances => 
+            prevAttendances.map(att => 
+              att.id === attendanceId ? processedRecord : att
+            )
+          );
+        }
+        
+        await loadAttendanceData();
+      } else {
+        setError('Sync failed: ' + (data.message || 'Unknown error'));
+      }
+    } catch (err) {
+      console.error('Error syncing individual attendance record:', err);
+      setError('Error syncing attendance record: ' + (err.message || 'Unknown error'));
+    }
+  };
+
+  // Initial data load
+  useEffect(() => {
+    loadDepartments();
+    
+    if (initialAttendances.length > 0) {
+      const processedInitialData = processAttendanceData(initialAttendances);
+      setAttendances(processedInitialData);
+    } else {
+      loadAttendanceData();
+    }
+  }, []);
+
+  // Load when page changes
+  useEffect(() => {
+    if (currentPage !== pagination.current_page) {
+      loadAttendanceData();
+    }
+  }, [currentPage]);
+
   return (
     <AuthenticatedLayout user={auth.user}>
       <Head title="Processed Attendance List" />
-      {/* FIXED: Full width container without max-width restrictions */}
       <div className="flex min-h-screen bg-gray-50/50">
         <Sidebar />
-        {/* FIXED: Changed from max-w-full mx-auto to full width */}
         <div className="flex-1 p-4">
           <div className="max-w-7xl mx-auto">
             <div className="flex items-center justify-between mb-6">
@@ -1031,11 +980,16 @@ const handleMouseLeave = useCallback(() => {
                   Processed Attendance Records
                 </h1>
                 <p className="text-gray-600">
-                  View and manage processed attendance records with edit history tracking.
+                  View and manage processed attendance records with automatic recalculation on page load.
                 </p>
                 <p className="text-sm text-blue-600 mt-1">
                   💡 Tip: Hold any row for 1 second to view details, double-click to edit attendance times
                 </p>
+                {recalculated_count > 0 && (
+                  <p className="text-sm text-green-600 mt-1">
+                    ✅ Auto-recalculated {recalculated_count} records for accurate display
+                  </p>
+                )}
               </div>
               
               {/* Action Buttons */}
@@ -1062,7 +1016,24 @@ const handleMouseLeave = useCallback(() => {
                       Mark Not Posted ({selectedIds.length})
                     </Button>
                   </> 
+                )}
+
+                {/* NEW: Manual Recalculate Button */}
+                <Button
+                  onClick={() => handleAutoRecalculate(true)}
+                  disabled={recalculating}
+                  variant="outline"
+                  size="sm"
+                  className="bg-purple-600 hover:bg-purple-700 text-white border-purple-600"
+                  title="Manually recalculate late/undertime for current view"
+                >
+                  {recalculating ? (
+                    <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                  ) : (
+                    <Calculator className="h-4 w-4 mr-1" />
                   )}
+                  {recalculating ? 'Recalculating...' : 'Recalculate'}
+                </Button>
                 
                 <Button
                   onClick={handleExport}
@@ -1137,9 +1108,25 @@ const handleMouseLeave = useCallback(() => {
               </Alert>
             )}
 
+            {/* Show recalculation status */}
+            {recalculating && (
+              <Alert className="mb-4 border-purple-200 bg-purple-50">
+                <Calculator className="h-4 w-4 mr-2 text-purple-600 animate-pulse" />
+                <AlertDescription className="text-purple-800">
+                  Recalculating attendance metrics for accurate late/undertime display...
+                </AlertDescription>
+              </Alert>
+            )}
+
             <Card className="mb-4">
               <CardHeader className="pb-3">
-                <CardTitle className="text-lg">Filters</CardTitle>
+                <CardTitle className="text-lg flex items-center justify-between">
+                  <span>Filters</span>
+                  <div className="flex items-center space-x-2 text-sm text-gray-600">
+                    <span>Auto-recalculation: Enabled</span>
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                  </div>
+                </CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
@@ -1274,7 +1261,7 @@ const handleMouseLeave = useCallback(() => {
               </Card>
             </div>
 
-            {/* FIXED: Full width table container */}
+            {/* Table container */}
             <div className="bg-white rounded-lg shadow h-[70vh] flex flex-col w-full">
               {loading ? (
                 <div className="flex justify-center items-center h-full">
@@ -1289,7 +1276,6 @@ const handleMouseLeave = useCallback(() => {
                 </div>
               ) : (
                 <>
-                  {/* FIXED: Full width table with clickable rows */}
                   <div className="flex-1 overflow-hidden flex flex-col">
                     <div className="overflow-x-auto flex-1">
                       <table className="min-w-full divide-y divide-gray-200 h-full">
@@ -1454,7 +1440,7 @@ const handleMouseLeave = useCallback(() => {
                     </div>
                   </div>
 
-                  {/* Pagination - Fixed at bottom */}
+                  {/* Pagination */}
                   <div className="px-6 py-4 flex items-center justify-between border-t border-gray-200 bg-white">
                     <div className="flex-1 flex justify-between sm:hidden">
                       <Button
@@ -1501,7 +1487,6 @@ const handleMouseLeave = useCallback(() => {
                             Previous
                           </Button>
                           
-                          {/* Page numbers */}
                           {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
                             const pageNum = currentPage <= 3 
                               ? i + 1 
@@ -1564,7 +1549,7 @@ const handleMouseLeave = useCallback(() => {
         />
       )}
 
-      {/* NEW: Info Modal */}
+      {/* Info Modal */}
       {showInfoModal && selectedAttendance && (
         <AttendanceInfoModal
           isOpen={showInfoModal}

@@ -15,110 +15,267 @@ use Inertia\Inertia;
 class ProcessedAttendanceController extends Controller
 {
     /**
+ * Auto-recalculate attendance metrics for displayed records
+ */
+private function autoRecalculateMetrics($attendances)
+{
+    try {
+        $recalculatedCount = 0;
+        
+        foreach ($attendances as $attendance) {
+            if ($attendance->time_in) {
+                // Calculate late minutes (no grace period)
+                $lateMinutes = 0;
+                $attendanceDate = \Carbon\Carbon::parse($attendance->attendance_date);
+                $expectedTimeIn = $attendanceDate->copy()->setTime(8, 0, 0); // 8:00 AM
+                $actualTimeIn = \Carbon\Carbon::parse($attendance->time_in);
+                
+                if ($actualTimeIn->gt($expectedTimeIn)) {
+                    $lateMinutes = $actualTimeIn->diffInMinutes($expectedTimeIn);
+                }
+                
+                // Calculate undertime minutes
+                $undertimeMinutes = 0;
+                $timeOut = $attendance->is_nightshift && $attendance->next_day_timeout 
+                    ? $attendance->next_day_timeout 
+                    : $attendance->time_out;
+                
+                if ($timeOut) {
+                    $timeIn = \Carbon\Carbon::parse($attendance->time_in);
+                    $timeOut = \Carbon\Carbon::parse($timeOut);
+                    
+                    // Calculate total worked minutes
+                    $totalWorkedMinutes = $timeOut->diffInMinutes($timeIn);
+                    
+                    // Subtract break time
+                    $breakMinutes = 60; // Default 1-hour break
+                    if ($attendance->break_out && $attendance->break_in) {
+                        $breakOut = \Carbon\Carbon::parse($attendance->break_out);
+                        $breakIn = \Carbon\Carbon::parse($attendance->break_in);
+                        if ($breakIn->gt($breakOut)) {
+                            $breakMinutes = $breakIn->diffInMinutes($breakOut);
+                        }
+                    }
+                    
+                    $netWorkedMinutes = max(0, $totalWorkedMinutes - $breakMinutes);
+                    $standardWorkMinutes = 8 * 60; // 8 hours = 480 minutes
+                    
+                    if ($netWorkedMinutes < $standardWorkMinutes) {
+                        $undertimeMinutes = $standardWorkMinutes - $netWorkedMinutes;
+                    }
+                }
+                
+                // Calculate hours worked
+                $hoursWorked = 0;
+                if ($timeOut) {
+                    $timeIn = \Carbon\Carbon::parse($attendance->time_in);
+                    $timeOut = \Carbon\Carbon::parse($timeOut);
+                    
+                    $totalWorkedMinutes = $timeOut->diffInMinutes($timeIn);
+                    
+                    // Subtract break time
+                    $breakMinutes = 60;
+                    if ($attendance->break_out && $attendance->break_in) {
+                        $breakOut = \Carbon\Carbon::parse($attendance->break_out);
+                        $breakIn = \Carbon\Carbon::parse($attendance->break_in);
+                        if ($breakIn->gt($breakOut)) {
+                            $breakMinutes = $breakIn->diffInMinutes($breakOut);
+                        }
+                    }
+                    
+                    $netWorkedMinutes = max(0, $totalWorkedMinutes - $breakMinutes);
+                    $hoursWorked = round($netWorkedMinutes / 60, 2);
+                }
+                
+                // Check if values need updating
+                if ($attendance->late_minutes != $lateMinutes || 
+                    $attendance->undertime_minutes != $undertimeMinutes || 
+                    $attendance->hours_worked != $hoursWorked) {
+                    
+                    // Update without triggering model events to avoid recursion
+                    DB::table('processed_attendances')
+                        ->where('id', $attendance->id)
+                        ->update([
+                            'late_minutes' => $lateMinutes,
+                            'undertime_minutes' => $undertimeMinutes,
+                            'hours_worked' => $hoursWorked,
+                            'updated_at' => now()
+                        ]);
+                    
+                    // Update the current object for display
+                    $attendance->late_minutes = $lateMinutes;
+                    $attendance->undertime_minutes = $undertimeMinutes;
+                    $attendance->hours_worked = $hoursWorked;
+                    
+                    $recalculatedCount++;
+                }
+            }
+        }
+        
+        if ($recalculatedCount > 0) {
+            Log::info("Auto-recalculated {$recalculatedCount} attendance records on page load");
+        }
+        
+        return $recalculatedCount;
+    } catch (\Exception $e) {
+        Log::error('Error in auto-recalculation: ' . $e->getMessage());
+        return 0;
+    }
+}
+
+    /**
      * Display the processed attendance records page
      */
     public function index(Request $request)
-    {
-        // Get query parameters for filtering
-        $searchTerm = $request->input('search');
-        $dateFilter = $request->input('date');
-        $departmentFilter = $request->input('department');
-        $editsOnlyFilter = $request->boolean('edits_only');
-        $perPage = $request->input('per_page', 25);
-        
+{
+    // Get query parameters for filtering
+    $searchTerm = $request->input('search');
+    $dateFilter = $request->input('date');
+    $departmentFilter = $request->input('department');
+    $editsOnlyFilter = $request->boolean('edits_only');
+    $perPage = $request->input('per_page', 25);
+    
+    // Build query
+    $query = $this->buildAttendanceQuery($request);
+    
+    // Order by date descending and paginate
+    $attendances = $query->orderBy('processed_attendances.attendance_date', 'asc')
+                         ->paginate($perPage);
+    
+    // AUTO-RECALCULATE: Recalculate metrics for displayed records
+    $recalculatedCount = $this->autoRecalculateMetrics($attendances->items());
+    
+    // Return Inertia view with data
+    return Inertia::render('Timesheet/ProcessedAttendanceList', [
+        'attendances' => $attendances->items(),
+        'pagination' => [
+            'total' => $attendances->total(),
+            'per_page' => $attendances->perPage(),
+            'current_page' => $attendances->currentPage(),
+            'last_page' => $attendances->lastPage()
+        ],
+        'filters' => [
+            'search' => $searchTerm,
+            'date' => $dateFilter,
+            'department' => $departmentFilter,
+            'edits_only' => $editsOnlyFilter
+        ],
+        'auth' => [
+            'user' => auth()->user()
+        ],
+        'recalculated_count' => $recalculatedCount // Pass recalculation info to frontend
+    ]);
+}
+
+/**
+ * Get attendance list with auto-recalculation
+ */
+public function list(Request $request)
+{
+    try {
         // Build query
         $query = $this->buildAttendanceQuery($request);
+        $perPage = $request->input('per_page', 25);
         
         // Order by date descending and paginate
-        $attendances = $query->orderBy('processed_attendances.attendance_date', 'asc')
-                             ->paginate($perPage);
+        $attendances = $query->orderBy('processed_attendances.attendance_date', 'desc')
+                            ->paginate($perPage);
         
-        // Return Inertia view with data
-        return Inertia::render('Timesheet/ProcessedAttendanceList', [
-            'attendances' => $attendances->items(),
+        // Process attendance data with accessors
+        $processedData = $attendances->items();
+        
+        // AUTO-RECALCULATE: Recalculate metrics for displayed records
+        $recalculatedCount = $this->autoRecalculateMetrics($processedData);
+        
+        // Format the datetime fields for each record - WITH IMPROVED FORMATTING
+        foreach ($processedData as &$attendance) {
+            // Safely format time values to 12-hour format with better null handling
+            $attendance->time_in = $this->safeFormatTime($attendance->time_in);
+            $attendance->time_out = $this->safeFormatTime($attendance->time_out);
+            $attendance->break_in = $this->safeFormatTime($attendance->break_in);
+            $attendance->break_out = $this->safeFormatTime($attendance->break_out);
+            $attendance->next_day_timeout = $this->safeFormatTime($attendance->next_day_timeout);
+            
+            // Format date and get day of week
+            if ($attendance->attendance_date) {
+                $attendance->attendance_date_formatted = $attendance->attendance_date->format('Y-m-d');
+                $attendance->day = $attendance->attendance_date->format('l'); // This gets the day name (Monday, Tuesday, etc.)
+            } else {
+                $attendance->attendance_date_formatted = null;
+                $attendance->day = null;
+            }
+            
+            // Add employee name for display
+            if ($attendance->employee) {
+                $attendance->employee_name = trim($attendance->employee->Fname . ' ' . $attendance->employee->Lname);
+                $attendance->idno = $attendance->employee->idno;
+                $attendance->department = $attendance->employee->Department;
+                $attendance->line = $attendance->employee->Line;
+            } else {
+                $attendance->employee_name = 'Unknown Employee';
+                $attendance->idno = 'N/A';
+                $attendance->department = 'N/A';
+                $attendance->line = 'N/A';
+            }
+        }
+        
+        return response()->json([
+            'success' => true,
+            'data' => $processedData,
             'pagination' => [
                 'total' => $attendances->total(),
                 'per_page' => $attendances->perPage(),
                 'current_page' => $attendances->currentPage(),
                 'last_page' => $attendances->lastPage()
             ],
-            'filters' => [
-                'search' => $searchTerm,
-                'date' => $dateFilter,
-                'department' => $departmentFilter,
-                'edits_only' => $editsOnlyFilter
-            ],
-            'auth' => [
-                'user' => auth()->user()
-            ]
+            'recalculated_count' => $recalculatedCount // Include recalculation info
         ]);
+    } catch (\Exception $e) {
+        Log::error('Error fetching attendance data: ' . $e->getMessage());
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to fetch attendance data: ' . $e->getMessage()
+        ], 500);
     }
-    
-    public function list(Request $request)
-    {
-        try {
-            // Build query
-            $query = $this->buildAttendanceQuery($request);
-            $perPage = $request->input('per_page', 25);
-            
-            // Order by date descending and paginate
-            $attendances = $query->orderBy('processed_attendances.attendance_date', 'desc')
-                                ->paginate($perPage);
-            
-            // Process attendance data with accessors
-            $processedData = $attendances->items();
-            
-            // Format the datetime fields for each record - WITH IMPROVED FORMATTING
-            foreach ($processedData as &$attendance) {
-                // Safely format time values to 12-hour format with better null handling
-                $attendance->time_in = $this->safeFormatTime($attendance->time_in);
-                $attendance->time_out = $this->safeFormatTime($attendance->time_out);
-                $attendance->break_in = $this->safeFormatTime($attendance->break_in);
-                $attendance->break_out = $this->safeFormatTime($attendance->break_out);
-                $attendance->next_day_timeout = $this->safeFormatTime($attendance->next_day_timeout);
-                
-                // Format date and get day of week
-                if ($attendance->attendance_date) {
-                    $attendance->attendance_date_formatted = $attendance->attendance_date->format('Y-m-d');
-                    $attendance->day = $attendance->attendance_date->format('l'); // This gets the day name (Monday, Tuesday, etc.)
-                } else {
-                    $attendance->attendance_date_formatted = null;
-                    $attendance->day = null;
-                }
-                
-                // Add employee name for display
-                if ($attendance->employee) {
-                    $attendance->employee_name = trim($attendance->employee->Fname . ' ' . $attendance->employee->Lname);
-                    $attendance->idno = $attendance->employee->idno;
-                    $attendance->department = $attendance->employee->Department;
-                    $attendance->line = $attendance->employee->Line;
-                } else {
-                    $attendance->employee_name = 'Unknown Employee';
-                    $attendance->idno = 'N/A';
-                    $attendance->department = 'N/A';
-                    $attendance->line = 'N/A';
-                }
-            }
-            
-            return response()->json([
-                'success' => true,
-                'data' => $processedData,
-                'pagination' => [
-                    'total' => $attendances->total(),
-                    'per_page' => $attendances->perPage(),
-                    'current_page' => $attendances->currentPage(),
-                    'last_page' => $attendances->lastPage()
-                ]
-            ]);
-        } catch (\Exception $e) {
-            Log::error('Error fetching attendance data: ' . $e->getMessage());
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to fetch attendance data: ' . $e->getMessage()
-            ], 500);
+}
+
+public function recalculateAll(Request $request)
+{
+    try {
+        $dateFilter = $request->input('date');
+        $departmentFilter = $request->input('department');
+        
+        // Build query for recalculation
+        $query = ProcessedAttendance::whereNotNull('time_in');
+        
+        if ($dateFilter) {
+            $query->whereDate('attendance_date', $dateFilter);
         }
+        
+        if ($departmentFilter) {
+            $query->whereHas('employee', function ($q) use ($departmentFilter) {
+                $q->where('Department', $departmentFilter);
+            });
+        }
+        
+        $attendances = $query->get();
+        $recalculatedCount = $this->autoRecalculateMetrics($attendances);
+        
+        return response()->json([
+            'success' => true,
+            'message' => "Recalculated {$recalculatedCount} attendance records",
+            'recalculated_count' => $recalculatedCount
+        ]);
+    } catch (\Exception $e) {
+        Log::error('Error in manual recalculation: ' . $e->getMessage());
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'Recalculation failed: ' . $e->getMessage()
+        ], 500);
     }
+}
 
     private function safeFormatTime($timeValue)
     {
