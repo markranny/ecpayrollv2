@@ -17,108 +17,391 @@ class ProcessedAttendanceController extends Controller
     /**
  * Auto-recalculate attendance metrics for displayed records
  */
+// Add this helper function before your autoRecalculateMetrics function
+private function applyTimeOutRounding($timeString)
+{
+    try {
+        $time = \Carbon\Carbon::parse($timeString);
+        
+        // For time out - round down to the nearest hour
+        // This treats 5:16 PM as 5:00 PM, 5:31 PM as 5:00 PM, 5:46 PM as 5:00 PM
+        if ($time->minute > 0 || $time->second > 0) {
+            $time->minute = 0;
+            $time->second = 0;
+        }
+        
+        return $time;
+        
+    } catch (\Exception $e) {
+        Log::error("Error in time out rounding: " . $e->getMessage());
+        return \Carbon\Carbon::parse($timeString); // Return original if rounding fails
+    }
+}
+
 private function autoRecalculateMetrics($attendances)
 {
     try {
         $recalculatedCount = 0;
         
+        Log::info("autoRecalculateMetrics function called with " . count($attendances) . " records");
+        
         foreach ($attendances as $attendance) {
+            Log::info("Processing attendance record", [
+                'id' => $attendance->id,
+                'employee_id' => $attendance->employee_id,
+                'raw_time_in' => $attendance->time_in,
+                'raw_time_out' => $attendance->time_out,
+                'raw_next_day_timeout' => $attendance->next_day_timeout ?? null,
+                'is_nightshift' => $attendance->is_nightshift ?? false,
+                'attendance_date' => $attendance->attendance_date
+            ]);
+            
+            // Initialize variables
+            $lateMinutes = 0;
+            $undertimeMinutes = 0;
+            $hoursWorked = 0;
+            $isHalfday = false;
+            
             if ($attendance->time_in) {
-                // Calculate late minutes (no grace period)
-                $lateMinutes = 0;
-                $attendanceDate = \Carbon\Carbon::parse($attendance->attendance_date);
-                $expectedTimeIn = $attendanceDate->copy()->setTime(8, 0, 0); // 8:00 AM
-                $actualTimeIn = \Carbon\Carbon::parse($attendance->time_in);
-                
-                if ($actualTimeIn->gt($expectedTimeIn)) {
-                    $lateMinutes = $actualTimeIn->diffInMinutes($expectedTimeIn);
+                // Calculate late minutes - Need to determine correct shift schedule
+                try {
+                    $attendanceDate = \Carbon\Carbon::parse($attendance->attendance_date);
+                    $actualTimeIn = \Carbon\Carbon::parse($attendance->time_in);
+                    
+                    // Determine expected time based on actual time_in to identify shift type
+                    $timeInHour = $actualTimeIn->hour;
+                    $expectedTimeIn = null;
+                    
+                    if ($timeInHour >= 6 && $timeInHour <= 10) {
+                        // Morning shift: 8:00 AM
+                        $expectedTimeIn = $attendanceDate->copy()->setTime(8, 0, 0);
+                    } elseif ($timeInHour >= 13 && $timeInHour <= 16) {
+                        // Afternoon shift: 2:00 PM
+                        $expectedTimeIn = $attendanceDate->copy()->setTime(14, 0, 0);
+                    } elseif ($timeInHour >= 17 && $timeInHour <= 20) {
+                        // Evening shift: 6:00 PM
+                        $expectedTimeIn = $attendanceDate->copy()->setTime(18, 0, 0);
+                    } elseif ($timeInHour >= 21 || $timeInHour <= 5) {
+                        // Night shift: 10:00 PM
+                        $expectedTimeIn = $attendanceDate->copy()->setTime(22, 0, 0);
+                    } else {
+                        // Default to morning shift if uncertain
+                        $expectedTimeIn = $attendanceDate->copy()->setTime(8, 0, 0);
+                    }
+                    
+                    // Debug time parsing
+                    Log::info("Time parsing debug", [
+                        'attendance_id' => $attendance->id,
+                        'raw_attendance_date' => $attendance->attendance_date,
+                        'raw_time_in' => $attendance->time_in,
+                        'parsed_attendance_date' => $attendanceDate->format('Y-m-d H:i:s'),
+                        'parsed_expected_time_in' => $expectedTimeIn->format('Y-m-d H:i:s'),
+                        'parsed_actual_time_in' => $actualTimeIn->format('Y-m-d H:i:s')
+                    ]);
+                    
+                    // Calculate initial late minutes
+                    $initialLateMinutes = 0;
+                    if ($actualTimeIn->gt($expectedTimeIn)) {
+                        $initialLateMinutes = abs($actualTimeIn->diffInMinutes($expectedTimeIn));
+                    }
+                    
+                } catch (\Exception $e) {
+                    Log::error("Error parsing time_in for attendance {$attendance->id}: " . $e->getMessage());
+                    continue; // Skip this record if time parsing fails
                 }
                 
-                // Calculate undertime minutes
-                $undertimeMinutes = 0;
-                $timeOut = $attendance->is_nightshift && $attendance->next_day_timeout 
-                    ? $attendance->next_day_timeout 
-                    : $attendance->time_out;
+                // Calculate working hours and determine if it's a halfday
+                $timeOut = null;
+                if ($attendance->is_nightshift && $attendance->next_day_timeout) {
+                    $timeOut = $attendance->next_day_timeout;
+                } elseif ($attendance->time_out) {
+                    $timeOut = $attendance->time_out;
+                }
+                
+                Log::info("Time out determination", [
+                    'attendance_id' => $attendance->id,
+                    'is_nightshift' => $attendance->is_nightshift ?? false,
+                    'raw_time_out' => $attendance->time_out,
+                    'raw_next_day_timeout' => $attendance->next_day_timeout ?? null,
+                    'selected_time_out' => $timeOut
+                ]);
+                
+                // Check if this is a halfday scenario
+                $hasPartialData = ($attendance->time_in || $attendance->break_in || $attendance->break_out || $timeOut);
                 
                 if ($timeOut) {
-                    $timeIn = \Carbon\Carbon::parse($attendance->time_in);
-                    $timeOut = \Carbon\Carbon::parse($timeOut);
-                    
-                    // Calculate total worked minutes
-                    $totalWorkedMinutes = $timeOut->diffInMinutes($timeIn);
-                    
-                    // Subtract break time
-                    $breakMinutes = 60; // Default 1-hour break
-                    if ($attendance->break_out && $attendance->break_in) {
-                        $breakOut = \Carbon\Carbon::parse($attendance->break_out);
-                        $breakIn = \Carbon\Carbon::parse($attendance->break_in);
-                        if ($breakIn->gt($breakOut)) {
-                            $breakMinutes = $breakIn->diffInMinutes($breakOut);
+                    try {
+                        // Apply time rounding for time out only (round down to nearest hour)
+                        $timeIn = \Carbon\Carbon::parse($attendance->time_in);
+                        $timeOutParsed = \Carbon\Carbon::parse($timeOut);
+                        $roundedTimeOut = $this->applyTimeOutRounding($timeOut);
+                        
+                        Log::info("Time out rounding applied", [
+                            'attendance_id' => $attendance->id,
+                            'original_time_in' => $timeIn->format('H:i:s'),
+                            'original_time_out' => $timeOutParsed->format('H:i:s'),
+                            'rounded_time_out' => $roundedTimeOut->format('H:i:s')
+                        ]);
+                        
+                        // Handle next day scenarios for night shifts
+                        if ($attendance->is_nightshift && $roundedTimeOut->lt($timeIn)) {
+                            $roundedTimeOut->addDay();
+                            Log::info("Added day to night shift rounded time out", [
+                                'attendance_id' => $attendance->id,
+                                'adjusted_rounded_time_out' => $roundedTimeOut->format('Y-m-d H:i:s')
+                            ]);
                         }
+                        
+                        // Calculate total worked minutes using original time in and rounded time out
+                        $totalWorkedMinutes = abs($roundedTimeOut->diffInMinutes($timeIn));
+                        
+                        // Additional validation - if time_out is before time_in, something is wrong
+                        if ($roundedTimeOut->lt($timeIn)) {
+                            Log::warning("Rounded time out is before time in - possible data issue", [
+                                'attendance_id' => $attendance->id,
+                                'time_in' => $timeIn->format('Y-m-d H:i:s'),
+                                'rounded_time_out' => $roundedTimeOut->format('Y-m-d H:i:s')
+                            ]);
+                        }
+                        
+                        Log::info("Total worked time calculation with time out rounding", [
+                            'attendance_id' => $attendance->id,
+                            'time_in' => $timeIn->format('Y-m-d H:i:s'),
+                            'rounded_time_out' => $roundedTimeOut->format('Y-m-d H:i:s'),
+                            'total_worked_minutes' => $totalWorkedMinutes
+                        ]);
+                        
+                        // Continue with break calculation (using original break times)
+                        $breakMinutes = 0;
+                        
+                        if ($attendance->break_out && $attendance->break_in) {
+                            try {
+                                $breakOut = \Carbon\Carbon::parse($attendance->break_out);
+                                $breakIn = \Carbon\Carbon::parse($attendance->break_in);
+                                
+                                // Validate break times are within work period (using original times)
+                                if ($breakOut->gte($timeIn) && $breakOut->lte($timeOutParsed) && 
+                                    $breakIn->gte($timeIn) && $breakIn->lte($timeOutParsed) &&
+                                    $breakIn->gt($breakOut)) {
+                                    $breakMinutes = abs($breakIn->diffInMinutes($breakOut));
+                                    
+                                    // Reasonable break time validation (max 4 hours)
+                                    if ($breakMinutes > 240) {
+                                        Log::warning("Break time too long, using default", [
+                                            'attendance_id' => $attendance->id,
+                                            'calculated_break_minutes' => $breakMinutes
+                                        ]);
+                                        $breakMinutes = 60;
+                                    }
+                                } else {
+                                    Log::warning("Invalid break times, no break deduction applied", [
+                                        'attendance_id' => $attendance->id,
+                                        'break_out' => $breakOut->format('Y-m-d H:i:s'),
+                                        'break_in' => $breakIn->format('Y-m-d H:i:s'),
+                                        'work_period' => $timeIn->format('H:i') . ' - ' . $timeOutParsed->format('H:i')
+                                    ]);
+                                    $breakMinutes = 0;
+                                }
+                                
+                                Log::info("Break time calculation", [
+                                    'attendance_id' => $attendance->id,
+                                    'break_out' => $breakOut->format('Y-m-d H:i:s'),
+                                    'break_in' => $breakIn->format('Y-m-d H:i:s'),
+                                    'break_minutes' => $breakMinutes
+                                ]);
+                            } catch (\Exception $e) {
+                                Log::error("Error parsing break times for attendance {$attendance->id}: " . $e->getMessage());
+                                $breakMinutes = 0;
+                            }
+                        } else {
+                            $breakMinutes = 0;
+                            Log::info("No break times recorded, no break deduction applied", [
+                                'attendance_id' => $attendance->id
+                            ]);
+                        }
+                        
+                        // Calculate net worked time
+                        $netWorkedMinutes = max(0, $totalWorkedMinutes - $breakMinutes);
+                        
+                        // Calculate hours worked
+                        $hoursWorked = round($netWorkedMinutes / 60, 2);
+                        
+                        Log::info("Work hours calculation with time out rounding", [
+                            'attendance_id' => $attendance->id,
+                            'total_worked_minutes' => $totalWorkedMinutes,
+                            'break_minutes' => $breakMinutes,
+                            'net_worked_minutes' => $netWorkedMinutes,
+                            'hours_worked' => $hoursWorked
+                        ]);
+                        
+                    } catch (\Exception $e) {
+                        Log::error("Error calculating work hours for attendance {$attendance->id}: " . $e->getMessage());
+                        // Keep default values (0) if calculation fails
                     }
-                    
-                    $netWorkedMinutes = max(0, $totalWorkedMinutes - $breakMinutes);
-                    $standardWorkMinutes = 8 * 60; // 8 hours = 480 minutes
-                    
-                    if ($netWorkedMinutes < $standardWorkMinutes) {
-                        $undertimeMinutes = $standardWorkMinutes - $netWorkedMinutes;
-                    }
+                } else {
+                    Log::warning("No time_out found for attendance {$attendance->id}");
                 }
                 
-                // Calculate hours worked
-                $hoursWorked = 0;
-                if ($timeOut) {
-                    $timeIn = \Carbon\Carbon::parse($attendance->time_in);
-                    $timeOut = \Carbon\Carbon::parse($timeOut);
-                    
-                    $totalWorkedMinutes = $timeOut->diffInMinutes($timeIn);
-                    
-                    // Subtract break time
-                    $breakMinutes = 60;
-                    if ($attendance->break_out && $attendance->break_in) {
-                        $breakOut = \Carbon\Carbon::parse($attendance->break_out);
-                        $breakIn = \Carbon\Carbon::parse($attendance->break_in);
-                        if ($breakIn->gt($breakOut)) {
-                            $breakMinutes = $breakIn->diffInMinutes($breakOut);
-                        }
-                    }
-                    
-                    $netWorkedMinutes = max(0, $totalWorkedMinutes - $breakMinutes);
-                    $hoursWorked = round($netWorkedMinutes / 60, 2);
+                // Check if it's a halfday
+                if ($hoursWorked == 0 && $hasPartialData) {
+                    $isHalfday = true;
+                    Log::info("Detected halfday scenario", [
+                        'attendance_id' => $attendance->id,
+                        'has_time_in' => !empty($attendance->time_in),
+                        'has_break_in' => !empty($attendance->break_in),
+                        'has_break_out' => !empty($attendance->break_out),
+                        'has_time_out' => !empty($timeOut),
+                        'hours_worked' => $hoursWorked
+                    ]);
                 }
                 
-                // Check if values need updating
-                if ($attendance->late_minutes != $lateMinutes || 
-                    $attendance->undertime_minutes != $undertimeMinutes || 
-                    $attendance->hours_worked != $hoursWorked) {
+                // Apply late calculation rules
+                if ($isHalfday) {
+                    // For halfday, no late calculation
+                    $lateMinutes = 0;
+                    Log::info("Halfday detected - setting late minutes to 0", [
+                        'attendance_id' => $attendance->id
+                    ]);
+                } elseif ($hoursWorked >= 9) {
+                    // If working 9+ hours, not considered late
+                    $lateMinutes = 0;
+                    Log::info("Working 9+ hours - not considered late", [
+                        'attendance_id' => $attendance->id,
+                        'hours_worked' => $hoursWorked,
+                        'initial_late_minutes' => $initialLateMinutes
+                    ]);
+                } else {
+                    // Apply normal late calculation for less than 9 hours
+                    $lateMinutes = $initialLateMinutes;
+                    Log::info("Normal late calculation applied", [
+                        'attendance_id' => $attendance->id,
+                        'hours_worked' => $hoursWorked,
+                        'late_minutes' => $lateMinutes
+                    ]);
+                }
+                
+                // Apply undertime calculation rules
+                if ($isHalfday) {
+                    // For halfday, no undertime calculation
+                    $undertimeMinutes = 0;
+                    Log::info("Halfday detected - setting undertime minutes to 0", [
+                        'attendance_id' => $attendance->id
+                    ]);
+                } else {
+                    // Calculate undertime based on 9-hour minimum requirement
+                    $minimumWorkHours = 9;
+                    $minimumWorkMinutes = $minimumWorkHours * 60; // 9 hours = 540 minutes
+                    $netWorkedMinutes = $hoursWorked * 60;
                     
-                    // Update without triggering model events to avoid recursion
-                    DB::table('processed_attendances')
-                        ->where('id', $attendance->id)
-                        ->update([
+                    if ($netWorkedMinutes < $minimumWorkMinutes) {
+                        $undertimeMinutes = $minimumWorkMinutes - $netWorkedMinutes;
+                    }
+                    
+                    Log::info("Undertime calculation", [
+                        'attendance_id' => $attendance->id,
+                        'hours_worked' => $hoursWorked,
+                        'minimum_work_hours' => $minimumWorkHours,
+                        'undertime_minutes' => $undertimeMinutes,
+                        'is_undertime' => $hoursWorked < $minimumWorkHours
+                    ]);
+                }
+                
+                Log::info("Final calculations", [
+                    'attendance_id' => $attendance->id,
+                    'hours_worked' => $hoursWorked,
+                    'late_minutes' => $lateMinutes,
+                    'undertime_minutes' => $undertimeMinutes,
+                    'is_halfday' => $isHalfday
+                ]);
+                
+                // Check if values need updating (more precise comparison)
+                $needsUpdate = false;
+                
+                if (abs($attendance->late_minutes - $lateMinutes) > 0.01) {
+                    $needsUpdate = true;
+                    Log::info("Late minutes changed", [
+                        'attendance_id' => $attendance->id,
+                        'old_value' => $attendance->late_minutes,
+                        'new_value' => $lateMinutes
+                    ]);
+                }
+                
+                if (abs($attendance->undertime_minutes - $undertimeMinutes) > 0.01) {
+                    $needsUpdate = true;
+                    Log::info("Undertime minutes changed", [
+                        'attendance_id' => $attendance->id,
+                        'old_value' => $attendance->undertime_minutes,
+                        'new_value' => $undertimeMinutes
+                    ]);
+                }
+                
+                if (abs($attendance->hours_worked - $hoursWorked) > 0.01) {
+                    $needsUpdate = true;
+                    Log::info("Hours worked changed", [
+                        'attendance_id' => $attendance->id,
+                        'old_value' => $attendance->hours_worked,
+                        'new_value' => $hoursWorked
+                    ]);
+                }
+                
+                if ($needsUpdate) {
+                    try {
+                        // Update without triggering model events to avoid recursion
+                        $updateResult = DB::table('processed_attendances')
+                            ->where('id', $attendance->id)
+                            ->update([
+                                'late_minutes' => $lateMinutes,
+                                'undertime_minutes' => $undertimeMinutes,
+                                'hours_worked' => $hoursWorked,
+                                'updated_at' => now()
+                            ]);
+                        
+                        Log::info("Database update result", [
+                            'attendance_id' => $attendance->id,
+                            'affected_rows' => $updateResult
+                        ]);
+                        
+                        // Update the current object for display
+                        $attendance->late_minutes = $lateMinutes;
+                        $attendance->undertime_minutes = $undertimeMinutes;
+                        $attendance->hours_worked = $hoursWorked;
+                        
+                        $recalculatedCount++;
+                        
+                        Log::info("Recalculated attendance metrics", [
+                            'id' => $attendance->id,
+                            'employee_id' => $attendance->employee_id,
                             'late_minutes' => $lateMinutes,
                             'undertime_minutes' => $undertimeMinutes,
                             'hours_worked' => $hoursWorked,
-                            'updated_at' => now()
+                            'is_halfday' => $isHalfday,
+                            'original_time_out' => $timeOut,
+                            'rounded_time_out' => isset($roundedTimeOut) ? $roundedTimeOut->format('H:i:s') : null
                         ]);
-                    
-                    // Update the current object for display
-                    $attendance->late_minutes = $lateMinutes;
-                    $attendance->undertime_minutes = $undertimeMinutes;
-                    $attendance->hours_worked = $hoursWorked;
-                    
-                    $recalculatedCount++;
+                        
+                    } catch (\Exception $e) {
+                        Log::error("Error updating attendance {$attendance->id}: " . $e->getMessage());
+                    }
+                } else {
+                    Log::info("No update needed for attendance {$attendance->id}");
                 }
+            } else {
+                Log::warning("No time_in found for attendance {$attendance->id}");
             }
         }
         
         if ($recalculatedCount > 0) {
             Log::info("Auto-recalculated {$recalculatedCount} attendance records on page load");
+        } else {
+            Log::info("No attendance records needed recalculation");
         }
         
         return $recalculatedCount;
+        
     } catch (\Exception $e) {
-        Log::error('Error in auto-recalculation: ' . $e->getMessage());
+        Log::error('Error in auto-recalculation: ' . $e->getMessage(), [
+            'trace' => $e->getTraceAsString()
+        ]);
         return 0;
     }
 }
@@ -260,13 +543,119 @@ public function recalculateAll(Request $request)
         }
         
         $attendances = $query->get();
-        $recalculatedCount = $this->autoRecalculateMetrics($attendances);
+        $recalculatedCount = 0;
+        
+        foreach ($attendances as $attendance) {
+            try {
+                // Store original values
+                $originalLate = $attendance->late_minutes ?? 0;
+                $originalUnder = $attendance->undertime_minutes ?? 0;
+                $originalHours = $attendance->hours_worked ?? 0;
+                
+                // FIXED: Calculate late minutes (NO grace period - 8:00 AM sharp)
+                $lateMinutes = 0;
+                if ($attendance->time_in) {
+                    $attendanceDate = \Carbon\Carbon::parse($attendance->attendance_date);
+                    $expectedTimeIn = $attendanceDate->copy()->setTime(8, 0, 0); // 8:00 AM exactly
+                    $actualTimeIn = \Carbon\Carbon::parse($attendance->time_in);
+                    
+                    if ($actualTimeIn->gt($expectedTimeIn)) {
+                        $lateMinutes = $actualTimeIn->diffInMinutes($expectedTimeIn);
+                    }
+                }
+                
+                // FIXED: Calculate undertime minutes
+                $undertimeMinutes = 0;
+                $timeOut = $attendance->is_nightshift && $attendance->next_day_timeout 
+                    ? $attendance->next_day_timeout 
+                    : $attendance->time_out;
+                
+                if ($attendance->time_in && $timeOut) {
+                    $timeIn = \Carbon\Carbon::parse($attendance->time_in);
+                    $timeOut = \Carbon\Carbon::parse($timeOut);
+                    
+                    // Handle next day scenarios for night shifts
+                    if ($attendance->is_nightshift && $timeOut->lt($timeIn)) {
+                        $timeOut->addDay();
+                    }
+                    
+                    // Calculate total worked minutes
+                    $totalWorkedMinutes = $timeOut->diffInMinutes($timeIn);
+                    
+                    // Subtract break time
+                    $breakMinutes = 60; // Default 1-hour break
+                    if ($attendance->break_out && $attendance->break_in) {
+                        $breakOut = \Carbon\Carbon::parse($attendance->break_out);
+                        $breakIn = \Carbon\Carbon::parse($attendance->break_in);
+                        if ($breakIn->gt($breakOut)) {
+                            $breakMinutes = $breakIn->diffInMinutes($breakOut);
+                        }
+                    }
+                    
+                    $netWorkedMinutes = max(0, $totalWorkedMinutes - $breakMinutes);
+                    $standardWorkMinutes = 8 * 60; // 8 hours = 480 minutes
+                    
+                    if ($netWorkedMinutes < $standardWorkMinutes) {
+                        $undertimeMinutes = $standardWorkMinutes - $netWorkedMinutes;
+                    }
+                }
+                
+                // FIXED: Calculate hours worked
+                $hoursWorked = 0;
+                if ($attendance->time_in && $timeOut) {
+                    $timeIn = \Carbon\Carbon::parse($attendance->time_in);
+                    $timeOut = \Carbon\Carbon::parse($timeOut);
+                    
+                    // Handle next day scenarios for night shifts
+                    if ($attendance->is_nightshift && $timeOut->lt($timeIn)) {
+                        $timeOut->addDay();
+                    }
+                    
+                    $totalWorkedMinutes = $timeOut->diffInMinutes($timeIn);
+                    
+                    // Subtract break time
+                    $breakMinutes = 60;
+                    if ($attendance->break_out && $attendance->break_in) {
+                        $breakOut = \Carbon\Carbon::parse($attendance->break_out);
+                        $breakIn = \Carbon\Carbon::parse($attendance->break_in);
+                        if ($breakIn->gt($breakOut)) {
+                            $breakMinutes = $breakIn->diffInMinutes($breakOut);
+                        }
+                    }
+                    
+                    $netWorkedMinutes = max(0, $totalWorkedMinutes - $breakMinutes);
+                    $hoursWorked = round($netWorkedMinutes / 60, 2);
+                }
+                
+                // Check if anything changed
+                if ($originalLate != $lateMinutes || 
+                    $originalUnder != $undertimeMinutes || 
+                    $originalHours != $hoursWorked) {
+                    
+                    // Update the record
+                    DB::table('processed_attendances')
+                        ->where('id', $attendance->id)
+                        ->update([
+                            'late_minutes' => $lateMinutes,
+                            'undertime_minutes' => $undertimeMinutes,
+                            'hours_worked' => $hoursWorked,
+                            'updated_at' => now()
+                        ]);
+                    
+                    $recalculatedCount++;
+                }
+                
+            } catch (\Exception $e) {
+                Log::error("Error recalculating attendance ID {$attendance->id}: " . $e->getMessage());
+            }
+        }
         
         return response()->json([
             'success' => true,
             'message' => "Recalculated {$recalculatedCount} attendance records",
             'recalculated_count' => $recalculatedCount
         ]);
+        
     } catch (\Exception $e) {
         Log::error('Error in manual recalculation: ' . $e->getMessage());
         
