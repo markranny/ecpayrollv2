@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Head, usePage } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
-import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X, Users, FileText, Eye, Moon, Sun, AlertCircle, CheckCircle2, Info, Calculator, Car, Upload, Calendar as CalendarIcon, Target } from 'lucide-react';
+import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X, Users, FileText, Eye, Moon, Sun, AlertCircle, CheckCircle2, Info, Calculator, Car, Upload, Calendar as CalendarIcon, Target, Send, Preview } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -18,6 +18,7 @@ const ProcessedAttendanceList = () => {
   const [exporting, setExporting] = useState(false);
   const [importing, setImporting] = useState(false);
   const [settingHoliday, setSettingHoliday] = useState(false);
+  const [posting, setPosting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   
@@ -69,6 +70,18 @@ const ProcessedAttendanceList = () => {
     department: '',
     employee_ids: []
   });
+
+  // POST modal state
+  const [showPostModal, setShowPostModal] = useState(false);
+  const [postData, setPostData] = useState({
+    year: new Date().getFullYear(),
+    month: new Date().getMonth() + 1,
+    period_type: '1st_half',
+    department: '',
+    employee_ids: []
+  });
+  const [postPreview, setPostPreview] = useState(null);
+  const [loadingPreview, setLoadingPreview] = useState(false);
 
   // Better double-click prevention using useRef instead of state
   const editClickTimeoutRef = useRef(null);
@@ -151,6 +164,122 @@ const ProcessedAttendanceList = () => {
       setError('Error loading attendance data: ' + (err.message || 'Unknown error'));
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Load preview for posting
+  const loadPostPreview = async () => {
+    if (!postData.year || !postData.month || !postData.period_type) {
+      return;
+    }
+
+    setLoadingPreview(true);
+    setError('');
+
+    try {
+      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+      
+      const response = await fetch('/attendance/posting-preview', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          year: postData.year,
+          month: postData.month,
+          period_type: postData.period_type,
+          department: postData.department || null,
+          employee_ids: postData.employee_ids.length > 0 ? postData.employee_ids : null
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Preview failed with status: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        setPostPreview(data);
+      } else {
+        setError('Failed to load posting preview: ' + (data.message || 'Unknown error'));
+      }
+
+    } catch (err) {
+      console.error('Error loading post preview:', err);
+      setError('Failed to load posting preview: ' + (err.message || 'Unknown error'));
+    } finally {
+      setLoadingPreview(false);
+    }
+  };
+
+  // Handle POST to payroll
+  const handlePostToPayroll = async () => {
+    if (!postPreview || postPreview.totals.employees === 0) {
+      setError('No employees to post');
+      return;
+    }
+
+    setPosting(true);
+    setError('');
+
+    try {
+      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+      
+      const response = await fetch('/attendance/post-to-payroll', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          year: postData.year,
+          month: postData.month,
+          period_type: postData.period_type,
+          department: postData.department || null,
+          employee_ids: postData.employee_ids.length > 0 ? postData.employee_ids : null
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Posting failed with status: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        setSuccess(data.message || 'Posted to payroll successfully');
+        setShowPostModal(false);
+        setPostPreview(null);
+        
+        // Reset post form
+        setPostData({
+          year: new Date().getFullYear(),
+          month: new Date().getMonth() + 1,
+          period_type: '1st_half',
+          department: '',
+          employee_ids: []
+        });
+        
+        // Reload attendance data
+        await loadAttendanceData(false);
+      } else {
+        setError('Posting failed: ' + (data.message || 'Unknown error'));
+        if (data.errors && data.errors.length > 0) {
+          setError(data.message + '\n\nErrors:\n' + data.errors.slice(0, 3).join('\n'));
+        }
+      }
+
+    } catch (err) {
+      console.error('Posting error:', err);
+      setError('Failed to post to payroll: ' + (err.message || 'Unknown error'));
+    } finally {
+      setPosting(false);
     }
   };
 
@@ -407,17 +536,17 @@ const ProcessedAttendanceList = () => {
         return;
       }
 
-      // Prepare the request payload
+      // Prepare the request payload with proper array handling
       const requestData = {
         date: holidayData.date,
         multiplier: multiplierValue,
         department: holidayData.department || null,
         employee_ids: Array.isArray(holidayData.employee_ids) && holidayData.employee_ids.length > 0 
           ? holidayData.employee_ids 
-          : null
+          : []  // Send empty array instead of null
       };
 
-      console.log('Sending holiday request:', requestData); // Debug log
+      console.log('Sending holiday request:', requestData);
 
       const response = await fetch('/attendance/set-holiday', {
         method: 'POST',
@@ -430,16 +559,10 @@ const ProcessedAttendanceList = () => {
         body: JSON.stringify(requestData)
       });
 
-      console.log('Response status:', response.status); // Debug log
-
       if (!response.ok) {
-        // Handle different HTTP status codes
         if (response.status === 422) {
           const errorData = await response.json();
-          console.error('Validation errors:', errorData);
-          
           if (errorData.errors) {
-            // Format validation errors
             const errorMessages = Object.values(errorData.errors).flat();
             setError('Validation failed: ' + errorMessages.join(', '));
           } else {
@@ -459,7 +582,6 @@ const ProcessedAttendanceList = () => {
       }
 
       const data = await response.json();
-      console.log('Response data:', data); // Debug log
 
       if (data.success) {
         setSuccess(data.message || 'Holiday set successfully');
@@ -843,63 +965,6 @@ const ProcessedAttendanceList = () => {
     }
   };
 
-  // Handle posting status changes
-  const handlePostingStatusChange = async (action) => {
-    if (selectedIds.length === 0) {
-      setError('Please select attendance records first');
-      return;
-    }
-    
-    try {
-      setError('');
-      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-      
-      const endpoint = action === 'mark_posted' ? '/attendance/mark-as-posted' : '/attendance/mark-as-not-posted';
-      
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          ids: selectedIds
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Status update failed with status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        const statusText = action === 'mark_posted' ? 'posted' : 'not posted';
-        setSuccess(`${selectedIds.length} records marked as ${statusText}`);
-        
-        const newStatus = action === 'mark_posted' ? 'posted' : 'not_posted';
-        setAttendances(prevAttendances =>
-          prevAttendances.map(att =>
-            selectedIds.includes(att.id)
-              ? { ...att, posting_status: newStatus }
-              : att
-          )
-        );
-        
-        setSelectedIds([]);
-        setSelectAll(false);
-      } else {
-        setError('Failed to update posting status: ' + (data.message || 'Unknown error'));
-      }
-      
-    } catch (err) {
-      console.error('Posting status update error:', err);
-      setError('Failed to update posting status: ' + (err.message || 'Unknown error'));
-    }
-  };
-
   // Handle bulk delete
   const handleBulkDelete = async () => {
     try {
@@ -1144,6 +1209,13 @@ const ProcessedAttendanceList = () => {
     );
   };
 
+  // Load preview when post modal data changes
+  useEffect(() => {
+    if (showPostModal && postData.year && postData.month && postData.period_type) {
+      loadPostPreview();
+    }
+  }, [showPostModal, postData.year, postData.month, postData.period_type, postData.department, postData.employee_ids]);
+
   // Show recalculation message if records were auto-recalculated
   useEffect(() => {
     if (recalculated_count > 0) {
@@ -1229,7 +1301,7 @@ const ProcessedAttendanceList = () => {
                   Processed Attendance Records (Non-Posted Only)
                 </h1>
                 <p className="text-gray-600">
-                  View and manage non-posted attendance records with automatic recalculation on page load.
+                  View and manage non-posted attendance records with automatic recalculation and payroll posting.
                 </p>
                 <p className="text-sm text-blue-600 mt-1">
                   💡 Tip: Hold any row for 1 second to view details, double-click to edit attendance times
@@ -1243,29 +1315,25 @@ const ProcessedAttendanceList = () => {
               
               {/* Action Buttons */}
               <div className="flex items-center space-x-2">
-                {selectedIds.length > 0 && (
-                  <>
-                    <Button
-                      onClick={() => handlePostingStatusChange('mark_posted')}
-                      variant="outline"
-                      size="sm"
-                      className="bg-green-600 hover:bg-green-700 text-white border-green-600"
-                    >
-                      <CheckCircle2 className="h-4 w-4 mr-1" />
-                      Mark Posted ({selectedIds.length})
-                    </Button>
-                    
-                    <Button
-                      onClick={() => handlePostingStatusChange('mark_not_posted')}
-                      variant="outline"
-                      size="sm"
-                      className="bg-yellow-600 hover:bg-yellow-700 text-white border-yellow-600"
-                    >
-                      <AlertCircle className="h-4 w-4 mr-1" />
-                      Mark Not Posted ({selectedIds.length})
-                    </Button>
-                  </> 
-                )}
+                {/* POST Button - Primary Action */}
+                <Button
+                  onClick={() => setShowPostModal(true)}
+                  disabled={posting}
+                  size="sm"
+                  className="bg-green-600 hover:bg-green-700 text-white border-green-600"
+                >
+                  {posting ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                      Posting...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-4 w-4 mr-1" />
+                      POST to Payroll
+                    </>
+                  )}
+                </Button>
 
                 <Button
                   onClick={() => handleAutoRecalculate(true)}
@@ -1401,6 +1469,17 @@ const ProcessedAttendanceList = () => {
               </Alert>
             )}
 
+            {/* Show posting status */}
+            {posting && (
+              <Alert className="mb-4 border-green-200 bg-green-50">
+                <Send className="h-4 w-4 mr-2 text-green-600 animate-pulse" />
+                <AlertDescription className="text-green-800">
+                  Posting attendance records to payroll summaries...
+                </AlertDescription>
+              </Alert>
+            )}
+
+            {/* Filters Card */}
             <Card className="mb-4">
               <CardHeader className="pb-3">
                 <CardTitle className="text-lg flex items-center justify-between">
@@ -1876,115 +1955,27 @@ const ProcessedAttendanceList = () => {
         />
       )}
 
-      {/* Import Modal */}
-      {showImportModal && (
+      {/* POST Modal */}
+      {showPostModal && (
         <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-          <div className="relative bg-white rounded-lg shadow-lg max-w-md w-full mx-4">
-            <div className="flex justify-between items-center p-4 border-b">
-              <h2 className="text-xl font-semibold text-gray-800">Import Attendance Data</h2>
-              <button
-                onClick={() => setShowImportModal(false)}
-                className="text-gray-500 hover:text-gray-700"
-                aria-label="Close"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="p-6">
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Select CSV File
-                </label>
-                <input
-                  type="file"
-                  accept=".csv,.txt"
-                  onChange={(e) => setImportFile(e.target.files[0])}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <p className="mt-2 text-sm text-gray-500">
-                  Upload a CSV file with attendance data. Hours will be automatically calculated.
-                </p>
-              </div>
-
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                <div className="flex items-start">
-                  <Info className="h-5 w-5 text-blue-600 mt-0.5 mr-2 flex-shrink-0" />
-                  <div className="text-sm text-blue-800">
-                    <h4 className="font-medium mb-2">CSV Format Requirements:</h4>
-                    <div className="space-y-1">
-                      <p>• Employee Number, Employee Name, Department, Date, Day</p>
-                      <p>• Time In, Break Out, Break In, Time Out, Next Day Timeout</p>
-                      <p>• Hours Worked (will be recalculated), Night Shift, Trip</p>
-                      <p>• Use the Download button to get the correct format</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {importFile && (
-                <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-                  <p className="text-sm text-gray-700">
-                    <strong>Selected file:</strong> {importFile.name}
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Size: {(importFile.size / 1024).toFixed(2)} KB
-                  </p>
-                </div>
-              )}
-            </div>
-
-            <div className="bg-gray-50 px-6 py-4 flex justify-end space-x-3 rounded-b-lg">
-              <Button
-                variant="outline"
-                onClick={() => setShowImportModal(false)}
-                disabled={importing}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleImport}
-                disabled={importing || !importFile}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white"
-              >
-                {importing ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                    Importing...
-                  </>
-                ) : (
-                  <>
-                    <Upload className="h-4 w-4 mr-2" />
-                    Import Data
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Holiday Modal */}
-      {showHolidayModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-          <div className="relative bg-white rounded-lg shadow-lg max-w-md w-full mx-4">
-            <div className="flex justify-between items-center p-4 border-b">
-              <h2 className="text-xl font-semibold text-gray-800">Set Holiday</h2>
+          <div className="relative bg-white rounded-lg shadow-lg max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center p-6 border-b">
+              <h2 className="text-xl font-semibold text-gray-800">POST to Payroll</h2>
               <button
                 onClick={() => {
-                  setShowHolidayModal(false);
-                  setError(''); // Clear any errors when closing
+                  setShowPostModal(false);
+                  setPostPreview(null);
                 }}
                 className="text-gray-500 hover:text-gray-700"
                 aria-label="Close"
-                disabled={settingHoliday}
+                disabled={posting}
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
             <div className="p-6">
-              {/* Show any validation errors */}
+              {/* Show any errors */}
               {error && (
                 <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
                   <div className="flex items-start">
@@ -1994,55 +1985,54 @@ const ProcessedAttendanceList = () => {
                 </div>
               )}
 
-              <div className="space-y-4">
+              {/* Post Configuration */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Holiday Date *
+                    Year *
                   </label>
-                  <div className="relative">
-                    <CalendarIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-                    <input
-                      type="date"
-                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                      value={holidayData.date}
-                      onChange={(e) => {
-                        setHolidayData(prev => ({ ...prev, date: e.target.value }));
-                        setError(''); // Clear error when user makes changes
-                      }}
-                      disabled={settingHoliday}
-                      required
-                    />
-                  </div>
-                  {!holidayData.date && (
-                    <p className="mt-1 text-xs text-red-500">Holiday date is required</p>
-                  )}
+                  <input
+                    type="number"
+                    min="2020"
+                    max="2030"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    value={postData.year}
+                    onChange={(e) => setPostData(prev => ({ ...prev, year: parseInt(e.target.value) }))}
+                    disabled={posting || loadingPreview}
+                  />
                 </div>
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Holiday Multiplier *
+                    Month *
                   </label>
-                  <input
-                    type="number"
-                    min="0.1"
-                    max="10"
-                    step="0.1"
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                    value={holidayData.multiplier}
-                    onChange={(e) => {
-                      setHolidayData(prev => ({ ...prev, multiplier: e.target.value }));
-                      setError(''); // Clear error when user makes changes
-                    }}
-                    placeholder="2.0"
-                    disabled={settingHoliday}
-                    required
-                  />
-                  <p className="mt-1 text-xs text-gray-500">
-                    Common values: 2.0 (Regular Holiday), 1.3 (Special Holiday)
-                  </p>
-                  {holidayData.multiplier && (isNaN(parseFloat(holidayData.multiplier)) || parseFloat(holidayData.multiplier) < 0.1 || parseFloat(holidayData.multiplier) > 10) && (
-                    <p className="mt-1 text-xs text-red-500">Multiplier must be between 0.1 and 10</p>
-                  )}
+                  <select
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    value={postData.month}
+                    onChange={(e) => setPostData(prev => ({ ...prev, month: parseInt(e.target.value) }))}
+                    disabled={posting || loadingPreview}
+                  >
+                    {Array.from({ length: 12 }, (_, i) => (
+                      <option key={i + 1} value={i + 1}>
+                        {new Date(2024, i, 1).toLocaleString('default', { month: 'long' })}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Period *
+                  </label>
+                  <select
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    value={postData.period_type}
+                    onChange={(e) => setPostData(prev => ({ ...prev, period_type: e.target.value }))}
+                    disabled={posting || loadingPreview}
+                  >
+                    <option value="1st_half">1st Half (1-15)</option>
+                    <option value="2nd_half">2nd Half (16-30/31)</option>
+                  </select>
                 </div>
 
                 <div>
@@ -2050,13 +2040,10 @@ const ProcessedAttendanceList = () => {
                     Department (Optional)
                   </label>
                   <select
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                    value={holidayData.department}
-                    onChange={(e) => {
-                      setHolidayData(prev => ({ ...prev, department: e.target.value }));
-                      setError(''); // Clear error when user makes changes
-                    }}
-                    disabled={settingHoliday}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                    value={postData.department}
+                    onChange={(e) => setPostData(prev => ({ ...prev, department: e.target.value }))}
+                    disabled={posting || loadingPreview}
                   >
                     <option value="">All Departments</option>
                     {departments.map((dept) => (
@@ -2065,209 +2052,66 @@ const ProcessedAttendanceList = () => {
                       </option>
                     ))}
                   </select>
-                  <p className="mt-1 text-xs text-gray-500">
-                    Leave empty to apply to all departments
-                  </p>
                 </div>
               </div>
 
-              <div className="mt-6 p-4 bg-orange-50 border border-orange-200 rounded-lg">
-                <div className="flex items-start">
-                  <Target className="h-5 w-5 text-orange-600 mt-0.5 mr-2 flex-shrink-0" />
-                  <div className="text-sm text-orange-800">
-                    <h4 className="font-medium mb-2">Holiday Setting Rules:</h4>
-                    <div className="space-y-1">
-                      <p>• Only applies to employees without existing OT, OT Reg, or OT Spl</p>
-                      <p>• Will update the holiday column with the specified multiplier</p>
-                      <p>• Department filter is optional - leave empty for all departments</p>
-                      <p>• Date must be specified to target the correct attendance records</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-gray-50 px-6 py-4 flex justify-end space-x-3 rounded-b-lg">
-              <Button
-                variant="outline"
-                onClick={() => {
-                  setShowHolidayModal(false);
-                  setError(''); // Clear error when canceling
-                }}
-                disabled={settingHoliday}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleSetHoliday}
-                disabled={
-                  settingHoliday || 
-                  !holidayData.date || 
-                  !holidayData.multiplier ||
-                  isNaN(parseFloat(holidayData.multiplier)) ||
-                  parseFloat(holidayData.multiplier) < 0.1 ||
-                  parseFloat(holidayData.multiplier) > 10
-                }
-                className="bg-orange-600 hover:bg-orange-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {settingHoliday ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                    Setting Holiday...
-                  </>
-                ) : (
-                  <>
-                    <Target className="h-4 w-4 mr-2" />
-                    Set Holiday
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Modal */}
-      {showDeleteModal && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-          <div className="relative bg-white rounded-lg shadow-lg max-w-md w-full mx-4">
-            <div className="flex justify-between items-center p-4 border-b">
-              <h2 className="text-xl font-semibold text-gray-800">Delete Attendance Records</h2>
-              <button
-                onClick={() => setShowDeleteModal(false)}
-                className="text-gray-500 hover:text-gray-700"
-                aria-label="Close"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            <div className="p-6">
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Delete Mode
-                </label>
-                <div className="space-y-2">
-                  <label className="flex items-center">
-                    <input
-                      type="radio"
-                      name="deleteMode"
-                      value="selected"
-                      checked={deleteMode === 'selected'}
-                      onChange={(e) => setDeleteMode(e.target.value)}
-                      className="mr-2"
-                    />
-                    Delete Selected Records ({selectedIds.length} selected)
-                  </label>
-                  <label className="flex items-center">
-                    <input
-                      type="radio"
-                      name="deleteMode"
-                      value="range"
-                      checked={deleteMode === 'range'}
-                      onChange={(e) => setDeleteMode(e.target.value)}
-                      className="mr-2"
-                    />
-                    Delete by Date Range
-                  </label>
-                </div>
-              </div>
-
-              {deleteMode === 'range' && (
-                <div className="space-y-4">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Start Date *
-                      </label>
-                      <input
-                        type="date"
-                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        value={deleteRange.start_date}
-                        onChange={(e) => setDeleteRange(prev => ({ ...prev, start_date: e.target.value }))}
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        End Date *
-                      </label>
-                      <input
-                        type="date"
-                        className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                        value={deleteRange.end_date}
-                        onChange={(e) => setDeleteRange(prev => ({ ...prev, end_date: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Department (Optional)
-                    </label>
-                    <select
-                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                      value={deleteRange.department}
-                      onChange={(e) => setDeleteRange(prev => ({ ...prev, department: e.target.value }))}
-                    >
-                      <option value="">All Departments</option>
-                      {departments.map((dept) => (
-                        <option key={dept} value={dept}>
-                          {dept}
-                        </option>
-                      ))}
-                    </select>
+              {/* Preview Section */}
+              {loadingPreview && (
+                <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                  <div className="flex items-center">
+                    <RefreshCw className="h-5 w-5 text-blue-600 animate-spin mr-2" />
+                    <span className="text-blue-800">Loading preview...</span>
                   </div>
                 </div>
               )}
 
-              <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-                <div className="flex items-start">
-                  <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5 mr-2" />
-                  <div>
-                    <h4 className="text-sm font-medium text-red-800 mb-1">Warning</h4>
-                    <p className="text-sm text-red-700">
-                      {deleteMode === 'selected' 
-                        ? `This will permanently delete ${selectedIds.length} selected attendance records.`
-                        : 'This will permanently delete all attendance records within the specified date range and filters.'
-                      }
-                      This action cannot be undone.
-                    </p>
+              {postPreview && (
+                <div className="mb-6 space-y-4">
+                  <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
+                    <h3 className="text-lg font-medium text-green-800 mb-3 flex items-center">
+                      <Preview className="h-5 w-5 mr-2" />
+                      Posting Preview
+                    </h3>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-green-600">{postPreview.totals.employees}</div>
+                        <div className="text-sm text-green-800">Employees</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-green-600">{postPreview.totals.records}</div>
+                        <div className="text-sm text-green-800">Records</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-green-600">{postPreview.totals.days_worked.toFixed(1)}</div>
+                        <div className="text-sm text-green-800">Total Days</div>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+                      <div>
+                        <span className="font-medium">Period:</span> {postPreview.period.label}
+                      </div>
+                      <div>
+                        <span className="font-medium">OT Hours:</span> {postPreview.totals.ot_hours.toFixed(2)}
+                      </div>
+                      <div>
+                        <span className="font-medium">SLVL Days:</span> {postPreview.totals.slvl_days.toFixed(1)}
+                      </div>
+                      <div>
+                        <span className="font-medium">NSD Hours:</span> {postPreview.totals.nsd_hours.toFixed(2)}
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            </div>
 
-            <div className="bg-gray-50 px-6 py-4 flex justify-end space-x-3 rounded-b-lg">
-              <Button
-                variant="outline"
-                onClick={() => setShowDeleteModal(false)}
-                disabled={deleting}
-              >
-                Cancel
-              </Button>
-              <Button
-                onClick={handleBulkDelete}
-                disabled={deleting || (deleteMode === 'selected' && selectedIds.length === 0)}
-                className="bg-red-600 hover:bg-red-700 text-white"
-              >
-                {deleting ? (
-                  <>
-                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                    Deleting...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="h-4 w-4 mr-2" />
-                    Delete Records
-                  </>
-                )}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-    </AuthenticatedLayout>
-  );
-};
-
-export default ProcessedAttendanceList;
+                  {postPreview.preview.length > 0 && (
+                    <div className="max-h-64 overflow-y-auto border border-gray-200 rounded-lg">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50 sticky top-0">
+                          <tr>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Employee</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Dept</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Records</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Days</th>
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">OT</th>
+                            <th className="px-4 py-

@@ -311,6 +311,19 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
         ->name('attendance.departments');
     Route::get('/attendance/export', [ProcessedAttendanceController::class, 'export'])
         ->name('attendance.export');
+
+    Route::post('/attendance/posting-preview', [ProcessedAttendanceController::class, 'getPostingPreview'])
+        ->name('attendance.posting-preview');
+    Route::post('/attendance/post-to-payroll', [ProcessedAttendanceController::class, 'postToPayroll'])
+        ->name('attendance.post-to-payroll');
+    
+    // NEW: Payroll summaries management
+    Route::get('/payroll-summaries', [ProcessedAttendanceController::class, 'getPayrollSummaries'])
+        ->name('payroll-summaries.index');
+    Route::get('/payroll-summaries/export', [ProcessedAttendanceController::class, 'exportPayrollSummaries'])
+        ->name('payroll-summaries.export');
+    Route::delete('/payroll-summaries/{id}', [ProcessedAttendanceController::class, 'deletePayrollSummary'])
+        ->name('payroll-summaries.destroy');
 });
 
 /*
