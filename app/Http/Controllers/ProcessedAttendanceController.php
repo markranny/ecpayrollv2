@@ -2197,16 +2197,25 @@ private function calculateHoursFromTimes($timeIn, $timeOut, $breakOut, $breakIn)
 public function setHoliday(Request $request)
 {
     try {
+        // Enhanced validation with proper error messages
         $validator = Validator::make($request->all(), [
             'date' => 'required|date',
             'multiplier' => 'required|numeric|min:0.1|max:10',
-            'department' => 'nullable|string',
+            'department' => 'nullable|string|max:255',
             'employee_ids' => 'nullable|array',
             'employee_ids.*' => 'integer|exists:employees,id'
+        ], [
+            'date.required' => 'Holiday date is required',
+            'date.date' => 'Please provide a valid date',
+            'multiplier.required' => 'Holiday multiplier is required',
+            'multiplier.numeric' => 'Holiday multiplier must be a number',
+            'multiplier.min' => 'Holiday multiplier must be at least 0.1',
+            'multiplier.max' => 'Holiday multiplier cannot exceed 10',
+            'employee_ids.*.exists' => 'One or more selected employees do not exist'
         ]);
 
         if ($validator->fails()) {
-            \Log::error('Holiday validation failed', [
+            Log::warning('Holiday validation failed', [
                 'errors' => $validator->errors()->toArray(),
                 'request_data' => $request->all()
             ]);
@@ -2223,7 +2232,7 @@ public function setHoliday(Request $request)
         $department = $request->input('department');
         $employeeIds = $request->input('employee_ids', []);
 
-        \Log::info('Setting holiday', [
+        Log::info('Setting holiday', [
             'date' => $date,
             'multiplier' => $multiplier,
             'department' => $department,
@@ -2235,20 +2244,19 @@ public function setHoliday(Request $request)
             ->where('posting_status', '!=', 'posted') // Only non-posted records
             // Only set holiday for records that don't have overtime
             ->where(function ($q) {
-                $q->where('overtime', 0)
-                  ->orWhereNull('overtime');
-            })
-            ->where(function ($q) {
-                $q->where('ot_reg_holiday', 0)
-                  ->orWhereNull('ot_reg_holiday');
-            })
-            ->where(function ($q) {
-                $q->where('ot_special_holiday', 0)
-                  ->orWhereNull('ot_special_holiday');
+                $q->where(function($subQ) {
+                    $subQ->where('overtime', 0)->orWhereNull('overtime');
+                })
+                ->where(function($subQ) {
+                    $subQ->where('ot_reg_holiday', 0)->orWhereNull('ot_reg_holiday');
+                })
+                ->where(function($subQ) {
+                    $subQ->where('ot_special_holiday', 0)->orWhereNull('ot_special_holiday');
+                });
             });
 
         // Filter by department if specified
-        if ($department) {
+        if (!empty($department)) {
             $query->whereHas('employee', function ($q) use ($department) {
                 $q->where('Department', $department);
             });
@@ -2262,7 +2270,7 @@ public function setHoliday(Request $request)
         // Get affected records
         $affectedRecords = $query->get();
 
-        \Log::info('Found records for holiday update', [
+        Log::info('Found records for holiday update', [
             'count' => $affectedRecords->count(),
             'date' => $date
         ]);
@@ -2271,13 +2279,15 @@ public function setHoliday(Request $request)
             return response()->json([
                 'success' => false,
                 'message' => 'No eligible attendance records found for the specified date and criteria. Records with existing overtime are excluded.'
-            ]);
+            ], 404);
         }
 
-        // Update records
-        $updatedCount = 0;
-        foreach ($affectedRecords as $record) {
-            try {
+        // Update records using database transaction for consistency
+        DB::beginTransaction();
+        
+        try {
+            $updatedCount = 0;
+            foreach ($affectedRecords as $record) {
                 $record->update([
                     'holiday' => $multiplier,
                     'source' => 'holiday_set',
@@ -2285,36 +2295,36 @@ public function setHoliday(Request $request)
                 ]);
                 $updatedCount++;
                 
-                \Log::debug('Updated holiday for record', [
+                Log::debug('Updated holiday for record', [
                     'id' => $record->id,
                     'employee_id' => $record->employee_id,
                     'multiplier' => $multiplier
                 ]);
-                
-            } catch (\Exception $e) {
-                \Log::error('Error updating individual record', [
-                    'record_id' => $record->id,
-                    'error' => $e->getMessage()
-                ]);
             }
+            
+            DB::commit();
+            
+            Log::info("Holiday set for {$updatedCount} records", [
+                'date' => $date,
+                'multiplier' => $multiplier,
+                'department' => $department,
+                'employee_count' => count($employeeIds),
+                'updated_count' => $updatedCount
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => "Holiday multiplier ({$multiplier}) set for {$updatedCount} attendance records on {$date}",
+                'updated_count' => $updatedCount
+            ]);
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
         }
 
-        \Log::info("Holiday set for {$updatedCount} records", [
-            'date' => $date,
-            'multiplier' => $multiplier,
-            'department' => $department,
-            'employee_count' => count($employeeIds),
-            'updated_count' => $updatedCount
-        ]);
-
-        return response()->json([
-            'success' => true,
-            'message' => "Holiday multiplier ({$multiplier}) set for {$updatedCount} attendance records on {$date}",
-            'updated_count' => $updatedCount
-        ]);
-
     } catch (\Exception $e) {
-        \Log::error('Error setting holiday', [
+        Log::error('Error setting holiday', [
             'error' => $e->getMessage(),
             'trace' => $e->getTraceAsString(),
             'request_data' => $request->all()

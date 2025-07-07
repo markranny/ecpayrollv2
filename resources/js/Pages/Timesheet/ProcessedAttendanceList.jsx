@@ -377,10 +377,21 @@ const ProcessedAttendanceList = () => {
     }
   };
 
-  // Handle set holiday functionality
   const handleSetHoliday = async () => {
-    if (!holidayData.date || !holidayData.multiplier) {
-      setError('Please provide both date and multiplier for the holiday');
+    // Enhanced validation
+    if (!holidayData.date) {
+      setError('Please select a holiday date');
+      return;
+    }
+    
+    if (!holidayData.multiplier || isNaN(parseFloat(holidayData.multiplier))) {
+      setError('Please provide a valid holiday multiplier');
+      return;
+    }
+
+    const multiplierValue = parseFloat(holidayData.multiplier);
+    if (multiplierValue < 0.1 || multiplierValue > 10) {
+      setError('Holiday multiplier must be between 0.1 and 10');
       return;
     }
 
@@ -389,6 +400,24 @@ const ProcessedAttendanceList = () => {
 
     try {
       const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+      
+      if (!csrfToken) {
+        setError('Session expired. Please refresh the page and try again.');
+        setSettingHoliday(false);
+        return;
+      }
+
+      // Prepare the request payload
+      const requestData = {
+        date: holidayData.date,
+        multiplier: multiplierValue,
+        department: holidayData.department || null,
+        employee_ids: Array.isArray(holidayData.employee_ids) && holidayData.employee_ids.length > 0 
+          ? holidayData.employee_ids 
+          : null
+      };
+
+      console.log('Sending holiday request:', requestData); // Debug log
 
       const response = await fetch('/attendance/set-holiday', {
         method: 'POST',
@@ -398,37 +427,69 @@ const ProcessedAttendanceList = () => {
           'X-Requested-With': 'XMLHttpRequest',
           'Accept': 'application/json'
         },
-        body: JSON.stringify({
-          date: holidayData.date,
-          multiplier: parseFloat(holidayData.multiplier),
-          department: holidayData.department || null,
-          employee_ids: holidayData.employee_ids.length > 0 ? holidayData.employee_ids : null
-        })
+        body: JSON.stringify(requestData)
       });
 
+      console.log('Response status:', response.status); // Debug log
+
       if (!response.ok) {
-        throw new Error(`Set holiday failed with status: ${response.status}`);
+        // Handle different HTTP status codes
+        if (response.status === 422) {
+          const errorData = await response.json();
+          console.error('Validation errors:', errorData);
+          
+          if (errorData.errors) {
+            // Format validation errors
+            const errorMessages = Object.values(errorData.errors).flat();
+            setError('Validation failed: ' + errorMessages.join(', '));
+          } else {
+            setError('Validation failed: ' + (errorData.message || 'Invalid data provided'));
+          }
+          return;
+        } else if (response.status === 404) {
+          const errorData = await response.json();
+          setError(errorData.message || 'No eligible attendance records found for the specified criteria');
+          return;
+        } else if (response.status >= 500) {
+          setError('Server error occurred. Please try again later.');
+          return;
+        } else {
+          throw new Error(`Request failed with status: ${response.status}`);
+        }
       }
 
       const data = await response.json();
+      console.log('Response data:', data); // Debug log
 
       if (data.success) {
         setSuccess(data.message || 'Holiday set successfully');
         setShowHolidayModal(false);
+        
+        // Reset holiday form data
         setHolidayData({
           date: '',
           multiplier: '2.0',
           department: '',
           employee_ids: []
         });
+        
+        // Reload attendance data
         await loadAttendanceData(false);
       } else {
-        setError('Set holiday failed: ' + (data.message || 'Unknown error'));
+        setError('Set holiday failed: ' + (data.message || 'Unknown error occurred'));
       }
 
     } catch (err) {
       console.error('Set holiday error:', err);
-      setError('Failed to set holiday: ' + (err.message || 'Unknown error'));
+      
+      // Handle different types of errors
+      if (err.name === 'TypeError' && err.message.includes('Failed to fetch')) {
+        setError('Network error. Please check your internet connection and try again.');
+      } else if (err.message.includes('JSON')) {
+        setError('Invalid response from server. Please try again.');
+      } else {
+        setError('Failed to set holiday: ' + (err.message || 'Unknown error occurred'));
+      }
     } finally {
       setSettingHoliday(false);
     }
@@ -1910,15 +1971,29 @@ const ProcessedAttendanceList = () => {
             <div className="flex justify-between items-center p-4 border-b">
               <h2 className="text-xl font-semibold text-gray-800">Set Holiday</h2>
               <button
-                onClick={() => setShowHolidayModal(false)}
+                onClick={() => {
+                  setShowHolidayModal(false);
+                  setError(''); // Clear any errors when closing
+                }}
                 className="text-gray-500 hover:text-gray-700"
                 aria-label="Close"
+                disabled={settingHoliday}
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
             <div className="p-6">
+              {/* Show any validation errors */}
+              {error && (
+                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <div className="flex items-start">
+                    <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5 mr-2 flex-shrink-0" />
+                    <p className="text-sm text-red-800">{error}</p>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -1930,9 +2005,17 @@ const ProcessedAttendanceList = () => {
                       type="date"
                       className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                       value={holidayData.date}
-                      onChange={(e) => setHolidayData(prev => ({ ...prev, date: e.target.value }))}
+                      onChange={(e) => {
+                        setHolidayData(prev => ({ ...prev, date: e.target.value }));
+                        setError(''); // Clear error when user makes changes
+                      }}
+                      disabled={settingHoliday}
+                      required
                     />
                   </div>
+                  {!holidayData.date && (
+                    <p className="mt-1 text-xs text-red-500">Holiday date is required</p>
+                  )}
                 </div>
 
                 <div>
@@ -1946,12 +2029,20 @@ const ProcessedAttendanceList = () => {
                     step="0.1"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     value={holidayData.multiplier}
-                    onChange={(e) => setHolidayData(prev => ({ ...prev, multiplier: e.target.value }))}
+                    onChange={(e) => {
+                      setHolidayData(prev => ({ ...prev, multiplier: e.target.value }));
+                      setError(''); // Clear error when user makes changes
+                    }}
                     placeholder="2.0"
+                    disabled={settingHoliday}
+                    required
                   />
                   <p className="mt-1 text-xs text-gray-500">
                     Common values: 2.0 (Regular Holiday), 1.3 (Special Holiday)
                   </p>
+                  {holidayData.multiplier && (isNaN(parseFloat(holidayData.multiplier)) || parseFloat(holidayData.multiplier) < 0.1 || parseFloat(holidayData.multiplier) > 10) && (
+                    <p className="mt-1 text-xs text-red-500">Multiplier must be between 0.1 and 10</p>
+                  )}
                 </div>
 
                 <div>
@@ -1961,7 +2052,11 @@ const ProcessedAttendanceList = () => {
                   <select
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     value={holidayData.department}
-                    onChange={(e) => setHolidayData(prev => ({ ...prev, department: e.target.value }))}
+                    onChange={(e) => {
+                      setHolidayData(prev => ({ ...prev, department: e.target.value }));
+                      setError(''); // Clear error when user makes changes
+                    }}
+                    disabled={settingHoliday}
                   >
                     <option value="">All Departments</option>
                     {departments.map((dept) => (
@@ -1995,15 +2090,25 @@ const ProcessedAttendanceList = () => {
             <div className="bg-gray-50 px-6 py-4 flex justify-end space-x-3 rounded-b-lg">
               <Button
                 variant="outline"
-                onClick={() => setShowHolidayModal(false)}
+                onClick={() => {
+                  setShowHolidayModal(false);
+                  setError(''); // Clear error when canceling
+                }}
                 disabled={settingHoliday}
               >
                 Cancel
               </Button>
               <Button
                 onClick={handleSetHoliday}
-                disabled={settingHoliday || !holidayData.date || !holidayData.multiplier}
-                className="bg-orange-600 hover:bg-orange-700 text-white"
+                disabled={
+                  settingHoliday || 
+                  !holidayData.date || 
+                  !holidayData.multiplier ||
+                  isNaN(parseFloat(holidayData.multiplier)) ||
+                  parseFloat(holidayData.multiplier) < 0.1 ||
+                  parseFloat(holidayData.multiplier) > 10
+                }
+                className="bg-orange-600 hover:bg-orange-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {settingHoliday ? (
                   <>

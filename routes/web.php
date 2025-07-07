@@ -266,6 +266,7 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
         ->name('attendance.recalculate-all');
     
     // Sync and Delete functionality
+    // Processed Attendance Routes
     Route::get('/attendance', [ProcessedAttendanceController::class, 'index'])
         ->name('attendance.index');
     Route::get('/attendance/list', [ProcessedAttendanceController::class, 'list'])
@@ -281,11 +282,11 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
     Route::get('/attendance/download-template', [ProcessedAttendanceController::class, 'downloadTemplate'])
         ->name('attendance.download-template');
     
-    // Import attendance data route - UPDATED to use ProcessedAttendanceController
+    // Import attendance data route
     Route::post('/attendance/import', [ProcessedAttendanceController::class, 'importAttendance'])
         ->name('attendance.import');
     
-    // Set holiday route - MAKE SURE THIS IS INCLUDED
+    // Set holiday route - FIXED: Ensure this route is properly defined
     Route::post('/attendance/set-holiday', [ProcessedAttendanceController::class, 'setHoliday'])
         ->name('attendance.set-holiday');
     
@@ -305,6 +306,7 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
     Route::post('/attendance/mark-as-not-posted', [ProcessedAttendanceController::class, 'markAsNotPosted'])
         ->name('attendance.mark-as-not-posted');
     
+    // Utility routes
     Route::get('/attendance/departments', [ProcessedAttendanceController::class, 'getDepartments'])
         ->name('attendance.departments');
     Route::get('/attendance/export', [ProcessedAttendanceController::class, 'export'])
