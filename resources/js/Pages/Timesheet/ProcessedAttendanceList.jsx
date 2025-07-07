@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Head, usePage } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
-import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X, Users, FileText, Eye, Moon, Sun, AlertCircle, CheckCircle2, Info, Calculator, Car } from 'lucide-react';
+import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X, Users, FileText, Eye, Moon, Sun, AlertCircle, CheckCircle2, Info, Calculator, Car, Upload, Calendar as CalendarIcon, Target } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,6 +16,8 @@ const ProcessedAttendanceList = () => {
   const [syncing, setSyncing] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [settingHoliday, setSettingHoliday] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   
@@ -54,6 +56,19 @@ const ProcessedAttendanceList = () => {
     department: ''
   });
   const [deleting, setDeleting] = useState(false);
+
+  // Import modal state
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importFile, setImportFile] = useState(null);
+
+  // Holiday modal state
+  const [showHolidayModal, setShowHolidayModal] = useState(false);
+  const [holidayData, setHolidayData] = useState({
+    date: '',
+    multiplier: '2.0',
+    department: '',
+    employee_ids: []
+  });
 
   // Better double-click prevention using useRef instead of state
   const editClickTimeoutRef = useRef(null);
@@ -160,6 +175,81 @@ const ProcessedAttendanceList = () => {
     }, 0);
   };
 
+  // Handle download template functionality
+  const handleDownloadTemplate = async () => {
+    setExporting(true);
+    setError('');
+    
+    try {
+      const params = new URLSearchParams();
+      
+      // Add current filters to download
+      if (searchTerm) params.append('search', searchTerm);
+      if (dateFilter) params.append('date', dateFilter);
+      if (departmentFilter) params.append('department', departmentFilter);
+      if (editsOnlyFilter) params.append('edits_only', 'true');
+      if (nightShiftFilter) params.append('night_shift_only', 'true');
+      if (postingStatusFilter) params.append('posting_status', postingStatusFilter);
+      
+      const response = await fetch('/attendance/download-template?' + params.toString(), {
+        method: 'GET',
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/octet-stream'
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Download failed with status: ${response.status}`);
+      }
+      
+      // Get the blob data
+      const blob = await response.blob();
+      
+      // Create download link
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      
+      // Generate filename with current date and filters
+      const now = new Date();
+      const dateString = now.toISOString().split('T')[0];
+      let filename = `attendance_data_${dateString}`;
+      
+      // Add filter info to filename
+      if (dateFilter) {
+        filename += `_${dateFilter}`;
+      }
+      if (departmentFilter) {
+        filename += `_${departmentFilter.replace(/\s+/g, '_')}`;
+      }
+      if (editsOnlyFilter) {
+        filename += '_edited_only';
+      }
+      if (nightShiftFilter) {
+        filename += '_night_shift';
+      }
+      
+      link.download = `${filename}.csv`;
+      
+      // Trigger download
+      document.body.appendChild(link);
+      link.click();
+      
+      // Cleanup
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+      
+      setSuccess('Attendance data downloaded successfully');
+      
+    } catch (err) {
+      console.error('Download error:', err);
+      setError('Failed to download attendance data: ' + (err.message || 'Unknown error'));
+    } finally {
+      setExporting(false);
+    }
+  };
+
   // Handle export functionality
   const handleExport = async () => {
     setExporting(true);
@@ -232,6 +322,115 @@ const ProcessedAttendanceList = () => {
       setError('Failed to export attendance data: ' + (err.message || 'Unknown error'));
     } finally {
       setExporting(false);
+    }
+  };
+
+  // Handle import functionality
+  const handleImport = async () => {
+    if (!importFile) {
+      setError('Please select a file to import');
+      return;
+    }
+
+    setImporting(true);
+    setError('');
+
+    try {
+      const formData = new FormData();
+      formData.append('file', importFile);
+
+      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
+      const response = await fetch('/attendance/import', {
+        method: 'POST',
+        headers: {
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
+        body: formData
+      });
+
+      if (!response.ok) {
+        throw new Error(`Import failed with status: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        setSuccess(data.message || 'Import completed successfully');
+        setShowImportModal(false);
+        setImportFile(null);
+        await loadAttendanceData(false);
+      } else {
+        setError('Import failed: ' + (data.message || 'Unknown error'));
+        if (data.errors && data.errors.length > 0) {
+          setError(data.message + '\n\nErrors:\n' + data.errors.slice(0, 5).join('\n'));
+        }
+      }
+
+    } catch (err) {
+      console.error('Import error:', err);
+      setError('Failed to import attendance data: ' + (err.message || 'Unknown error'));
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  // Handle set holiday functionality
+  const handleSetHoliday = async () => {
+    if (!holidayData.date || !holidayData.multiplier) {
+      setError('Please provide both date and multiplier for the holiday');
+      return;
+    }
+
+    setSettingHoliday(true);
+    setError('');
+
+    try {
+      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+
+      const response = await fetch('/attendance/set-holiday', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': csrfToken,
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          date: holidayData.date,
+          multiplier: parseFloat(holidayData.multiplier),
+          department: holidayData.department || null,
+          employee_ids: holidayData.employee_ids.length > 0 ? holidayData.employee_ids : null
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`Set holiday failed with status: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        setSuccess(data.message || 'Holiday set successfully');
+        setShowHolidayModal(false);
+        setHolidayData({
+          date: '',
+          multiplier: '2.0',
+          department: '',
+          employee_ids: []
+        });
+        await loadAttendanceData(false);
+      } else {
+        setError('Set holiday failed: ' + (data.message || 'Unknown error'));
+      }
+
+    } catch (err) {
+      console.error('Set holiday error:', err);
+      setError('Failed to set holiday: ' + (err.message || 'Unknown error'));
+    } finally {
+      setSettingHoliday(false);
     }
   };
 
@@ -1022,6 +1221,41 @@ const ProcessedAttendanceList = () => {
                   )}
                   {recalculating ? 'Recalculating...' : 'Recalculate'}
                 </Button>
+
+                <Button
+                  onClick={handleDownloadTemplate}
+                  disabled={exporting}
+                  variant="outline"
+                  size="sm"
+                  className="bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
+                >
+                  {exporting ? (
+                    <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                  ) : (
+                    <Download className="h-4 w-4 mr-1" />
+                  )}
+                  {exporting ? 'Downloading...' : 'Download'}
+                </Button>
+
+                <Button
+                  onClick={() => setShowImportModal(true)}
+                  variant="outline"
+                  size="sm"
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-600"
+                >
+                  <Upload className="h-4 w-4 mr-1" />
+                  Import
+                </Button>
+
+                <Button
+                  onClick={() => setShowHolidayModal(true)}
+                  variant="outline"
+                  size="sm"
+                  className="bg-orange-600 hover:bg-orange-700 text-white border-orange-600"
+                >
+                  <Target className="h-4 w-4 mr-1" />
+                  Set Holiday
+                </Button>
                 
                 <Button
                   onClick={handleExport}
@@ -1033,7 +1267,7 @@ const ProcessedAttendanceList = () => {
                   {exporting ? (
                     <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
                   ) : (
-                    <Download className="h-4 w-4 mr-1" />
+                    <FileText className="h-4 w-4 mr-1" />
                   )}
                   {exporting ? 'Exporting...' : 'Export'}
                 </Button>
@@ -1579,6 +1813,213 @@ const ProcessedAttendanceList = () => {
             setShowEditModal(true);
           }}
         />
+      )}
+
+      {/* Import Modal */}
+      {showImportModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative bg-white rounded-lg shadow-lg max-w-md w-full mx-4">
+            <div className="flex justify-between items-center p-4 border-b">
+              <h2 className="text-xl font-semibold text-gray-800">Import Attendance Data</h2>
+              <button
+                onClick={() => setShowImportModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+                aria-label="Close"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6">
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select CSV File
+                </label>
+                <input
+                  type="file"
+                  accept=".csv,.txt"
+                  onChange={(e) => setImportFile(e.target.files[0])}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="mt-2 text-sm text-gray-500">
+                  Upload a CSV file with attendance data. Hours will be automatically calculated.
+                </p>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <div className="flex items-start">
+                  <Info className="h-5 w-5 text-blue-600 mt-0.5 mr-2 flex-shrink-0" />
+                  <div className="text-sm text-blue-800">
+                    <h4 className="font-medium mb-2">CSV Format Requirements:</h4>
+                    <div className="space-y-1">
+                      <p>• Employee Number, Employee Name, Department, Date, Day</p>
+                      <p>• Time In, Break Out, Break In, Time Out, Next Day Timeout</p>
+                      <p>• Hours Worked (will be recalculated), Night Shift, Trip</p>
+                      <p>• Use the Download button to get the correct format</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {importFile && (
+                <div className="mb-4 p-3 bg-gray-50 rounded-lg">
+                  <p className="text-sm text-gray-700">
+                    <strong>Selected file:</strong> {importFile.name}
+                  </p>
+                  <p className="text-xs text-gray-500 mt-1">
+                    Size: {(importFile.size / 1024).toFixed(2)} KB
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-gray-50 px-6 py-4 flex justify-end space-x-3 rounded-b-lg">
+              <Button
+                variant="outline"
+                onClick={() => setShowImportModal(false)}
+                disabled={importing}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleImport}
+                disabled={importing || !importFile}
+                className="bg-indigo-600 hover:bg-indigo-700 text-white"
+              >
+                {importing ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    Importing...
+                  </>
+                ) : (
+                  <>
+                    <Upload className="h-4 w-4 mr-2" />
+                    Import Data
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Holiday Modal */}
+      {showHolidayModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative bg-white rounded-lg shadow-lg max-w-md w-full mx-4">
+            <div className="flex justify-between items-center p-4 border-b">
+              <h2 className="text-xl font-semibold text-gray-800">Set Holiday</h2>
+              <button
+                onClick={() => setShowHolidayModal(false)}
+                className="text-gray-500 hover:text-gray-700"
+                aria-label="Close"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Holiday Date *
+                  </label>
+                  <div className="relative">
+                    <CalendarIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                    <input
+                      type="date"
+                      className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                      value={holidayData.date}
+                      onChange={(e) => setHolidayData(prev => ({ ...prev, date: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Holiday Multiplier *
+                  </label>
+                  <input
+                    type="number"
+                    min="0.1"
+                    max="10"
+                    step="0.1"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                    value={holidayData.multiplier}
+                    onChange={(e) => setHolidayData(prev => ({ ...prev, multiplier: e.target.value }))}
+                    placeholder="2.0"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    Common values: 2.0 (Regular Holiday), 1.3 (Special Holiday)
+                  </p>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Department (Optional)
+                  </label>
+                  <select
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                    value={holidayData.department}
+                    onChange={(e) => setHolidayData(prev => ({ ...prev, department: e.target.value }))}
+                  >
+                    <option value="">All Departments</option>
+                    {departments.map((dept) => (
+                      <option key={dept} value={dept}>
+                        {dept}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-gray-500">
+                    Leave empty to apply to all departments
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-6 p-4 bg-orange-50 border border-orange-200 rounded-lg">
+                <div className="flex items-start">
+                  <Target className="h-5 w-5 text-orange-600 mt-0.5 mr-2 flex-shrink-0" />
+                  <div className="text-sm text-orange-800">
+                    <h4 className="font-medium mb-2">Holiday Setting Rules:</h4>
+                    <div className="space-y-1">
+                      <p>• Only applies to employees without existing OT, OT Reg, or OT Spl</p>
+                      <p>• Will update the holiday column with the specified multiplier</p>
+                      <p>• Department filter is optional - leave empty for all departments</p>
+                      <p>• Date must be specified to target the correct attendance records</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-gray-50 px-6 py-4 flex justify-end space-x-3 rounded-b-lg">
+              <Button
+                variant="outline"
+                onClick={() => setShowHolidayModal(false)}
+                disabled={settingHoliday}
+              >
+                Cancel
+              </Button>
+              <Button
+                onClick={handleSetHoliday}
+                disabled={settingHoliday || !holidayData.date || !holidayData.multiplier}
+                className="bg-orange-600 hover:bg-orange-700 text-white"
+              >
+                {settingHoliday ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                    Setting Holiday...
+                  </>
+                ) : (
+                  <>
+                    <Target className="h-4 w-4 mr-2" />
+                    Set Holiday
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Delete Modal */}
