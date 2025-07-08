@@ -223,101 +223,116 @@ class PayrollSummary extends Model
      * Generate summary data from attendance records.
      */
     public static function generateFromAttendance($employeeId, $year, $month, $periodType)
-    {
-        [$startDate, $endDate] = self::calculatePeriodDates($year, $month, $periodType);
-        
-        // Get employee information
-        $employee = Employee::findOrFail($employeeId);
-        
-        // Get attendance records for the period (only non-posted records)
-        $attendanceRecords = ProcessedAttendance::where('employee_id', $employeeId)
-            ->whereBetween('attendance_date', [$startDate, $endDate])
-            ->where('posting_status', 'not_posted') // Only process non-posted records
-            ->get();
-        
-        // Initialize summary values
-        $summary = [
-            'employee_id' => $employeeId,
-            'employee_no' => $employee->idno,
-            'employee_name' => trim($employee->Fname . ' ' . $employee->Lname),
-            'cost_center' => $employee->CostCenter,
-            'department' => $employee->Department,
-            'line' => $employee->Line,
-            'period_start' => $startDate,
-            'period_end' => $endDate,
-            'period_type' => $periodType,
-            'year' => $year,
-            'month' => $month,
-            'days_worked' => 0,
-            'ot_hours' => 0,
-            'off_days' => 0,
-            'late_under_minutes' => 0,
-            'nsd_hours' => 0,
-            'slvl_days' => 0,
-            'retro' => 0,
-            'travel_order_hours' => 0,
-            'holiday_hours' => 0,
-            'ot_reg_holiday_hours' => 0,
-            'ot_special_holiday_hours' => 0,
-            'offset_hours' => 0,
-            'trip_count' => 0,
-            'has_ct' => false,
-            'has_cs' => false,
-            'has_ob' => false
-        ];
-        
-        foreach ($attendanceRecords as $record) {
-            // Days worked calculation
-            // Count actual working days (exclude full SLVL days but include partial SLVL)
-            if ($record->slvl == 0 && $record->hours_worked > 0) {
-                // Full working day with no SLVL
-                $summary['days_worked'] += 1;
-            } elseif ($record->slvl > 0 && $record->slvl < 1) {
-                // Partial SLVL day (0.5 SLVL = 0.5 working day)
+{
+    [$startDate, $endDate] = self::calculatePeriodDates($year, $month, $periodType);
+    
+    // Get employee information
+    $employee = Employee::findOrFail($employeeId);
+    
+    // Get attendance records for the period (only non-posted records)
+    $attendanceRecords = ProcessedAttendance::where('employee_id', $employeeId)
+        ->whereBetween('attendance_date', [$startDate, $endDate])
+        ->where('posting_status', 'not_posted') // Only process non-posted records
+        ->get();
+    
+    // Initialize summary values
+    $summary = [
+        'employee_id' => $employeeId,
+        'employee_no' => $employee->idno,
+        'employee_name' => trim($employee->Fname . ' ' . $employee->Lname),
+        'cost_center' => $employee->CostCenter,
+        'department' => $employee->Department,
+        'line' => $employee->Line,
+        'period_start' => $startDate,
+        'period_end' => $endDate,
+        'period_type' => $periodType,
+        'year' => $year,
+        'month' => $month,
+        'days_worked' => 0,
+        'ot_hours' => 0,
+        'off_days' => 0,
+        'late_under_minutes' => 0,
+        'nsd_hours' => 0,
+        'slvl_days' => 0,
+        'retro' => 0,
+        'travel_order_hours' => 0,
+        'holiday_hours' => 0,
+        'ot_reg_holiday_hours' => 0,
+        'ot_special_holiday_hours' => 0,
+        'offset_hours' => 0,
+        'trip_count' => 0,
+        'has_ct' => false,
+        'has_cs' => false,
+        'has_ob' => false
+    ];
+    
+    foreach ($attendanceRecords as $record) {
+        // FIXED: Days worked calculation
+        // Count any record that has time_in as a working day, regardless of hours worked
+        // This includes partial days, late arrivals, early departures, etc.
+        if ($record->time_in) {
+            // Check if it's a full SLVL day (sick/vacation leave)
+            if ($record->slvl >= 1.0) {
+                // Full SLVL day - don't count as working day
+                $summary['days_worked'] += 0;
+            } elseif ($record->slvl > 0 && $record->slvl < 1.0) {
+                // Partial SLVL day (e.g., 0.5) - count the working portion
                 $summary['days_worked'] += (1 - $record->slvl);
-            } elseif ($record->slvl == 0 && $record->hours_worked == 0) {
-                // No work hours and no SLVL - might be absent or other reason
-                // Don't count as working day
+            } else {
+                // No SLVL or minimal SLVL - count as full working day
+                $summary['days_worked'] += 1;
             }
-            // If slvl >= 1, it's a full leave day, don't count as working day
-            
-            // OT hours calculation
-            $summary['ot_hours'] += $record->overtime ?? 0;
-            
-            // Rest days (off days) calculation
-            if ($record->restday) {
-                $summary['off_days'] += 1;
+        } else {
+            // No time_in recorded
+            if ($record->slvl > 0) {
+                // Pure leave day without time_in - don't count as working day
+                $summary['days_worked'] += 0;
+            } else {
+                // No time_in and no SLVL - might be absent, don't count
+                $summary['days_worked'] += 0;
             }
-            
-            // Late and undertime calculation (convert to total minutes)
-            $summary['late_under_minutes'] += ($record->late_minutes ?? 0) + ($record->undertime_minutes ?? 0);
-            
-            // Night shift differential hours calculation
-            // NSD hours = hours worked during night shift
-            if ($record->is_nightshift && $record->hours_worked > 0) {
-                $summary['nsd_hours'] += $record->hours_worked;
-            }
-            
-            // SLVL days calculation
-            $summary['slvl_days'] += $record->slvl ?? 0;
-            
-            // Retro calculation
-            $summary['retro'] += $record->retromultiplier ?? 0;
-            
-            // Additional fields for comprehensive payroll
-            $summary['travel_order_hours'] += $record->travel_order ?? 0;
-            $summary['holiday_hours'] += $record->holiday ?? 0;
-            $summary['ot_reg_holiday_hours'] += $record->ot_reg_holiday ?? 0;
-            $summary['ot_special_holiday_hours'] += $record->ot_special_holiday ?? 0;
-            $summary['offset_hours'] += $record->offset ?? 0;
-            $summary['trip_count'] += $record->trip ?? 0;
-            
-            // Boolean flags - set to true if any record has these
-            if ($record->ct) $summary['has_ct'] = true;
-            if ($record->cs) $summary['has_cs'] = true;
-            if ($record->ob) $summary['has_ob'] = true;
         }
         
-        return $summary;
+        // OT hours calculation
+        $summary['ot_hours'] += $record->overtime ?? 0;
+        
+        // Rest days (off days) calculation
+        if ($record->restday) {
+            $summary['off_days'] += 1;
+        }
+        
+        // Late and undertime calculation (convert to total minutes)
+        $summary['late_under_minutes'] += ($record->late_minutes ?? 0) + ($record->undertime_minutes ?? 0);
+        
+        // Night shift differential hours calculation
+        // NSD hours = hours worked during night shift
+        if ($record->is_nightshift && $record->hours_worked > 0) {
+            $summary['nsd_hours'] += $record->hours_worked;
+        }
+        
+        // SLVL days calculation
+        $summary['slvl_days'] += $record->slvl ?? 0;
+        
+        // Retro calculation
+        $summary['retro'] += $record->retromultiplier ?? 0;
+        
+        // Additional fields for comprehensive payroll
+        $summary['travel_order_hours'] += $record->travel_order ?? 0;
+        $summary['holiday_hours'] += $record->holiday ?? 0;
+        $summary['ot_reg_holiday_hours'] += $record->ot_reg_holiday ?? 0;
+        $summary['ot_special_holiday_hours'] += $record->ot_special_holiday ?? 0;
+        $summary['offset_hours'] += $record->offset ?? 0;
+        $summary['trip_count'] += $record->trip ?? 0;
+        
+        // Boolean flags - set to true if any record has these
+        if ($record->ct) $summary['has_ct'] = true;
+        if ($record->cs) $summary['has_cs'] = true;
+        if ($record->ob) $summary['has_ob'] = true;
     }
+    
+    // Ensure days_worked is properly formatted
+    $summary['days_worked'] = round($summary['days_worked'], 1);
+    
+    return $summary;
+}
 }

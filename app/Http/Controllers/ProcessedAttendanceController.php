@@ -494,37 +494,63 @@ public function list(Request $request)
         // AUTO-RECALCULATE: Recalculate metrics for displayed records
         $recalculatedCount = $this->autoRecalculateMetrics($processedData);
         
-        // Format the datetime fields for each record - WITH IMPROVED FORMATTING
+        // Format the datetime fields for each record - IMPROVED FORMATTING
         foreach ($processedData as &$attendance) {
-            // Safely format time values to 12-hour format with better null handling
-            $attendance->time_in = $this->safeFormatTime($attendance->time_in);
-            $attendance->time_out = $this->safeFormatTime($attendance->time_out);
-            $attendance->break_in = $this->safeFormatTime($attendance->break_in);
-            $attendance->break_out = $this->safeFormatTime($attendance->break_out);
-            $attendance->next_day_timeout = $this->safeFormatTime($attendance->next_day_timeout);
+    // FIXED: Format times consistently with seconds for better parsing
+    $attendance->time_in_formatted = $this->formatTimeForAPI($attendance->time_in);
+    $attendance->time_out_formatted = $this->formatTimeForAPI($attendance->time_out);
+    $attendance->break_in_formatted = $this->formatTimeForAPI($attendance->break_in);
+    $attendance->break_out_formatted = $this->formatTimeForAPI($attendance->break_out);
+    $attendance->next_day_timeout_formatted = $this->formatTimeForAPI($attendance->next_day_timeout);
+    
+    // Keep original timestamps for editing - FIXED: Use proper format check
+    $attendance->time_in_raw = $attendance->time_in ? 
+        ($attendance->time_in instanceof \Carbon\Carbon ? 
+            $attendance->time_in->format('Y-m-d H:i:s') : 
+            $attendance->time_in) : null;
             
-            // Format date and get day of week
-            if ($attendance->attendance_date) {
-                $attendance->attendance_date_formatted = $attendance->attendance_date->format('Y-m-d');
-                $attendance->day = $attendance->attendance_date->format('l'); // This gets the day name (Monday, Tuesday, etc.)
-            } else {
-                $attendance->attendance_date_formatted = null;
-                $attendance->day = null;
-            }
+    $attendance->time_out_raw = $attendance->time_out ? 
+        ($attendance->time_out instanceof \Carbon\Carbon ? 
+            $attendance->time_out->format('Y-m-d H:i:s') : 
+            $attendance->time_out) : null;
             
-            // Add employee name for display
-            if ($attendance->employee) {
-                $attendance->employee_name = trim($attendance->employee->Fname . ' ' . $attendance->employee->Lname);
-                $attendance->idno = $attendance->employee->idno;
-                $attendance->department = $attendance->employee->Department;
-                $attendance->line = $attendance->employee->Line;
-            } else {
-                $attendance->employee_name = 'Unknown Employee';
-                $attendance->idno = 'N/A';
-                $attendance->department = 'N/A';
-                $attendance->line = 'N/A';
-            }
-        }
+    $attendance->break_in_raw = $attendance->break_in ? 
+        ($attendance->break_in instanceof \Carbon\Carbon ? 
+            $attendance->break_in->format('Y-m-d H:i:s') : 
+            $attendance->break_in) : null;
+            
+    $attendance->break_out_raw = $attendance->break_out ? 
+        ($attendance->break_out instanceof \Carbon\Carbon ? 
+            $attendance->break_out->format('Y-m-d H:i:s') : 
+            $attendance->break_out) : null;
+            
+    $attendance->next_day_timeout_raw = $attendance->next_day_timeout ? 
+        ($attendance->next_day_timeout instanceof \Carbon\Carbon ? 
+            $attendance->next_day_timeout->format('Y-m-d H:i:s') : 
+            $attendance->next_day_timeout) : null;
+    
+    // Format date and get day of week - unchanged
+    if ($attendance->attendance_date) {
+        $attendance->attendance_date_formatted = $attendance->attendance_date->format('Y-m-d');
+        $attendance->day = $attendance->attendance_date->format('l');
+    } else {
+        $attendance->attendance_date_formatted = null;
+        $attendance->day = null;
+    }
+    
+    // Add employee info - unchanged
+    if ($attendance->employee) {
+        $attendance->employee_name = trim($attendance->employee->Fname . ' ' . $attendance->employee->Lname);
+        $attendance->idno = $attendance->employee->idno;
+        $attendance->department = $attendance->employee->Department;
+        $attendance->line = $attendance->employee->Line;
+    } else {
+        $attendance->employee_name = 'Unknown Employee';
+        $attendance->idno = 'N/A';
+        $attendance->department = 'N/A';
+        $attendance->line = 'N/A';
+    }
+}
         
         return response()->json([
             'success' => true,
@@ -544,6 +570,31 @@ public function list(Request $request)
             'success' => false,
             'message' => 'Failed to fetch attendance data: ' . $e->getMessage()
         ], 500);
+    }
+}
+
+// Add this new method for consistent API time formatting:
+private function formatTimeForAPI($timeValue)
+{
+    if ($timeValue === null || $timeValue === '') {
+        return null;
+    }
+    
+    try {
+        if ($timeValue instanceof \Carbon\Carbon) {
+            // Return time in H:i:s format for consistent parsing
+            return $timeValue->format('H:i:s');
+        }
+        
+        $carbonTime = \Carbon\Carbon::parse($timeValue);
+        // Return time in H:i:s format for consistent parsing
+        return $carbonTime->format('H:i:s');
+        
+    } catch (\Exception $e) {
+        Log::warning('API time formatting error: ' . $e->getMessage(), [
+            'time_value' => $timeValue
+        ]);
+        return null;
     }
 }
 
@@ -691,27 +742,32 @@ public function recalculateAll(Request $request)
 }
 
     private function safeFormatTime($timeValue)
-    {
-        // Return dash for null/empty values
-        if ($timeValue === null) {
-            return null;
+{
+    // Return null for empty values
+    if ($timeValue === null || $timeValue === '') {
+        return null;
+    }
+    
+    try {
+        // Check if it's already a Carbon instance
+        if ($timeValue instanceof \Carbon\Carbon) {
+            // Return in H:i:s format (24-hour) for consistent frontend processing
+            return $timeValue->format('H:i:s');
         }
         
-        try {
-            // Check if it's already a Carbon instance
-            if ($timeValue instanceof \Carbon\Carbon) {
-                return $timeValue->format('h:i A');
-            }
-            
-            // Try to parse the value using Carbon
-            return \Carbon\Carbon::parse($timeValue)->format('h:i A');
-        } catch (\Exception $e) {
-            Log::warning('Time formatting error: ' . $e->getMessage(), [
-                'time_value' => $timeValue
-            ]);
-            return null;
-        }
+        // Try to parse the value using Carbon
+        $carbonTime = \Carbon\Carbon::parse($timeValue);
+        
+        // Return in H:i:s format (24-hour) for consistent frontend processing
+        return $carbonTime->format('H:i:s');
+        
+    } catch (\Exception $e) {
+        Log::warning('Time formatting error: ' . $e->getMessage(), [
+            'time_value' => $timeValue
+        ]);
+        return null;
     }
+}
 
     
     

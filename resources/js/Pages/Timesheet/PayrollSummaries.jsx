@@ -51,21 +51,6 @@ const PayrollSummaryDetailModal = ({ isOpen, summary, onClose }) => {
     }
   };
 
-  // Format time for display
-  const formatTime = (timeString) => {
-    if (!timeString) return '-';
-    try {
-      const time = new Date(timeString);
-      return time.toLocaleTimeString('en-US', {
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-      });
-    } catch (err) {
-      return 'Invalid Time';
-    }
-  };
-
   // Format date for display
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
@@ -80,6 +65,123 @@ const PayrollSummaryDetailModal = ({ isOpen, summary, onClose }) => {
       return 'Invalid Date';
     }
   };
+
+  // Format time for display
+  const formatTime = (timeString) => {
+  if (!timeString) return '-';
+  
+  try {
+    // Handle H:i:s format (like "16:13:00" or "08:13:00")
+    if (timeString.match(/^\d{1,2}:\d{2}:\d{2}$/)) {
+      const [hours, minutes] = timeString.split(':').map(Number);
+      
+      // Convert to 12-hour format
+      let hour12 = hours;
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      
+      if (hours === 0) {
+        hour12 = 12; // 12 AM
+      } else if (hours > 12) {
+        hour12 = hours - 12; // PM hours
+      }
+      
+      return `${hour12}:${minutes.toString().padStart(2, '0')} ${ampm}`;
+    }
+    
+    // Handle full datetime strings as fallback
+    if (timeString.includes('T') || timeString.includes(' ')) {
+      const date = new Date(timeString);
+      if (!isNaN(date.getTime())) {
+        return date.toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        });
+      }
+    }
+    
+    return '-';
+    
+  } catch (error) {
+    console.error('Time formatting error:', error, 'Input:', timeString);
+    return '-';
+  }
+};
+
+// Alternative time formatting function for backend time strings
+const formatTimeFromBackend = (timeString) => {
+  if (!timeString) return '-';
+  
+  try {
+    // Handle Laravel timestamp formats
+    let timeOnly;
+    
+    if (timeString.includes('T')) {
+      // ISO format
+      const date = new Date(timeString);
+      if (isNaN(date.getTime())) return '-';
+      
+      return date.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
+        timeZone: 'Asia/Manila'
+      });
+    } else if (timeString.includes(' ')) {
+      // Format: "2025-01-16 08:13:00"
+      const [datePart, timePart] = timeString.split(' ');
+      timeOnly = timePart;
+    } else {
+      // Time only: "08:13:00"
+      timeOnly = timeString;
+    }
+    
+    // Parse time only
+    const [hours, minutes] = timeOnly.split(':').map(Number);
+    
+    if (isNaN(hours) || isNaN(minutes)) {
+      return '-';
+    }
+    
+    // Create a date object for today with the specified time
+    const date = new Date();
+    date.setHours(hours, minutes, 0, 0);
+    
+    return date.toLocaleTimeString('en-US', {
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    });
+    
+  } catch (error) {
+    console.error('Time formatting error:', error);
+    return '-';
+  }
+};
+
+const formatTimeForTable = (timeString) => {
+  if (!timeString) return '-';
+  
+  try {
+    // Handle the backend time format (H:i:s)
+    if (timeString.match(/^\d{2}:\d{2}:\d{2}$/)) {
+      const [hours, minutes] = timeString.split(':').map(Number);
+      const date = new Date();
+      date.setHours(hours, minutes, 0, 0);
+      
+      return date.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true
+      });
+    }
+    
+    // Fallback to standard formatting
+    return formatTime(timeString);
+  } catch (err) {
+    return 'Invalid Time';
+  }
+};
 
   // Format numeric values
   const formatNumeric = (value, decimals = 2) => {
@@ -290,25 +392,25 @@ const PayrollSummaryDetailModal = ({ isOpen, summary, onClose }) => {
                         
                         {/* Time In */}
                         <td className="px-3 py-3 text-sm text-gray-900 font-medium">
-                          {formatTime(attendance.time_in)}
+                        {formatTime(attendance.time_in)}
                         </td>
-                        
+
                         {/* Break Out */}
                         <td className="px-3 py-3 text-sm text-gray-600">
-                          {formatTime(attendance.break_out)}
+                        {formatTime(attendance.break_out)}
                         </td>
-                        
+
                         {/* Break In */}
                         <td className="px-3 py-3 text-sm text-gray-600">
-                          {formatTime(attendance.break_in)}
+                        {formatTime(attendance.break_in)}
                         </td>
-                        
+
                         {/* Time Out */}
                         <td className="px-3 py-3 text-sm text-gray-900 font-medium">
-                          {attendance.is_nightshift && attendance.next_day_timeout 
+                        {attendance.is_nightshift && attendance.next_day_timeout 
                             ? formatTime(attendance.next_day_timeout)
                             : formatTime(attendance.time_out)
-                          }
+                        }
                         </td>
                         
                         {/* Late/Under */}
