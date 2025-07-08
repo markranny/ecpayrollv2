@@ -80,7 +80,7 @@ const EditableCell = ({ value, isEditing, onChange, onSave, field, onKeyDown }) 
     );
 };
 
-const DeductionEmployeeDefaultsPage = () => {
+const EmployeeDefaultsPage = () => {
     // Make sure we safely access auth and user
     const { auth } = usePage().props || {};
     const user = auth?.user || {};
@@ -94,9 +94,16 @@ const DeductionEmployeeDefaultsPage = () => {
     const [lastPage, setLastPage] = useState(1);
     const [total, setTotal] = useState(0);
 
-    // Define deduction fields for keyboard navigation and editing
-    const deductionFields = [
-        'advance', 'charge_store', 'charge', 'meals', 'miscellaneous', 'other_deductions'
+    // Define benefit fields for keyboard navigation and editing - Updated with allowances at the beginning
+    const benefitFields = [
+        'allowances',    // Added at the beginning
+        'mf_shares', 
+        'mf_loan',
+        'sss_loan', 
+        'sss_prem',
+        'hmdf_loan', 
+        'hmdf_prem', 
+        'philhealth'
     ];
 
     const loadEmployeeDefaults = useCallback(async () => {
@@ -104,12 +111,11 @@ const DeductionEmployeeDefaultsPage = () => {
         setAlertMessage(null);
         
         try {
-            // Use absolute URL to ensure proper routing
             const params = new URLSearchParams();
             if (searchTerm) params.append('search', searchTerm);
             params.append('page', currentPage);
             
-            const url = `/api/deduction-defaults?${params.toString()}`;
+            const url = `/api/employee-defaults?${params.toString()}`;
             console.log('Requesting URL:', url);
             
             const response = await axios.get(url);
@@ -188,12 +194,12 @@ const DeductionEmployeeDefaultsPage = () => {
         debouncedSearch(e.target.value);
     };
 
-    const handleEditCell = (employeeId, deductionId, field) => {
-        if (!deductionId) return; // No deduction to edit
+    const handleEditCell = (employeeId, benefitId, field) => {
+        if (!benefitId) return; // No benefit to edit
         
         setEditingCell({
             employeeId,
-            deductionId,
+            benefitId,
             field
         });
     };
@@ -202,8 +208,8 @@ const DeductionEmployeeDefaultsPage = () => {
     const handleKeyNavigation = (e, currentField) => {
         if (!editingCell) return;
         
-        const { employeeId, deductionId } = editingCell;
-        const fieldIndex = deductionFields.indexOf(currentField);
+        const { employeeId, benefitId } = editingCell;
+        const fieldIndex = benefitFields.indexOf(currentField);
         
         if (fieldIndex === -1) return;
         
@@ -212,7 +218,7 @@ const DeductionEmployeeDefaultsPage = () => {
         // Handle navigation
         switch (e.key) {
             case 'ArrowRight':
-                newFieldIndex = Math.min(fieldIndex + 1, deductionFields.length - 1);
+                newFieldIndex = Math.min(fieldIndex + 1, benefitFields.length - 1);
                 e.preventDefault();
                 break;
             case 'ArrowLeft':
@@ -225,7 +231,7 @@ const DeductionEmployeeDefaultsPage = () => {
                     newFieldIndex = Math.max(0, fieldIndex - 1);
                 } else {
                     // Tab (move right)
-                    newFieldIndex = Math.min(fieldIndex + 1, deductionFields.length - 1);
+                    newFieldIndex = Math.min(fieldIndex + 1, benefitFields.length - 1);
                 }
                 e.preventDefault();
                 break;
@@ -246,18 +252,18 @@ const DeductionEmployeeDefaultsPage = () => {
                 // Save current field before moving
                 const inputElement = document.querySelector(`input[data-field="${currentField}"]`);
                 if (inputElement && editingCell) {
-                    handleCellSave(deductionId, currentField, inputElement.value);
+                    handleCellSave(benefitId, currentField, inputElement.value);
                 }
                 
-                // Get next employee and its deduction
+                // Get next employee and its benefit
                 const nextEmployee = employees[nextEmployeeIndex];
-                const nextDeduction = getEmployeeDefaultDeduction(nextEmployee);
+                const nextBenefit = getEmployeeDefaultBenefit(nextEmployee);
                 
-                if (nextDeduction) {
+                if (nextBenefit) {
                     // Move to same field in next employee
                     setEditingCell({
                         employeeId: nextEmployee.id,
-                        deductionId: nextDeduction.id,
+                        benefitId: nextBenefit.id,
                         field: currentField
                     });
                 }
@@ -272,25 +278,25 @@ const DeductionEmployeeDefaultsPage = () => {
             // Save current field first
             const inputElement = document.querySelector(`input[data-field="${currentField}"]`);
             if (inputElement) {
-                handleCellSave(deductionId, currentField, inputElement.value);
+                handleCellSave(benefitId, currentField, inputElement.value);
             }
             
             // Set new editing field
             setEditingCell({
                 employeeId,
-                deductionId,
-                field: deductionFields[newFieldIndex]
+                benefitId,
+                field: benefitFields[newFieldIndex]
             });
         }
     };
 
     // Improved cell saving functionality
-    const handleCellSave = async (deductionId, field, value) => {
+    const handleCellSave = async (benefitId, field, value) => {
         try {
             // Show loading indicator for better UX
             setLoading(true);
             
-            const response = await axios.patch(`/deductions/${deductionId}/field`, { 
+            const response = await axios.patch(`/benefits/${benefitId}/field`, { 
                 field: field,
                 value: value
             });
@@ -298,22 +304,22 @@ const DeductionEmployeeDefaultsPage = () => {
             // Update the employees state to reflect the change
             setEmployees(currentEmployees => 
                 currentEmployees.map(employee => {
-                    if (employee.deductions && employee.deductions.length > 0 && employee.deductions[0].id === deductionId) {
-                        const updatedDeductions = [...employee.deductions];
-                        updatedDeductions[0] = response.data;
-                        return { ...employee, deductions: updatedDeductions };
+                    if (employee.benefits && employee.benefits.length > 0 && employee.benefits[0].id === benefitId) {
+                        const updatedBenefits = [...employee.benefits];
+                        updatedBenefits[0] = response.data;
+                        return { ...employee, benefits: updatedBenefits };
                     }
                     return employee;
                 })
             );
             
-            setAlertMessage('Default deduction updated successfully');
+            setAlertMessage('Default benefit updated successfully');
             setTimeout(() => setAlertMessage(null), 3000);
         } catch (error) {
-            console.error('Error updating deduction:', error);
+            console.error('Error updating benefit:', error);
             
             // More descriptive error message
-            let errorMessage = 'Error updating deduction: ';
+            let errorMessage = 'Error updating benefit: ';
             if (error.response && error.response.data && error.response.data.message) {
                 errorMessage += error.response.data.message;
             } else if (error.message) {
@@ -330,42 +336,42 @@ const DeductionEmployeeDefaultsPage = () => {
         }
     };
 
-    // Improved create default deduction functionality
-    const createDefaultDeduction = async (employeeId) => {
+    // Improved create default benefit functionality
+    const createDefaultBenefit = async (employeeId) => {
         try {
             setLoading(true);
             const today = new Date().toISOString().split('T')[0];
             
             // Show temporary message
-            setAlertMessage('Creating default deduction...');
+            setAlertMessage('Creating default benefit...');
             
-            const response = await axios.post('/deductions', {
+            const response = await axios.post('/benefits', {
                 employee_id: employeeId,
                 cutoff: '1st', // Doesn't matter for defaults
                 date: today,
                 is_default: true
             });
             
-            // Update the employees state to add the new deduction
+            // Update the employees state to add the new benefit
             setEmployees(currentEmployees => 
                 currentEmployees.map(employee => {
                     if (employee.id === employeeId) {
                         return { 
                             ...employee, 
-                            deductions: [response.data, ...(employee.deductions || [])] 
+                            benefits: [response.data, ...(employee.benefits || [])] 
                         };
                     }
                     return employee;
                 })
             );
             
-            setAlertMessage('New default deduction created');
+            setAlertMessage('New default benefit created');
             setTimeout(() => setAlertMessage(null), 3000);
         } catch (error) {
-            console.error('Error creating default deduction:', error);
+            console.error('Error creating default benefit:', error);
             
             // More descriptive error message
-            let errorMessage = 'Error creating default deduction: ';
+            let errorMessage = 'Error creating default benefit: ';
             if (error.response && error.response.data && error.response.data.message) {
                 errorMessage += error.response.data.message;
             } else if (error.message) {
@@ -386,9 +392,9 @@ const DeductionEmployeeDefaultsPage = () => {
         return `${employee.Lname}, ${employee.Fname} ${employee.MName || ''}`.trim();
     };
 
-    // Get default deduction for an employee or null if none exists
-    const getEmployeeDefaultDeduction = (employee) => {
-        return employee.deductions && employee.deductions.length > 0 ? employee.deductions[0] : null;
+    // Get default benefit for an employee or null if none exists
+    const getEmployeeDefaultBenefit = (employee) => {
+        return employee.benefits && employee.benefits.length > 0 ? employee.benefits[0] : null;
     };
 
     // Handle pagination
@@ -403,7 +409,7 @@ const DeductionEmployeeDefaultsPage = () => {
 
     return (
         <AuthenticatedLayout user={user}>
-            <Head title="Employee Default Deductions" />
+            <Head title="Employee Default Benefits" />
             <div className="flex min-h-screen bg-gray-50/50">
                 <Sidebar />
                 <div className="flex-1 p-8">
@@ -418,10 +424,10 @@ const DeductionEmployeeDefaultsPage = () => {
                         <div className="flex items-center justify-between mb-8">
                             <div>
                                 <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                                    Employee Default Deductions
+                                    Employee Default Benefits
                                 </h1>
                                 <p className="text-gray-600">
-                                    Manage default deduction values that will be used for new deduction entries.
+                                    Manage default benefit values that will be used for new benefit entries.
                                 </p>
                             </div>
                             <div className="flex items-center space-x-4">
@@ -434,11 +440,11 @@ const DeductionEmployeeDefaultsPage = () => {
                                     Refresh Data
                                 </Button>
                                 <Button
-                                    onClick={() => router.visit('/deductions')}
+                                    onClick={() => router.visit('/benefits')}
                                     className="px-5 py-2.5 bg-gray-600 text-white rounded-xl hover:bg-gray-700 transition-colors duration-200 flex items-center"
                                 >
                                     <ArrowLeft className="w-5 h-5 mr-2" />
-                                    Back to Deductions
+                                    Back to Benefits
                                 </Button>
                             </div>
                         </div>
@@ -468,18 +474,32 @@ const DeductionEmployeeDefaultsPage = () => {
                                             <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                 Employee
                                             </th>
-                                            {deductionFields.map((field) => (
-                                                <th key={field} scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                                                    {field.replace('_', ' ')}
-                                                </th>
-                                            ))}
+                                            {benefitFields.map((field) => {
+                                                // Create better labels for the fields
+                                                const labelMap = {
+                                                    'allowances': 'Allowances',
+                                                    'mf_shares': 'MF Shares',
+                                                    'mf_loan': 'MF Loan',
+                                                    'sss_loan': 'SSS Loan',
+                                                    'sss_prem': 'SSS Premium',
+                                                    'hmdf_loan': 'HMDF Loan',
+                                                    'hmdf_prem': 'HMDF Premium',
+                                                    'philhealth': 'PhilHealth'
+                                                };
+                                                
+                                                return (
+                                                    <th key={field} scope="col" className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                                        {labelMap[field] || field.replace('_', ' ')}
+                                                    </th>
+                                                );
+                                            })}
                                         </tr>
                                     </thead>
 
                                     <tbody className="bg-white divide-y divide-gray-200">
                                         {loading ? (
                                             <tr>
-                                                <td colSpan={8} className="px-4 py-4 text-center text-gray-500">
+                                                <td colSpan={10} className="px-4 py-4 text-center text-gray-500">
                                                     <div className="flex items-center justify-center space-x-2">
                                                         <Loader className="h-5 w-5 animate-spin text-blue-500" />
                                                         <span>Loading employee data...</span>
@@ -488,19 +508,19 @@ const DeductionEmployeeDefaultsPage = () => {
                                             </tr>
                                         ) : employees.length === 0 ? (
                                             <tr>
-                                                <td colSpan={8} className="px-4 py-4 text-center text-gray-500">
+                                                <td colSpan={10} className="px-4 py-4 text-center text-gray-500">
                                                     No employees found
                                                 </td>
                                             </tr>
                                         ) : (
                                             employees.map((employee) => {
-                                                const deduction = getEmployeeDefaultDeduction(employee);
+                                                const benefit = getEmployeeDefaultBenefit(employee);
                                                 
                                                 return (
                                                     <tr key={employee.id} className="hover:bg-gray-50">
                                                         <td className="px-4 py-3 whitespace-nowrap">
                                                             <div className="flex space-x-2">
-                                                                {deduction ? (
+                                                                {benefit ? (
                                                                     <Button
                                                                         variant="outline"
                                                                         size="sm"
@@ -514,7 +534,7 @@ const DeductionEmployeeDefaultsPage = () => {
                                                                         variant="outline"
                                                                         size="sm"
                                                                         className="p-2"
-                                                                        onClick={() => createDefaultDeduction(employee.id)}
+                                                                        onClick={() => createDefaultBenefit(employee.id)}
                                                                         title="Create Default Values"
                                                                         disabled={loading}
                                                                     >
@@ -535,22 +555,22 @@ const DeductionEmployeeDefaultsPage = () => {
                                                             </div>
                                                         </td>
                                                         
-                                                        {/* Deduction cells */}
-                                                        {deductionFields.map((field) => (
+                                                        {/* Benefit cells */}
+                                                        {benefitFields.map((field) => (
                                                             <td 
                                                                 key={field} 
                                                                 className="px-4 py-3 whitespace-nowrap relative"
-                                                                onClick={() => deduction && handleEditCell(employee.id, deduction.id, field)}
+                                                                onClick={() => benefit && handleEditCell(employee.id, benefit.id, field)}
                                                             >
-                                                                {deduction ? (
+                                                                {benefit ? (
                                                                     <EditableCell 
-                                                                        value={deduction[field] || 0}
+                                                                        value={benefit[field] || 0}
                                                                         isEditing={
                                                                             editingCell?.employeeId === employee.id && 
-                                                                            editingCell?.deductionId === deduction.id && 
+                                                                            editingCell?.benefitId === benefit.id && 
                                                                             editingCell?.field === field
                                                                         }
-                                                                        onSave={(value) => handleCellSave(deduction.id, field, value)}
+                                                                    onSave={(value) => handleCellSave(benefit.id, field, value)}
                                                                         onKeyDown={handleKeyNavigation}
                                                                         field={field}
                                                                     />

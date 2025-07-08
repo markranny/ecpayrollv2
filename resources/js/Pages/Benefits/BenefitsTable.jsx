@@ -260,24 +260,38 @@ const BenefitsTable = ({
     onBulkSetDefaultBenefits,
     onExportToExcel,
     pagination,
-    // Updated field columns with consistent and appropriate widths
+    // Updated field columns with allowances and reorganized order
     fieldColumnsParam = [
+        'allowances',     // Moved to first position
         'mf_shares',
         'mf_loan',
         'sss_loan',
+        'sss_prem',
         'hmdf_loan',
         'hmdf_prem',
-        'sss_prem',
         'philhealth'
     ]
 }) => {
-    // Transform field columns with proper width settings
+    // Transform field columns with proper width settings and better labels
     const fieldColumns = Array.isArray(fieldColumnsParam) && typeof fieldColumnsParam[0] === 'string' 
-        ? fieldColumnsParam.map(field => ({
-            id: field,
-            label: field.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()),
-            width: '120px' // Set a consistent width for all data columns
-        }))
+        ? fieldColumnsParam.map(field => {
+            const labelMap = {
+                'allowances': 'Allowances',
+                'mf_shares': 'MF Shares',
+                'mf_loan': 'MF Loan',
+                'sss_loan': 'SSS Loan',
+                'sss_prem': 'SSS Premium',
+                'hmdf_loan': 'HMDF Loan',
+                'hmdf_prem': 'HMDF Premium',
+                'philhealth': 'PhilHealth'
+            };
+            
+            return {
+                id: field,
+                label: labelMap[field] || field.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()),
+                width: field === 'allowances' ? '130px' : '120px' // Slightly wider for allowances
+            };
+        })
         : fieldColumnsParam;
 
     const [editingCell, setEditingCell] = useState(null);
@@ -297,7 +311,7 @@ const BenefitsTable = ({
     const rowVirtualizer = useVirtualizer({
         count: employees.length,
         getScrollElement: () => tableRef.current,
-        estimateSize: () => 60, // Estimated row height
+        estimateSize: () => 60,
         overscan: 5,
     });
 
@@ -308,7 +322,7 @@ const BenefitsTable = ({
     }, [employees]);
 
     const handleEditCell = (employeeId, benefitId, field, rowIndex, colIndex) => {
-        if (!benefitId) return; // No benefit to edit
+        if (!benefitId) return;
         
         setEditingCell({
             employeeId,
@@ -321,7 +335,6 @@ const BenefitsTable = ({
 
     // New function to handle creating a benefit and then editing it
     const handleCreateAndEditCell = (employeeId, field, rowIndex, colIndex) => {
-        // Set status to indicate we're creating
         setCreatingBenefit({
             employeeId,
             field,
@@ -329,7 +342,6 @@ const BenefitsTable = ({
             colIndex
         });
         
-        // Create the benefit
         onCreateBenefit(employeeId);
     };
 
@@ -338,12 +350,10 @@ const BenefitsTable = ({
         if (creatingBenefit) {
             const { employeeId, field, rowIndex, colIndex } = creatingBenefit;
             
-            // Find the employee to see if the benefit is now available
             const employee = employees.find(emp => emp.id === employeeId);
             const benefit = employee?.benefits && employee.benefits.length > 0 ? employee.benefits[0] : null;
             
             if (benefit) {
-                // We have a benefit now, so we can edit
                 setEditingCell({
                     employeeId,
                     benefitId: benefit.id,
@@ -352,14 +362,12 @@ const BenefitsTable = ({
                     colIndex
                 });
                 
-                // Reset creation state
                 setCreatingBenefit(null);
             }
         }
     }, [employees, creatingBenefit]);
 
     const handleCellSave = (benefitId, field, value, additionalData) => {
-        // Check if this is a bulk paste operation
         if (additionalData && additionalData.pastedData) {
             handleBulkPaste(additionalData.pastedData, additionalData.rowIndex, additionalData.colIndex);
             return;
@@ -371,19 +379,16 @@ const BenefitsTable = ({
 
     // Handle bulk paste from Excel
     const handleBulkPaste = (data, startRow, startCol) => {
-        // Map column index to field name
         const columnToFieldMap = fieldColumns.reduce((map, column, index) => {
             map[index] = column.id;
             return map;
         }, {});
         
-        // Process each cell in the pasted data
         data.forEach((row, rowOffset) => {
             row.forEach((cellValue, colOffset) => {
                 const targetRow = startRow + rowOffset;
                 const targetCol = startCol + colOffset;
                 
-                // Skip if out of bounds
                 if (targetRow >= employees.length || targetCol >= fieldColumns.length) {
                     return;
                 }
@@ -391,22 +396,12 @@ const BenefitsTable = ({
                 const employee = employees[targetRow];
                 const benefit = getEmployeeBenefit(employee);
                 
-                // If no benefit yet, we need to create one first
-                if (!benefit) {
-                    // TODO: Create benefit for this employee
-                    // This could be more complicated for bulk paste
-                    // May need to create benefits first and then update
-                    return;
-                }
-                
-                // Skip if it's posted
-                if (benefit.is_posted) {
+                if (!benefit || benefit.is_posted) {
                     return;
                 }
                 
                 const field = columnToFieldMap[targetCol];
                 if (field) {
-                    // Parse the cell value to a number
                     const numValue = parseFloat(cellValue);
                     if (!isNaN(numValue)) {
                         onCellUpdate(benefit.id, field, numValue);
@@ -428,7 +423,6 @@ const BenefitsTable = ({
         let newRow = rowIndex;
         let newCol = colIndex;
         
-        // Navigate based on arrow keys
         switch (e.key) {
             case 'ArrowUp':
                 newRow = Math.max(0, rowIndex - 1);
@@ -448,14 +442,12 @@ const BenefitsTable = ({
                 break;
             case 'Tab':
                 if (e.shiftKey) {
-                    // Shift+Tab (move left/up)
                     newCol--;
                     if (newCol < 0) {
                         newRow = Math.max(0, newRow - 1);
                         newCol = fieldColumns.length - 1;
                     }
                 } else {
-                    // Tab (move right/down)
                     newCol++;
                     if (newCol >= fieldColumns.length) {
                         newRow = Math.min(employees.length - 1, newRow + 1);
@@ -465,16 +457,14 @@ const BenefitsTable = ({
                 e.preventDefault();
                 break;
             default:
-                return; // Don't navigate for other keys
+                return;
         }
         
-        // Get the target employee and benefit
         if (newRow !== rowIndex || newCol !== colIndex) {
             const newEmployee = employees[newRow];
             const newBenefit = getEmployeeBenefit(newEmployee);
             const newField = fieldColumns[newCol].id;
             
-            // Save current cell if edited
             if (editingCell) {
                 const inputElement = document.querySelector(`input[data-row="${rowIndex}"][data-col="${colIndex}"]`);
                 if (inputElement) {
@@ -483,7 +473,6 @@ const BenefitsTable = ({
             }
             
             if (newBenefit && !newBenefit.is_posted) {
-                // Move to the new cell with existing benefit
                 setEditingCell({
                     employeeId: newEmployee.id,
                     benefitId: newBenefit.id,
@@ -492,7 +481,6 @@ const BenefitsTable = ({
                     colIndex: newCol
                 });
             } else if (!newBenefit) {
-                // Need to create a benefit first
                 handleCreateAndEditCell(newEmployee.id, newField, newRow, newCol);
             }
         }
@@ -520,7 +508,6 @@ const BenefitsTable = ({
 
     // Handle item selection
     const toggleItemSelection = (benefitId, event) => {
-        // Make sure we stop event propagation
         if (event) {
             event.stopPropagation();
         }
@@ -534,16 +521,13 @@ const BenefitsTable = ({
 
     // Handle select all
     const toggleSelectAll = (event) => {
-        // Make sure we stop event propagation
         if (event) {
             event.stopPropagation();
         }
         
         if (selectAll) {
-            // Deselect all
             setSelectedItems([]);
         } else {
-            // Select all unposted benefits
             const newSelection = employees
                 .map(employee => getEmployeeBenefit(employee))
                 .filter(benefit => benefit && !benefit.is_posted)
@@ -558,7 +542,6 @@ const BenefitsTable = ({
     const handleExportSelected = () => {
         if (selectedItems.length === 0) return;
         
-        // Filter employees with selected benefits
         const selectedEmployees = employees.filter(employee => {
             const benefit = getEmployeeBenefit(employee);
             return benefit && selectedItems.includes(benefit.id);
@@ -567,22 +550,18 @@ const BenefitsTable = ({
         if (onExportToExcel) {
             onExportToExcel(selectedEmployees);
         } else {
-            // Default export implementation if not provided by parent
-            // Create workbook and worksheet
+            // Default export implementation
             const wb = XLSX.utils.book_new();
             
-            // Create data for export
             const exportData = selectedEmployees.map(employee => {
                 const benefit = getEmployeeBenefit(employee);
                 
-                // Create a record for each employee with their benefit data
                 const record = {
                     'Employee ID': employee.idno || '',
                     'Employee Name': formatEmployeeName(employee),
                     'Department': employee.Department || ''
                 };
                 
-                // Add benefit fields
                 fieldColumns.forEach(column => {
                     record[column.label.toUpperCase()] = benefit ? parseFloat(benefit[column.id] || 0).toFixed(2) : '0.00';
                 });
@@ -590,31 +569,24 @@ const BenefitsTable = ({
                 return record;
             });
             
-            // Create worksheet
             const ws = XLSX.utils.json_to_sheet(exportData);
             
-            // Set column widths
             const columnWidths = [
                 { wch: 15 }, // Employee ID
                 { wch: 30 }, // Employee Name
                 { wch: 20 }, // Department
             ];
             
-            // Add column widths for benefit fields
             fieldColumns.forEach(() => {
                 columnWidths.push({ wch: 15 });
             });
             
             ws['!cols'] = columnWidths;
-            
-            // Add worksheet to workbook
             XLSX.utils.book_append_sheet(wb, ws, "Benefits");
             
-            // Create date string for filename
             const date = new Date();
             const dateString = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
             
-            // Generate Excel file and trigger download
             XLSX.writeFile(wb, `employee_benefits_${dateString}.xlsx`);
         }
     };
@@ -694,10 +666,7 @@ const BenefitsTable = ({
                                 >
                                     <Checkbox
                                         checked={selectAll}
-                                        onCheckedChange={(checked) => {
-                                            // This will be triggered by the click handler above
-                                            // We just need to keep this for visual feedback
-                                        }}
+                                        onCheckedChange={(checked) => {}}
                                         disabled={loading}
                                         className="h-4 w-4"
                                     />
@@ -756,10 +725,7 @@ const BenefitsTable = ({
                                             >
                                                 <Checkbox
                                                     checked={isSelected}
-                                                    onCheckedChange={(checked) => {
-                                                        // This is just for visual feedback
-                                                        // Actual state changes are handled in the onClick handler
-                                                    }}
+                                                    onCheckedChange={(checked) => {}}
                                                     className="h-4 w-4"
                                                 />
                                             </div>
@@ -843,6 +809,7 @@ const BenefitsTable = ({
                                             </div>
                                         </div>
                                     </td>
+                                    
                                     {/* Benefit cells */}
                                     {fieldColumns.map((column, colIndex) => (
                                         <td 

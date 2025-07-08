@@ -570,9 +570,17 @@ Route::middleware(['auth', 'verified', 'role:finance,superadmin'])->group(functi
     Route::post('/benefits/bulk-set-default', [BenefitController::class, 'bulkSetDefault'])->name('benefits.bulk-set-default');
     Route::post('/benefits/create-from-default', [BenefitController::class, 'createFromDefault'])->name('benefits.create-from-default');
     Route::post('/benefits/bulk-create', [BenefitController::class, 'bulkCreateFromDefault'])->name('benefits.bulk-create');
+    
+    // NEW: Benefits Import/Export Routes
+    Route::get('/benefits/template/download', [BenefitController::class, 'downloadTemplate'])->name('benefits.template.download');
+    Route::post('/benefits/import', [BenefitController::class, 'import'])->name('benefits.import');
+    Route::get('/benefits/export', [BenefitController::class, 'export'])->name('benefits.export');
+    
+    // Benefits Defaults Management
     Route::get('/api/employee-defaults', [BenefitController::class, 'getEmployeeDefaults']);
     Route::get('/employee-defaults', [BenefitController::class, 'showEmployeeDefaultsPage'])->name('employee-defaults.index');
 
+    // Deductions Routes (Updated - removed manage defaults page)
     Route::get('/deductions', [DeductionController::class, 'index'])->name('deductions.index');
     Route::post('/deductions', [DeductionController::class, 'store'])->name('deductions.store');
     Route::patch('/deductions/{id}', [DeductionController::class, 'update'])->name('deductions.update');
@@ -584,8 +592,11 @@ Route::middleware(['auth', 'verified', 'role:finance,superadmin'])->group(functi
     Route::post('/deductions/bulk-set-default', [DeductionController::class, 'bulkSetDefault'])->name('deductions.bulk-set-default');
     Route::post('/deductions/create-from-default', [DeductionController::class, 'createFromDefault'])->name('deductions.create-from-default');
     Route::post('/deductions/bulk-create', [DeductionController::class, 'bulkCreateFromDefault'])->name('deductions.bulk-create');
-    Route::get('/api/deduction-defaults', [DeductionController::class, 'getEmployeeDefaults']);
-    Route::get('/deduction-defaults', [DeductionController::class, 'showEmployeeDefaultsPage'])->name('deduction-defaults.index');
+    
+    // NEW: Deductions Import/Export Routes
+    Route::get('/deductions/template/download', [DeductionController::class, 'downloadTemplate'])->name('deductions.template.download');
+    Route::post('/deductions/import', [DeductionController::class, 'import'])->name('deductions.import');
+    Route::get('/deductions/export', [DeductionController::class, 'export'])->name('deductions.export');
 
 });
 

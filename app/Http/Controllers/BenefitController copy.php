@@ -11,9 +11,6 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
-use PhpOffice\PhpSpreadsheet\Spreadsheet;
-use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
-use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class BenefitController extends Controller
 {
@@ -26,7 +23,7 @@ class BenefitController extends Controller
         $month = $request->input('month', Carbon::now()->month);
         $year = $request->input('year', Carbon::now()->year);
         $search = $request->input('search', '');
-        $perPage = $request->input('perPage', 50);
+        $perPage = $request->input('perPage', 50); // Default to 50 for virtualization
         
         // Build date range for selected month and cutoff
         $startDate = Carbon::createFromDate($year, $month, $cutoff === '1st' ? 1 : 16);
@@ -102,7 +99,6 @@ class BenefitController extends Controller
             'hmdf_prem' => 'nullable|numeric|min:0',
             'sss_prem' => 'nullable|numeric|min:0',
             'philhealth' => 'nullable|numeric|min:0',
-            'allowances' => 'nullable|numeric|min:0', // Added allowances validation
             'cutoff' => 'required|in:1st,2nd',
             'date' => 'required|date',
             'is_default' => 'nullable|boolean',
@@ -120,7 +116,7 @@ class BenefitController extends Controller
         
         // Set default values for null numeric fields
         foreach (['mf_shares', 'mf_loan', 'sss_loan', 
-                 'hmdf_loan', 'hmdf_prem', 'sss_prem', 'philhealth', 'allowances'] as $field) {
+                 'hmdf_loan', 'hmdf_prem', 'sss_prem', 'philhealth'] as $field) {
             $validated[$field] = $validated[$field] ?? 0;
         }
         
@@ -158,12 +154,11 @@ class BenefitController extends Controller
             'hmdf_prem' => 'nullable|numeric|min:0',
             'sss_prem' => 'nullable|numeric|min:0',
             'philhealth' => 'nullable|numeric|min:0',
-            'allowances' => 'nullable|numeric|min:0', // Added allowances validation
         ]);
         
         // Set default values for null numeric fields
         foreach (['mf_shares', 'mf_loan', 'sss_loan', 
-                 'hmdf_loan', 'hmdf_prem', 'sss_prem', 'philhealth', 'allowances'] as $field) {
+                 'hmdf_loan', 'hmdf_prem', 'sss_prem', 'philhealth'] as $field) {
             $validated[$field] = $validated[$field] ?? 0;
         }
         
@@ -191,10 +186,10 @@ class BenefitController extends Controller
         $field = $request->input('field');
         $value = $request->input('value');
         
-        // Validate that the field exists - Added allowances
+        // Validate that the field exists
         $allowedFields = [
             'mf_shares', 'mf_loan', 'sss_loan', 'hmdf_loan', 
-            'hmdf_prem', 'sss_prem', 'philhealth', 'allowances'
+            'hmdf_prem', 'sss_prem', 'philhealth'
         ];
         
         if (!in_array($field, $allowedFields)) {
@@ -240,6 +235,7 @@ class BenefitController extends Controller
 
     /**
      * Post all benefits for a specific cutoff period.
+     * FIXED: Removed any conditions that might prevent posting all benefits
      */
     public function postAll(Request $request)
     {
@@ -253,7 +249,7 @@ class BenefitController extends Controller
             ]);
         }
         
-        // Post all unposted benefits for the specified period
+        // Post all unposted benefits for the specified period without additional conditions
         $updatedCount = Benefit::whereBetween('date', [$startDate, $endDate])
             ->where('cutoff', $cutoff)
             ->where('is_posted', false)
@@ -316,6 +312,7 @@ class BenefitController extends Controller
 
     /**
      * Mark a benefit as default for an employee.
+     * FIXED: Improved to ensure proper setting of default benefits
      */
     public function setDefault(Request $request, $id)
     {
@@ -348,6 +345,7 @@ class BenefitController extends Controller
 
     /**
      * Set multiple benefits as default in bulk
+     * FIXED: Improved to ensure proper bulk setting of defaults
      */
     public function bulkSetDefault(Request $request)
     {
@@ -402,6 +400,7 @@ class BenefitController extends Controller
 
     /**
      * Create a new benefit entry based on defaults.
+     * FIXED: Improved to ensure proper creation from defaults
      */
     public function createFromDefault(Request $request)
     {
@@ -441,7 +440,7 @@ class BenefitController extends Controller
                 $benefit->is_posted = false;
                 $benefit->is_default = false;
                 
-                // Copy values from default benefit - Added allowances
+                // Copy values from default benefit
                 $benefit->mf_shares = $defaultBenefit->mf_shares;
                 $benefit->mf_loan = $defaultBenefit->mf_loan;
                 $benefit->sss_loan = $defaultBenefit->sss_loan;
@@ -449,7 +448,6 @@ class BenefitController extends Controller
                 $benefit->hmdf_prem = $defaultBenefit->hmdf_prem;
                 $benefit->sss_prem = $defaultBenefit->sss_prem;
                 $benefit->philhealth = $defaultBenefit->philhealth;
-                $benefit->allowances = $defaultBenefit->allowances;
                 
                 $benefit->save();
             } else {
@@ -476,6 +474,7 @@ class BenefitController extends Controller
 
     /**
      * Bulk create benefit entries for all active employees based on defaults.
+     * FIXED: Improved to ensure proper bulk creation from defaults
      */
     public function bulkCreateFromDefault(Request $request)
     {
@@ -518,7 +517,7 @@ class BenefitController extends Controller
                         $benefit->is_posted = false;
                         $benefit->is_default = false;
                         
-                        // Copy values from default benefit - Added allowances
+                        // Copy values from default benefit
                         $benefit->mf_shares = $defaultBenefit->mf_shares;
                         $benefit->mf_loan = $defaultBenefit->mf_loan;
                         $benefit->sss_loan = $defaultBenefit->sss_loan;
@@ -526,7 +525,6 @@ class BenefitController extends Controller
                         $benefit->hmdf_prem = $defaultBenefit->hmdf_prem;
                         $benefit->sss_prem = $defaultBenefit->sss_prem;
                         $benefit->philhealth = $defaultBenefit->philhealth;
-                        $benefit->allowances = $defaultBenefit->allowances;
                         
                         $benefit->save();
                     } else {
@@ -560,245 +558,18 @@ class BenefitController extends Controller
     }
     
     public function getEmployeeDefaults(Request $request)
-    {
-        try {
-            $search = $request->input('search', '');
-            $perPage = $request->input('perPage', 50);
-            
-            $query = Employee::with(['benefits' => function ($query) {
-                $query->where('is_default', true)->latest();
-            }])
-            ->where('JobStatus', 'Active')
-            ->select('id', 'idno', 'Lname', 'Fname', 'MName', 'Suffix', 'Department');
-            
-            // Apply search if provided
-            if ($search) {
-                $query->where(function ($q) use ($search) {
-                    $q->where('Lname', 'like', "%{$search}%")
-                      ->orWhere('Fname', 'like', "%{$search}%")
-                      ->orWhere('idno', 'like', "%{$search}%")
-                      ->orWhere('Department', 'like', "%{$search}%");
-                });
-            }
-            
-            // Get employees with pagination
-            $employees = $query->paginate($perPage);
-            
-            // Return JSON response for API requests
-            return response()->json($employees);
-        } catch (\Exception $e) {
-            // Return error response
-            return response()->json([
-                'error' => 'Failed to retrieve employee defaults',
-                'message' => $e->getMessage()
-            ], 500);
-        }
-    }
-    
-    public function showEmployeeDefaultsPage()
-    {
-        return Inertia::render('Benefits/EmployeeDefaultsPage', [
-            'auth' => [
-                'user' => Auth::user(),
-            ],
-        ]);
-    }
-
-    /**
-     * Download Excel template for benefits import
-     */
-    public function downloadTemplate()
-    {
-        $spreadsheet = new Spreadsheet();
-        $sheet = $spreadsheet->getActiveSheet();
-        
-        // Set headers
-        $headers = [
-            'A1' => 'Employee ID',
-            'B1' => 'Employee Name',
-            'C1' => 'Department',
-            'D1' => 'MF Shares',
-            'E1' => 'MF Loan',
-            'F1' => 'SSS Loan',
-            'G1' => 'HMDF Loan',
-            'H1' => 'HMDF Premium',
-            'I1' => 'SSS Premium',
-            'J1' => 'PhilHealth',
-            'K1' => 'Allowances',
-            'L1' => 'Cutoff (1st/2nd)',
-            'M1' => 'Date (YYYY-MM-DD)'
-        ];
-        
-        foreach ($headers as $cell => $header) {
-            $sheet->setCellValue($cell, $header);
-            $sheet->getStyle($cell)->getFont()->setBold(true);
-        }
-        
-        // Auto-size columns
-        foreach (range('A', 'M') as $column) {
-            $sheet->getColumnDimension($column)->setAutoSize(true);
-        }
-        
-        // Add sample data
-        $sheet->setCellValue('A2', 'EMP001');
-        $sheet->setCellValue('B2', 'Sample Employee');
-        $sheet->setCellValue('C2', 'IT Department');
-        $sheet->setCellValue('D2', '0.00');
-        $sheet->setCellValue('E2', '0.00');
-        $sheet->setCellValue('F2', '0.00');
-        $sheet->setCellValue('G2', '0.00');
-        $sheet->setCellValue('H2', '0.00');
-        $sheet->setCellValue('I2', '0.00');
-        $sheet->setCellValue('J2', '0.00');
-        $sheet->setCellValue('K2', '0.00');
-        $sheet->setCellValue('L2', '1st');
-        $sheet->setCellValue('M2', date('Y-m-d'));
-        
-        $writer = new Xlsx($spreadsheet);
-        
-        // Set headers for download
-        $filename = 'benefits_import_template_' . date('Y-m-d') . '.xlsx';
-        
-        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        header('Content-Disposition: attachment;filename="' . $filename . '"');
-        header('Cache-Control: max-age=0');
-        
-        $writer->save('php://output');
-        exit;
-    }
-
-    /**
-     * Import benefits from Excel file
-     */
-    public function import(Request $request)
-    {
-        $request->validate([
-            'file' => 'required|file|mimes:xlsx,xls,csv|max:10240', // 10MB max
-            'cutoff' => 'required|in:1st,2nd',
-            'date' => 'required|date',
-        ]);
-
-        try {
-            $file = $request->file('file');
-            $cutoff = $request->input('cutoff');
-            $date = $request->input('date');
-            
-            // Load the spreadsheet
-            $spreadsheet = IOFactory::load($file->getPathname());
-            $worksheet = $spreadsheet->getActiveSheet();
-            $rows = $worksheet->toArray();
-            
-            // Remove header row
-            array_shift($rows);
-            
-            $imported = 0;
-            $errors = [];
-            
-            DB::beginTransaction();
-            
-            foreach ($rows as $index => $row) {
-                $rowNumber = $index + 2; // +2 because we removed header and array is 0-indexed
-                
-                // Skip empty rows
-                if (empty(array_filter($row))) {
-                    continue;
-                }
-                
-                try {
-                    // Find employee by ID
-                    $employee = Employee::where('idno', trim($row[0]))->first();
-                    
-                    if (!$employee) {
-                        $errors[] = "Row {$rowNumber}: Employee with ID '{$row[0]}' not found.";
-                        continue;
-                    }
-                    
-                    // Check if benefit already exists
-                    $existingBenefit = Benefit::where('employee_id', $employee->id)
-                        ->where('cutoff', $cutoff)
-                        ->where('date', $date)
-                        ->first();
-                    
-                    $benefitData = [
-                        'employee_id' => $employee->id,
-                        'mf_shares' => floatval($row[3] ?? 0),
-                        'mf_loan' => floatval($row[4] ?? 0),
-                        'sss_loan' => floatval($row[5] ?? 0),
-                        'hmdf_loan' => floatval($row[6] ?? 0),
-                        'hmdf_prem' => floatval($row[7] ?? 0),
-                        'sss_prem' => floatval($row[8] ?? 0),
-                        'philhealth' => floatval($row[9] ?? 0),
-                        'allowances' => floatval($row[10] ?? 0),
-                        'cutoff' => $cutoff,
-                        'date' => $date,
-                        'is_posted' => false,
-                        'is_default' => false,
-                    ];
-                    
-                    if ($existingBenefit) {
-                        // Update existing benefit if not posted
-                        if ($existingBenefit->is_posted) {
-                            $errors[] = "Row {$rowNumber}: Benefit for employee '{$row[0]}' is already posted and cannot be updated.";
-                            continue;
-                        }
-                        $existingBenefit->update($benefitData);
-                    } else {
-                        // Create new benefit
-                        Benefit::create($benefitData);
-                    }
-                    
-                    $imported++;
-                    
-                } catch (\Exception $e) {
-                    $errors[] = "Row {$rowNumber}: " . $e->getMessage();
-                }
-            }
-            
-            DB::commit();
-            
-            return response()->json([
-                'success' => true,
-                'message' => "Successfully imported {$imported} benefits.",
-                'imported_count' => $imported,
-                'errors' => $errors
-            ]);
-            
-        } catch (\Exception $e) {
-            DB::rollBack();
-            
-            return response()->json([
-                'success' => false,
-                'message' => 'Import failed: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
-     * Export benefits to Excel
-     */
-    public function export(Request $request)
-    {
-        $cutoff = $request->input('cutoff', '1st');
-        $month = $request->input('month', Carbon::now()->month);
-        $year = $request->input('year', Carbon::now()->year);
+{
+    try {
         $search = $request->input('search', '');
+        $perPage = $request->input('perPage', 50);
         
-        // Build date range for selected month and cutoff
-        $startDate = Carbon::createFromDate($year, $month, $cutoff === '1st' ? 1 : 16);
-        $endDate = $cutoff === '1st' 
-            ? Carbon::createFromDate($year, $month, 15)
-            : Carbon::createFromDate($year, $month)->endOfMonth();
+        $query = Employee::with(['benefits' => function ($query) {
+            $query->where('is_default', true)->latest();
+        }])
+        ->where('JobStatus', 'Active')
+        ->select('id', 'idno', 'Lname', 'Fname', 'MName', 'Suffix', 'Department');
         
-        // Query to get employees with benefits
-        $query = Employee::with(['benefits' => function ($query) use ($cutoff, $startDate, $endDate) {
-                $query->where('cutoff', $cutoff)
-                    ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
-                    ->latest('date');
-            }])
-            ->where('JobStatus', 'Active')
-            ->select('id', 'idno', 'Lname', 'Fname', 'MName', 'Suffix', 'Department');
-            
-        // Apply search term if provided
+        // Apply search if provided
         if ($search) {
             $query->where(function ($q) use ($search) {
                 $q->where('Lname', 'like', "%{$search}%")
@@ -808,75 +579,26 @@ class BenefitController extends Controller
             });
         }
         
-        $employees = $query->get();
+        // Get employees with pagination
+        $employees = $query->paginate($perPage);
         
-        $spreadsheet = new Spreadsheet();
-        $sheet = $spreadsheet->getActiveSheet();
-        
-        // Set headers
-        $headers = [
-            'A1' => 'Employee ID',
-            'B1' => 'Employee Name',
-            'C1' => 'Department',
-            'D1' => 'MF Shares',
-            'E1' => 'MF Loan',
-            'F1' => 'SSS Loan',
-            'G1' => 'HMDF Loan',
-            'H1' => 'HMDF Premium',
-            'I1' => 'SSS Premium',
-            'J1' => 'PhilHealth',
-            'K1' => 'Allowances',
-            'L1' => 'Cutoff',
-            'M1' => 'Date',
-            'N1' => 'Status',
-            'O1' => 'Is Default'
-        ];
-        
-        foreach ($headers as $cell => $header) {
-            $sheet->setCellValue($cell, $header);
-            $sheet->getStyle($cell)->getFont()->setBold(true);
-        }
-        
-        // Add data
-        $row = 2;
-        foreach ($employees as $employee) {
-            $benefit = $employee->benefits->first();
-            $employeeName = trim($employee->Lname . ', ' . $employee->Fname . ' ' . ($employee->MName ?? ''));
-            
-            $sheet->setCellValue('A' . $row, $employee->idno);
-            $sheet->setCellValue('B' . $row, $employeeName);
-            $sheet->setCellValue('C' . $row, $employee->Department ?? '');
-            $sheet->setCellValue('D' . $row, $benefit ? number_format($benefit->mf_shares, 2) : '0.00');
-            $sheet->setCellValue('E' . $row, $benefit ? number_format($benefit->mf_loan, 2) : '0.00');
-            $sheet->setCellValue('F' . $row, $benefit ? number_format($benefit->sss_loan, 2) : '0.00');
-            $sheet->setCellValue('G' . $row, $benefit ? number_format($benefit->hmdf_loan, 2) : '0.00');
-            $sheet->setCellValue('H' . $row, $benefit ? number_format($benefit->hmdf_prem, 2) : '0.00');
-            $sheet->setCellValue('I' . $row, $benefit ? number_format($benefit->sss_prem, 2) : '0.00');
-            $sheet->setCellValue('J' . $row, $benefit ? number_format($benefit->philhealth, 2) : '0.00');
-            $sheet->setCellValue('K' . $row, $benefit ? number_format($benefit->allowances, 2) : '0.00');
-            $sheet->setCellValue('L' . $row, $benefit ? $benefit->cutoff : $cutoff);
-            $sheet->setCellValue('M' . $row, $benefit ? $benefit->date->format('Y-m-d') : '');
-            $sheet->setCellValue('N' . $row, $benefit ? ($benefit->is_posted ? 'Posted' : 'Pending') : 'No Data');
-            $sheet->setCellValue('O' . $row, $benefit ? ($benefit->is_default ? 'Yes' : 'No') : 'No');
-            
-            $row++;
-        }
-        
-        // Auto-size columns
-        foreach (range('A', 'O') as $column) {
-            $sheet->getColumnDimension($column)->setAutoSize(true);
-        }
-        
-        $writer = new Xlsx($spreadsheet);
-        
-        // Set headers for download
-        $filename = 'benefits_export_' . $cutoff . '_' . $month . '_' . $year . '_' . date('Y-m-d') . '.xlsx';
-        
-        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        header('Content-Disposition: attachment;filename="' . $filename . '"');
-        header('Cache-Control: max-age=0');
-        
-        $writer->save('php://output');
-        exit;
+        // Return JSON response for API requests
+        return response()->json($employees);
+    } catch (\Exception $e) {
+        // Return error response
+        return response()->json([
+            'error' => 'Failed to retrieve employee defaults',
+            'message' => $e->getMessage()
+        ], 500);
     }
+}
+    
+public function showEmployeeDefaultsPage()
+{
+    return Inertia::render('Benefits/EmployeeDefaultsPage', [
+        'auth' => [
+            'user' => Auth::user(),
+        ],
+    ]);
+}
 }

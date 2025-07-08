@@ -11,6 +11,9 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
+use PhpOffice\PhpSpreadsheet\IOFactory;
 
 class DeductionController extends Controller
 {
@@ -23,7 +26,7 @@ class DeductionController extends Controller
         $month = $request->input('month', Carbon::now()->month);
         $year = $request->input('year', Carbon::now()->year);
         $search = $request->input('search', '');
-        $perPage = $request->input('perPage', 50); // Default to 50 for virtualization
+        $perPage = $request->input('perPage', 50);
         
         // Build date range for selected month and cutoff
         $startDate = Carbon::createFromDate($year, $month, $cutoff === '1st' ? 1 : 16);
@@ -547,49 +550,270 @@ class DeductionController extends Controller
             ]);
         }
     }
-    
-    public function getEmployeeDefaults(Request $request)
+
+    /**
+     * Download Excel template for deductions import
+     */
+    public function downloadTemplate()
     {
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        
+        // Set headers
+        $headers = [
+            'A1' => 'Employee ID',
+            'B1' => 'Employee Name',
+            'C1' => 'Department',
+            'D1' => 'Advance',
+            'E1' => 'Charge Store',
+            'F1' => 'Charge',
+            'G1' => 'Meals',
+            'H1' => 'Miscellaneous',
+            'I1' => 'Other Deductions',
+            'J1' => 'Cutoff (1st/2nd)',
+            'K1' => 'Date (YYYY-MM-DD)'
+        ];
+        
+        foreach ($headers as $cell => $header) {
+            $sheet->setCellValue($cell, $header);
+            $sheet->getStyle($cell)->getFont()->setBold(true);
+        }
+        
+        // Auto-size columns
+        foreach (range('A', 'K') as $column) {
+            $sheet->getColumnDimension($column)->setAutoSize(true);
+        }
+        
+        // Add sample data
+        $sheet->setCellValue('A2', 'EMP001');
+        $sheet->setCellValue('B2', 'Sample Employee');
+        $sheet->setCellValue('C2', 'IT Department');
+        $sheet->setCellValue('D2', '0.00');
+        $sheet->setCellValue('E2', '0.00');
+        $sheet->setCellValue('F2', '0.00');
+        $sheet->setCellValue('G2', '0.00');
+        $sheet->setCellValue('H2', '0.00');
+        $sheet->setCellValue('I2', '0.00');
+        $sheet->setCellValue('J2', '1st');
+        $sheet->setCellValue('K2', date('Y-m-d'));
+        
+        $writer = new Xlsx($spreadsheet);
+        
+        // Set headers for download
+        $filename = 'deductions_import_template_' . date('Y-m-d') . '.xlsx';
+        
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment;filename="' . $filename . '"');
+        header('Cache-Control: max-age=0');
+        
+        $writer->save('php://output');
+        exit;
+    }
+
+    /**
+     * Import deductions from Excel file
+     */
+    public function import(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:xlsx,xls,csv|max:10240', // 10MB max
+            'cutoff' => 'required|in:1st,2nd',
+            'date' => 'required|date',
+        ]);
+
         try {
-            $search = $request->input('search', '');
-            $perPage = $request->input('perPage', 50);
+            $file = $request->file('file');
+            $cutoff = $request->input('cutoff');
+            $date = $request->input('date');
             
-            $query = Employee::with(['deductions' => function ($query) {
-                $query->where('is_default', true)->latest();
+            // Load the spreadsheet
+            $spreadsheet = IOFactory::load($file->getPathname());
+            $worksheet = $spreadsheet->getActiveSheet();
+            $rows = $worksheet->toArray();
+            
+            // Remove header row
+            array_shift($rows);
+            
+            $imported = 0;
+            $errors = [];
+            
+            DB::beginTransaction();
+            
+            foreach ($rows as $index => $row) {
+                $rowNumber = $index + 2; // +2 because we removed header and array is 0-indexed
+                
+                // Skip empty rows
+                if (empty(array_filter($row))) {
+                    continue;
+                }
+                
+                try {
+                    // Find employee by ID
+                    $employee = Employee::where('idno', trim($row[0]))->first();
+                    
+                    if (!$employee) {
+                        $errors[] = "Row {$rowNumber}: Employee with ID '{$row[0]}' not found.";
+                        continue;
+                    }
+                    
+                    // Check if deduction already exists
+                    $existingDeduction = Deduction::where('employee_id', $employee->id)
+                        ->where('cutoff', $cutoff)
+                        ->where('date', $date)
+                        ->first();
+                    
+                    $deductionData = [
+                        'employee_id' => $employee->id,
+                        'advance' => floatval($row[3] ?? 0),
+                        'charge_store' => floatval($row[4] ?? 0),
+                        'charge' => floatval($row[5] ?? 0),
+                        'meals' => floatval($row[6] ?? 0),
+                        'miscellaneous' => floatval($row[7] ?? 0),
+                        'other_deductions' => floatval($row[8] ?? 0),
+                        'cutoff' => $cutoff,
+                        'date' => $date,
+                        'is_posted' => false,
+                        'is_default' => false,
+                    ];
+                    
+                    if ($existingDeduction) {
+                        // Update existing deduction if not posted
+                        if ($existingDeduction->is_posted) {
+                            $errors[] = "Row {$rowNumber}: Deduction for employee '{$row[0]}' is already posted and cannot be updated.";
+                            continue;
+                        }
+                        $existingDeduction->update($deductionData);
+                    } else {
+                        // Create new deduction
+                        Deduction::create($deductionData);
+                    }
+                    
+                    $imported++;
+                    
+                } catch (\Exception $e) {
+                    $errors[] = "Row {$rowNumber}: " . $e->getMessage();
+                }
+            }
+            
+            DB::commit();
+            
+            return response()->json([
+                'success' => true,
+                'message' => "Successfully imported {$imported} deductions.",
+                'imported_count' => $imported,
+                'errors' => $errors
+            ]);
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Import failed: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Export deductions to Excel
+     */
+    public function export(Request $request)
+    {
+        $cutoff = $request->input('cutoff', '1st');
+        $month = $request->input('month', Carbon::now()->month);
+        $year = $request->input('year', Carbon::now()->year);
+        $search = $request->input('search', '');
+        
+        // Build date range for selected month and cutoff
+        $startDate = Carbon::createFromDate($year, $month, $cutoff === '1st' ? 1 : 16);
+        $endDate = $cutoff === '1st' 
+            ? Carbon::createFromDate($year, $month, 15)
+            : Carbon::createFromDate($year, $month)->endOfMonth();
+        
+        // Query to get employees with deductions
+        $query = Employee::with(['deductions' => function ($query) use ($cutoff, $startDate, $endDate) {
+                $query->where('cutoff', $cutoff)
+                    ->whereBetween('date', [$startDate->toDateString(), $endDate->toDateString()])
+                    ->latest('date');
             }])
             ->where('JobStatus', 'Active')
             ->select('id', 'idno', 'Lname', 'Fname', 'MName', 'Suffix', 'Department');
             
-            // Apply search if provided
-            if ($search) {
-                $query->where(function ($q) use ($search) {
-                    $q->where('Lname', 'like', "%{$search}%")
-                      ->orWhere('Fname', 'like', "%{$search}%")
-                      ->orWhere('idno', 'like', "%{$search}%")
-                      ->orWhere('Department', 'like', "%{$search}%");
-                });
-            }
-            
-            // Get employees with pagination
-            $employees = $query->paginate($perPage);
-            
-            // Return JSON response for API requests
-            return response()->json($employees);
-        } catch (\Exception $e) {
-            // Return error response
-            return response()->json([
-                'error' => 'Failed to retrieve employee defaults',
-                'message' => $e->getMessage()
-            ], 500);
+        // Apply search term if provided
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('Lname', 'like', "%{$search}%")
+                  ->orWhere('Fname', 'like', "%{$search}%")
+                  ->orWhere('idno', 'like', "%{$search}%")
+                  ->orWhere('Department', 'like', "%{$search}%");
+            });
         }
-    }
-    
-    public function showEmployeeDefaultsPage()
-    {
-        return Inertia::render('Deductions/EmployeeDefaultsPage', [
-            'auth' => [
-                'user' => Auth::user(),
-            ],
-        ]);
+        
+        $employees = $query->get();
+        
+        $spreadsheet = new Spreadsheet();
+        $sheet = $spreadsheet->getActiveSheet();
+        
+        // Set headers
+        $headers = [
+            'A1' => 'Employee ID',
+            'B1' => 'Employee Name',
+            'C1' => 'Department',
+            'D1' => 'Advance',
+            'E1' => 'Charge Store',
+            'F1' => 'Charge',
+            'G1' => 'Meals',
+            'H1' => 'Miscellaneous',
+            'I1' => 'Other Deductions',
+            'J1' => 'Cutoff',
+            'K1' => 'Date',
+            'L1' => 'Status',
+            'M1' => 'Is Default'
+        ];
+        
+        foreach ($headers as $cell => $header) {
+            $sheet->setCellValue($cell, $header);
+            $sheet->getStyle($cell)->getFont()->setBold(true);
+        }
+        
+        // Add data
+        $row = 2;
+        foreach ($employees as $employee) {
+            $deduction = $employee->deductions->first();
+            $employeeName = trim($employee->Lname . ', ' . $employee->Fname . ' ' . ($employee->MName ?? ''));
+            
+            $sheet->setCellValue('A' . $row, $employee->idno);
+            $sheet->setCellValue('B' . $row, $employeeName);
+            $sheet->setCellValue('C' . $row, $employee->Department ?? '');
+            $sheet->setCellValue('D' . $row, $deduction ? number_format($deduction->advance, 2) : '0.00');
+            $sheet->setCellValue('E' . $row, $deduction ? number_format($deduction->charge_store, 2) : '0.00');
+            $sheet->setCellValue('F' . $row, $deduction ? number_format($deduction->charge, 2) : '0.00');
+            $sheet->setCellValue('G' . $row, $deduction ? number_format($deduction->meals, 2) : '0.00');
+            $sheet->setCellValue('H' . $row, $deduction ? number_format($deduction->miscellaneous, 2) : '0.00');
+            $sheet->setCellValue('I' . $row, $deduction ? number_format($deduction->other_deductions, 2) : '0.00');
+            $sheet->setCellValue('J' . $row, $deduction ? $deduction->cutoff : $cutoff);
+            $sheet->setCellValue('K' . $row, $deduction ? $deduction->date->format('Y-m-d') : '');
+            $sheet->setCellValue('L' . $row, $deduction ? ($deduction->is_posted ? 'Posted' : 'Pending') : 'No Data');
+            $sheet->setCellValue('M' . $row, $deduction ? ($deduction->is_default ? 'Yes' : 'No') : 'No');
+            
+            $row++;
+        }
+        
+        // Auto-size columns
+        foreach (range('A', 'M') as $column) {
+            $sheet->getColumnDimension($column)->setAutoSize(true);
+        }
+        
+        $writer = new Xlsx($spreadsheet);
+        
+        // Set headers for download
+        $filename = 'deductions_export_' . $cutoff . '_' . $month . '_' . $year . '_' . date('Y-m-d') . '.xlsx';
+        
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment;filename="' . $filename . '"');
+        header('Cache-Control: max-age=0');
+        
+        $writer->save('php://output');
+        exit;
     }
 }

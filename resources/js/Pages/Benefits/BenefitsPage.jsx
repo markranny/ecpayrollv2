@@ -50,6 +50,8 @@ const BenefitsPage = ({ employees: initialEmployees, cutoff: initialCutoff, mont
         perPage: initialEmployees?.per_page || 50,
         total: initialEmployees?.total || 0,
     });
+    const [showImportModal, setShowImportModal] = useState(false);
+    const [importFile, setImportFile] = useState(null);
 
     // Update pagination when initialEmployees changes
     useEffect(() => {
@@ -87,7 +89,7 @@ const BenefitsPage = ({ employees: initialEmployees, cutoff: initialCutoff, mont
     const debouncedSearch = useCallback(
         debounce((value) => {
             handleFilterChange('search', value);
-        }, 300), // Reduced debounce time for better responsiveness
+        }, 300),
         []
     );
 
@@ -130,9 +132,6 @@ const BenefitsPage = ({ employees: initialEmployees, cutoff: initialCutoff, mont
                 })
             );
             
-            // Update status count if needed - don't show message to avoid UI clutter during editing
-            // setAlertMessage('Benefit updated successfully');
-            // setTimeout(() => setAlertMessage(null), 3000);
         } catch (error) {
             console.error('Error updating benefit:', error);
             setAlertMessage(error.response?.data?.message || 'Error updating benefit');
@@ -141,41 +140,38 @@ const BenefitsPage = ({ employees: initialEmployees, cutoff: initialCutoff, mont
     };
 
     // Modified createBenefit method to better handle async creation
-const createBenefit = async (employeeId) => {
-    try {
-        setLoading(true);
-        const response = await axios.post('/benefits/create-from-default', {
-            employee_id: employeeId,
-            cutoff: filters.cutoff,
-            date: new Date(`${filters.year}-${filters.month}-${filters.cutoff === '1st' ? 15 : 28}`).toISOString().split('T')[0]
-        });
-        
-        // Update the employees state to add the new benefit
-        setEmployees(currentEmployees => 
-            currentEmployees.map(employee => {
-                if (employee.id === employeeId) {
-                    return { 
-                        ...employee, 
-                        benefits: [response.data, ...(employee.benefits || [])] 
-                    };
-                }
-                return employee;
-            })
-        );
-        
-        // Optional user notification - kept quiet for better UX when just editing cells
-        //setAlertMessage('New benefit created from default values');
-        //setTimeout(() => setAlertMessage(null), 3000);
-        return response.data;
-    } catch (error) {
-        console.error('Error creating benefit:', error);
-        setAlertMessage(error.response?.data?.message || 'Error creating benefit');
-        setTimeout(() => setAlertMessage(null), 3000);
-        return null;
-    } finally {
-        setLoading(false);
-    }
-};
+    const createBenefit = async (employeeId) => {
+        try {
+            setLoading(true);
+            const response = await axios.post('/benefits/create-from-default', {
+                employee_id: employeeId,
+                cutoff: filters.cutoff,
+                date: new Date(`${filters.year}-${filters.month}-${filters.cutoff === '1st' ? 15 : 28}`).toISOString().split('T')[0]
+            });
+            
+            // Update the employees state to add the new benefit
+            setEmployees(currentEmployees => 
+                currentEmployees.map(employee => {
+                    if (employee.id === employeeId) {
+                        return { 
+                            ...employee, 
+                            benefits: [response.data, ...(employee.benefits || [])] 
+                        };
+                    }
+                    return employee;
+                })
+            );
+            
+            return response.data;
+        } catch (error) {
+            console.error('Error creating benefit:', error);
+            setAlertMessage(error.response?.data?.message || 'Error creating benefit');
+            setTimeout(() => setAlertMessage(null), 3000);
+            return null;
+        } finally {
+            setLoading(false);
+        }
+    };
 
     // Post a single benefit
     const postBenefit = async (benefitId) => {
@@ -258,9 +254,6 @@ const createBenefit = async (employeeId) => {
 
     // Post all benefits
     const postAllBenefits = () => {
-        // We're removing the condition that checks if there are pending benefits
-        // This ensures the button works even if the status is not properly loaded
-        
         setConfirmModal({
             isOpen: true,
             title: 'Post All Benefits',
@@ -371,62 +364,54 @@ const createBenefit = async (employeeId) => {
     };
 
     // Export to Excel
-    const exportToExcel = (selectedEmployees) => {
-        if (!selectedEmployees || selectedEmployees.length === 0) return;
-        
-        // Create workbook and worksheet
-        const wb = XLSX.utils.book_new();
-        
-        // Create data for export
-        const exportData = selectedEmployees.map(employee => {
-            const benefit = employee.benefits && employee.benefits.length > 0 ? employee.benefits[0] : null;
-            
-            // Create a record for each employee with their benefit data
-            const record = {
-                'Employee ID': employee.idno || '',
-                'Employee Name': `${employee.Lname}, ${employee.Fname} ${employee.MName || ''}`.trim(),
-                'Department': employee.Department || ''
-            };
-            
-            // Add benefit fields
-            const benefitFields = [
-                'advances', 'charges', 'uniform', 'mf_shares', 'mf_loan',
-                'sss_loan', 'hmdf_loan', 'hmdf_prem', 'sss_prem', 'philhealth'
-            ];
-            
-            benefitFields.forEach(field => {
-                record[field.replace('_', ' ').toUpperCase()] = benefit ? parseFloat(benefit[field] || 0).toFixed(2) : '0.00';
-            });
-            
-            return record;
-        });
-        
-        // Create worksheet
-        const ws = XLSX.utils.json_to_sheet(exportData);
-        
-        // Set column widths
-        const columnWidths = [
-            { wch: 15 }, // Employee ID
-            { wch: 30 }, // Employee Name
-            { wch: 20 }, // Department
-        ];
-        
-        // Add column widths for benefit fields
-        for (let i = 0; i < 10; i++) {
-            columnWidths.push({ wch: 15 });
+    const exportToExcel = () => {
+        window.location.href = `/benefits/export?cutoff=${filters.cutoff}&month=${filters.month}&year=${filters.year}&search=${filters.search}`;
+    };
+
+    // Download template
+    const downloadTemplate = () => {
+        window.location.href = '/benefits/template/download';
+    };
+
+    // Handle import
+    const handleImport = async () => {
+        if (!importFile) {
+            setAlertMessage('Please select a file to import');
+            setTimeout(() => setAlertMessage(null), 3000);
+            return;
         }
-        
-        ws['!cols'] = columnWidths;
-        
-        // Add worksheet to workbook
-        XLSX.utils.book_append_sheet(wb, ws, "Benefits");
-        
-        // Create date string for filename
-        const date = new Date();
-        const dateString = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-        
-        // Generate Excel file and trigger download
-        XLSX.writeFile(wb, `employee_benefits_${dateString}.xlsx`);
+
+        const formData = new FormData();
+        formData.append('file', importFile);
+        formData.append('cutoff', filters.cutoff);
+        formData.append('date', new Date(`${filters.year}-${filters.month}-${filters.cutoff === '1st' ? 15 : 28}`).toISOString().split('T')[0]);
+
+        try {
+            setLoading(true);
+            const response = await axios.post('/benefits/import', formData, {
+                headers: {
+                    'Content-Type': 'multipart/form-data',
+                },
+            });
+
+            setShowImportModal(false);
+            setImportFile(null);
+            applyFilters();
+            
+            if (response.data.errors && response.data.errors.length > 0) {
+                setAlertMessage(`Import completed with ${response.data.errors.length} errors. Check console for details.`);
+                console.log('Import errors:', response.data.errors);
+            } else {
+                setAlertMessage(`Successfully imported ${response.data.imported_count} benefits`);
+            }
+            setTimeout(() => setAlertMessage(null), 5000);
+        } catch (error) {
+            console.error('Error importing benefits:', error);
+            setAlertMessage(error.response?.data?.message || 'Error importing benefits');
+            setTimeout(() => setAlertMessage(null), 3000);
+        } finally {
+            setLoading(false);
+        }
     };
 
     // Generate months
@@ -474,10 +459,24 @@ const createBenefit = async (employeeId) => {
                                     Employee Benefits Management
                                 </h1>
                                 <p className="text-gray-600">
-                                    Manage employee benefits, loans, and deductions.
+                                    Manage employee benefits, loans, deductions, and allowances.
                                 </p>
                             </div>
                             <div className="flex items-center space-x-4">
+                                <Button
+                                    onClick={() => setShowImportModal(true)}
+                                    className="px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors duration-200 flex items-center"
+                                >
+                                    <Upload className="w-5 h-5 mr-2" />
+                                    Import
+                                </Button>
+                                <Button
+                                    onClick={exportToExcel}
+                                    className="px-5 py-2.5 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-colors duration-200 flex items-center"
+                                >
+                                    <Download className="w-5 h-5 mr-2" />
+                                    Export
+                                </Button>
                                 <Button
                                     onClick={createBulkBenefits}
                                     className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-colors duration-200 flex items-center"
@@ -487,7 +486,7 @@ const createBenefit = async (employeeId) => {
                                 </Button>
                                 <Button
                                     onClick={postAllBenefits}
-                                    className="px-5 py-2.5 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-colors duration-200 flex items-center"
+                                    className="px-5 py-2.5 bg-orange-600 text-white rounded-xl hover:bg-orange-700 transition-colors duration-200 flex items-center"
                                     disabled={status?.pendingCount === 0}
                                 >
                                     <Save className="w-5 h-5 mr-2" />
@@ -538,6 +537,64 @@ const createBenefit = async (employeeId) => {
                                 }}
                             />
                         </div>
+
+                        {/* Import Modal */}
+                        {showImportModal && (
+                            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                                <div className="bg-white rounded-lg max-w-md w-full p-6">
+                                    <h3 className="text-lg font-semibold mb-4">Import Benefits</h3>
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                Select Excel File
+                                            </label>
+                                            <input
+                                                type="file"
+                                                accept=".xlsx,.xls,.csv"
+                                                onChange={(e) => setImportFile(e.target.files[0])}
+                                                className="w-full border border-gray-300 rounded-md px-3 py-2"
+                                            />
+                                        </div>
+                                        <div className="text-sm text-gray-600">
+                                            <p>Import will use current filter settings:</p>
+                                            <ul className="list-disc list-inside mt-1">
+                                                <li>Cutoff: {filters.cutoff}</li>
+                                                <li>Period: {filters.month}/{filters.year}</li>
+                                            </ul>
+                                        </div>
+                                        <div className="flex items-center space-x-2">
+                                            <Button
+                                                onClick={downloadTemplate}
+                                                variant="outline"
+                                                size="sm"
+                                                className="flex items-center"
+                                            >
+                                                <Download className="w-4 h-4 mr-1" />
+                                                Download Template
+                                            </Button>
+                                        </div>
+                                    </div>
+                                    <div className="flex justify-end space-x-3 mt-6">
+                                        <Button
+                                            variant="outline"
+                                            onClick={() => {
+                                                setShowImportModal(false);
+                                                setImportFile(null);
+                                            }}
+                                        >
+                                            Cancel
+                                        </Button>
+                                        <Button
+                                            onClick={handleImport}
+                                            disabled={!importFile || loading}
+                                            className="bg-blue-600 hover:bg-blue-700 text-white"
+                                        >
+                                            {loading ? 'Importing...' : 'Import'}
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
 
                         {/* Confirm Modal */}
                         <ConfirmModal

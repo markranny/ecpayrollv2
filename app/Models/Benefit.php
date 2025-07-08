@@ -11,7 +11,6 @@ class Benefit extends Model
 
     protected $fillable = [
         'employee_id',
-        // Removed the three specific fields as requested
         'mf_shares',
         'mf_loan',
         'sss_loan',
@@ -19,6 +18,7 @@ class Benefit extends Model
         'hmdf_prem',
         'sss_prem',
         'philhealth',
+        'allowances', // Added allowances field
         'cutoff',
         'date',
         'date_posted',
@@ -27,7 +27,6 @@ class Benefit extends Model
     ];
 
     protected $casts = [
-        // Removed the three specific fields as requested
         'mf_shares' => 'decimal:2',
         'mf_loan' => 'decimal:2',
         'sss_loan' => 'decimal:2',
@@ -35,6 +34,7 @@ class Benefit extends Model
         'hmdf_prem' => 'decimal:2',
         'sss_prem' => 'decimal:2',
         'philhealth' => 'decimal:2',
+        'allowances' => 'decimal:2', // Added allowances cast
         'date' => 'date',
         'date_posted' => 'date',
         'is_posted' => 'boolean',
@@ -90,7 +90,6 @@ class Benefit extends Model
         }
 
         // Create a new benefit based on the default one
-        // Note: removed the three specific fields as requested
         return self::create([
             'employee_id' => $employeeId,
             'mf_shares' => $defaultBenefit->mf_shares,
@@ -100,10 +99,19 @@ class Benefit extends Model
             'hmdf_prem' => $defaultBenefit->hmdf_prem,
             'sss_prem' => $defaultBenefit->sss_prem,
             'philhealth' => $defaultBenefit->philhealth,
+            'allowances' => $defaultBenefit->allowances, // Copy allowances
             'cutoff' => $cutoff,
             'date' => $date,
             'is_posted' => false,
             'is_default' => false
         ]);
+    }
+
+    // Get total benefits amount for this record
+    public function getTotalBenefitsAttribute()
+    {
+        return $this->mf_shares + $this->mf_loan + $this->sss_loan + 
+               $this->hmdf_loan + $this->hmdf_prem + $this->sss_prem + 
+               $this->philhealth + $this->allowances;
     }
 }
