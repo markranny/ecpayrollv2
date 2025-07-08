@@ -2348,173 +2348,180 @@ public function setHoliday(Request $request)
      * POST to Payroll - Create payroll summaries
      */
     public function postToPayroll(Request $request)
-    {
+{
+    try {
+        $validator = Validator::make($request->all(), [
+            'year' => 'required|integer|min:2020|max:2030',
+            'month' => 'required|integer|min:1|max:12',
+            'period_type' => 'required|in:1st_half,2nd_half',
+            'department' => 'nullable|string',
+            'employee_ids' => 'nullable|array',
+            'employee_ids.*' => 'integer|exists:employees,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $year = $request->input('year');
+        $month = $request->input('month');
+        $periodType = $request->input('period_type');
+        $department = $request->input('department');
+        
+        // FIX: Properly handle employee_ids to avoid null count() error
+        $employeeIds = $request->input('employee_ids');
+        
+        // Ensure employee_ids is always an array (empty array if null)
+        if (!is_array($employeeIds)) {
+            $employeeIds = [];
+        }
+
+        Log::info('Starting payroll posting process', [
+            'year' => $year,
+            'month' => $month,
+            'period_type' => $periodType,
+            'department' => $department,
+            'employee_ids_count' => count($employeeIds)  // Now safe to count
+        ]);
+
+        // Calculate period dates
+        [$startDate, $endDate] = \App\Models\PayrollSummary::calculatePeriodDates($year, $month, $periodType);
+
+        // Build query for attendance records to post
+        $attendanceQuery = ProcessedAttendance::whereBetween('attendance_date', [$startDate, $endDate])
+            ->where('posting_status', 'not_posted')
+            ->with('employee');
+
+        // Apply filters
+        if ($department) {
+            $attendanceQuery->whereHas('employee', function ($q) use ($department) {
+                $q->where('Department', $department);
+            });
+        }
+
+        if (count($employeeIds) > 0) {  // Now safe to use count()
+            $attendanceQuery->whereIn('employee_id', $employeeIds);
+        }
+
+        // Get attendance records grouped by employee
+        $attendanceRecords = $attendanceQuery->get();
+        $employeeGroups = $attendanceRecords->groupBy('employee_id');
+
+        if ($employeeGroups->isEmpty()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'No attendance records found for the specified criteria'
+            ], 404);
+        }
+
+        DB::beginTransaction();
+
         try {
-            $validator = Validator::make($request->all(), [
-                'year' => 'required|integer|min:2020|max:2030',
-                'month' => 'required|integer|min:1|max:12',
-                'period_type' => 'required|in:1st_half,2nd_half',
-                'department' => 'nullable|string',
-                'employee_ids' => 'nullable|array',
-                'employee_ids.*' => 'integer|exists:employees,id'
-            ]);
+            $postedEmployees = 0;
+            $updatedRecords = 0;
+            $errors = [];
 
-            if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validator->errors()
-                ], 422);
-            }
+            foreach ($employeeGroups as $employeeId => $records) {
+                try {
+                    // Check if summary already exists
+                    $existingSummary = \App\Models\PayrollSummary::where('employee_id', $employeeId)
+                        ->where('year', $year)
+                        ->where('month', $month)
+                        ->where('period_type', $periodType)
+                        ->first();
 
-            $year = $request->input('year');
-            $month = $request->input('month');
-            $periodType = $request->input('period_type');
-            $department = $request->input('department');
-            $employeeIds = $request->input('employee_ids', []);
-
-            Log::info('Starting payroll posting process', [
-                'year' => $year,
-                'month' => $month,
-                'period_type' => $periodType,
-                'department' => $department,
-                'employee_ids_count' => count($employeeIds)
-            ]);
-
-            // Calculate period dates
-            [$startDate, $endDate] = \App\Models\PayrollSummary::calculatePeriodDates($year, $month, $periodType);
-
-            // Build query for attendance records to post
-            $attendanceQuery = ProcessedAttendance::whereBetween('attendance_date', [$startDate, $endDate])
-                ->where('posting_status', 'not_posted')
-                ->with('employee');
-
-            // Apply filters
-            if ($department) {
-                $attendanceQuery->whereHas('employee', function ($q) use ($department) {
-                    $q->where('Department', $department);
-                });
-            }
-
-            if (!empty($employeeIds)) {
-                $attendanceQuery->whereIn('employee_id', $employeeIds);
-            }
-
-            // Get attendance records grouped by employee
-            $attendanceRecords = $attendanceQuery->get();
-            $employeeGroups = $attendanceRecords->groupBy('employee_id');
-
-            if ($employeeGroups->isEmpty()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'No attendance records found for the specified criteria'
-                ], 404);
-            }
-
-            DB::beginTransaction();
-
-            try {
-                $postedEmployees = 0;
-                $updatedRecords = 0;
-                $errors = [];
-
-                foreach ($employeeGroups as $employeeId => $records) {
-                    try {
-                        // Check if summary already exists
-                        $existingSummary = \App\Models\PayrollSummary::where('employee_id', $employeeId)
-                            ->where('year', $year)
-                            ->where('month', $month)
-                            ->where('period_type', $periodType)
-                            ->first();
-
-                        if ($existingSummary && $existingSummary->isPosted()) {
-                            $errors[] = "Employee {$records->first()->employee->idno} already has a posted summary for this period";
-                            continue;
-                        }
-
-                        // Generate summary data
-                        $summaryData = \App\Models\PayrollSummary::generateFromAttendance($employeeId, $year, $month, $periodType);
-                        $summaryData['status'] = 'posted';
-                        $summaryData['posted_by'] = auth()->id();
-                        $summaryData['posted_at'] = now();
-
-                        // Create or update summary
-                        if ($existingSummary) {
-                            $existingSummary->update($summaryData);
-                            $summary = $existingSummary;
-                        } else {
-                            $summary = \App\Models\PayrollSummary::create($summaryData);
-                        }
-
-                        // Mark attendance records as posted
-                        foreach ($records as $record) {
-                            $record->update([
-                                'posting_status' => 'posted',
-                                'posted_at' => now(),
-                                'posted_by' => auth()->id()
-                            ]);
-                            $updatedRecords++;
-                        }
-
-                        $postedEmployees++;
-
-                        Log::info('Created payroll summary', [
-                            'employee_id' => $employeeId,
-                            'employee_no' => $summary->employee_no,
-                            'period' => $summary->full_period,
-                            'days_worked' => $summary->days_worked,
-                            'ot_hours' => $summary->ot_hours
-                        ]);
-
-                    } catch (\Exception $e) {
-                        $employee = $records->first()->employee;
-                        $errors[] = "Failed to process employee {$employee->idno}: " . $e->getMessage();
-                        Log::error("Error processing employee {$employeeId}", [
-                            'error' => $e->getMessage(),
-                            'trace' => $e->getTraceAsString()
-                        ]);
+                    if ($existingSummary && $existingSummary->isPosted()) {
+                        $errors[] = "Employee {$records->first()->employee->idno} already has a posted summary for this period";
+                        continue;
                     }
+
+                    // Generate summary data
+                    $summaryData = \App\Models\PayrollSummary::generateFromAttendance($employeeId, $year, $month, $periodType);
+                    $summaryData['status'] = 'posted';
+                    $summaryData['posted_by'] = auth()->id();
+                    $summaryData['posted_at'] = now();
+
+                    // Create or update summary
+                    if ($existingSummary) {
+                        $existingSummary->update($summaryData);
+                        $summary = $existingSummary;
+                    } else {
+                        $summary = \App\Models\PayrollSummary::create($summaryData);
+                    }
+
+                    // Mark attendance records as posted
+                    foreach ($records as $record) {
+                        $record->update([
+                            'posting_status' => 'posted',
+                            'posted_at' => now(),
+                            'posted_by' => auth()->id()
+                        ]);
+                        $updatedRecords++;
+                    }
+
+                    $postedEmployees++;
+
+                    Log::info('Created payroll summary', [
+                        'employee_id' => $employeeId,
+                        'employee_no' => $summary->employee_no,
+                        'period' => $summary->full_period,
+                        'days_worked' => $summary->days_worked,
+                        'ot_hours' => $summary->ot_hours
+                    ]);
+
+                } catch (\Exception $e) {
+                    $employee = $records->first()->employee;
+                    $errors[] = "Failed to process employee {$employee->idno}: " . $e->getMessage();
+                    Log::error("Error processing employee {$employeeId}", [
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString()
+                    ]);
                 }
-
-                DB::commit();
-
-                $message = "Successfully posted {$postedEmployees} employee summaries and updated {$updatedRecords} attendance records";
-                if (!empty($errors)) {
-                    $message .= ". " . count($errors) . " errors occurred.";
-                }
-
-                Log::info('Payroll posting completed', [
-                    'posted_employees' => $postedEmployees,
-                    'updated_records' => $updatedRecords,
-                    'error_count' => count($errors)
-                ]);
-
-                return response()->json([
-                    'success' => true,
-                    'message' => $message,
-                    'posted_employees' => $postedEmployees,
-                    'updated_records' => $updatedRecords,
-                    'errors' => $errors
-                ]);
-
-            } catch (\Exception $e) {
-                DB::rollBack();
-                throw $e;
             }
 
-        } catch (\Exception $e) {
-            Log::error('Error in payroll posting process', [
-                'error' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-                'request_data' => $request->all()
+            DB::commit();
+
+            $message = "Successfully posted {$postedEmployees} employee summaries and updated {$updatedRecords} attendance records";
+            if (!empty($errors)) {
+                $message .= ". " . count($errors) . " errors occurred.";
+            }
+
+            Log::info('Payroll posting completed', [
+                'posted_employees' => $postedEmployees,
+                'updated_records' => $updatedRecords,
+                'error_count' => count($errors)
             ]);
 
             return response()->json([
-                'success' => false,
-                'message' => 'Payroll posting failed: ' . $e->getMessage()
-            ], 500);
+                'success' => true,
+                'message' => $message,
+                'posted_employees' => $postedEmployees,
+                'updated_records' => $updatedRecords,
+                'errors' => $errors
+            ]);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
         }
+
+    } catch (\Exception $e) {
+        Log::error('Error in payroll posting process', [
+            'error' => $e->getMessage(),
+            'trace' => $e->getTraceAsString(),
+            'request_data' => $request->all()
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Payroll posting failed: ' . $e->getMessage()
+        ], 500);
     }
+}
 
     /**
      * Get payroll summaries with filtering
@@ -2786,135 +2793,142 @@ public function setHoliday(Request $request)
      * Get posting preview data
      */
     public function getPostingPreview(Request $request)
-    {
-        try {
-            $validator = Validator::make($request->all(), [
-                'year' => 'required|integer|min:2020|max:2030',
-                'month' => 'required|integer|min:1|max:12',
-                'period_type' => 'required|in:1st_half,2nd_half',
-                'department' => 'nullable|string',
-                'employee_ids' => 'nullable|array',
-                'employee_ids.*' => 'integer|exists:employees,id'
-            ]);
+{
+    try {
+        $validator = Validator::make($request->all(), [
+            'year' => 'required|integer|min:2020|max:2030',
+            'month' => 'required|integer|min:1|max:12',
+            'period_type' => 'required|in:1st_half,2nd_half',
+            'department' => 'nullable|string',
+            'employee_ids' => 'nullable|array',
+            'employee_ids.*' => 'integer|exists:employees,id'
+        ]);
 
-            if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validator->errors()
-                ], 422);
-            }
-
-            $year = $request->input('year');
-            $month = $request->input('month');
-            $periodType = $request->input('period_type');
-            $department = $request->input('department');
-            $employeeIds = $request->input('employee_ids', []);
-
-            // Calculate period dates
-            [$startDate, $endDate] = \App\Models\PayrollSummary::calculatePeriodDates($year, $month, $periodType);
-
-            // Build query for attendance records
-            $attendanceQuery = ProcessedAttendance::whereBetween('attendance_date', [$startDate, $endDate])
-                ->where('posting_status', 'not_posted')
-                ->with('employee');
-
-            // Apply filters
-            if ($department) {
-                $attendanceQuery->whereHas('employee', function ($q) use ($department) {
-                    $q->where('Department', $department);
-                });
-            }
-
-            if (!empty($employeeIds)) {
-                $attendanceQuery->whereIn('employee_id', $employeeIds);
-            }
-
-            // Get attendance records grouped by employee
-            $attendanceRecords = $attendanceQuery->get();
-            $employeeGroups = $attendanceRecords->groupBy('employee_id');
-
-            $preview = [];
-            $totals = [
-                'employees' => 0,
-                'records' => 0,
-                'days_worked' => 0,
-                'ot_hours' => 0,
-                'off_days' => 0,
-                'late_under_minutes' => 0,
-                'nsd_hours' => 0,
-                'slvl_days' => 0
-            ];
-
-            foreach ($employeeGroups as $employeeId => $records) {
-                $employee = $records->first()->employee;
-                
-                // Check if summary already exists
-                $existingSummary = \App\Models\PayrollSummary::where('employee_id', $employeeId)
-                    ->where('year', $year)
-                    ->where('month', $month)
-                    ->where('period_type', $periodType)
-                    ->first();
-
-                // Generate preview summary
-                $summaryData = \App\Models\PayrollSummary::generateFromAttendance($employeeId, $year, $month, $periodType);
-                
-                $preview[] = [
-                    'employee_id' => $employeeId,
-                    'employee_no' => $employee->idno,
-                    'employee_name' => trim($employee->Fname . ' ' . $employee->Lname),
-                    'department' => $employee->Department,
-                    'line' => $employee->Line,
-                    'record_count' => $records->count(),
-                    'days_worked' => $summaryData['days_worked'],
-                    'ot_hours' => $summaryData['ot_hours'],
-                    'off_days' => $summaryData['off_days'],
-                    'late_under_minutes' => $summaryData['late_under_minutes'],
-                    'nsd_hours' => $summaryData['nsd_hours'],
-                    'slvl_days' => $summaryData['slvl_days'],
-                    'existing_summary' => $existingSummary ? [
-                        'id' => $existingSummary->id,
-                        'status' => $existingSummary->status,
-                        'posted_at' => $existingSummary->posted_at
-                    ] : null,
-                    'will_update' => $existingSummary && !$existingSummary->isPosted()
-                ];
-
-                // Add to totals
-                $totals['employees']++;
-                $totals['records'] += $records->count();
-                $totals['days_worked'] += $summaryData['days_worked'];
-                $totals['ot_hours'] += $summaryData['ot_hours'];
-                $totals['off_days'] += $summaryData['off_days'];
-                $totals['late_under_minutes'] += $summaryData['late_under_minutes'];
-                $totals['nsd_hours'] += $summaryData['nsd_hours'];
-                $totals['slvl_days'] += $summaryData['slvl_days'];
-            }
-
-            return response()->json([
-                'success' => true,
-                'preview' => $preview,
-                'totals' => $totals,
-                'period' => [
-                    'start_date' => $startDate->format('Y-m-d'),
-                    'end_date' => $endDate->format('Y-m-d'),
-                    'period_type' => $periodType,
-                    'year' => $year,
-                    'month' => $month,
-                    'label' => $periodType === '1st_half' ? '1-15' : '16-' . $endDate->day
-                ]
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Error generating posting preview', [
-                'error' => $e->getMessage(),
-                'request_data' => $request->all()
-            ]);
-
+        if ($validator->fails()) {
             return response()->json([
                 'success' => false,
-                'message' => 'Failed to generate posting preview: ' . $e->getMessage()
-            ], 500);
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
         }
+
+        $year = $request->input('year');
+        $month = $request->input('month');
+        $periodType = $request->input('period_type');
+        $department = $request->input('department');
+        
+        // FIX: Properly handle employee_ids to avoid null count() error
+        $employeeIds = $request->input('employee_ids');
+        
+        // Ensure employee_ids is always an array (empty array if null)
+        if (!is_array($employeeIds)) {
+            $employeeIds = [];
+        }
+
+        // Calculate period dates
+        [$startDate, $endDate] = \App\Models\PayrollSummary::calculatePeriodDates($year, $month, $periodType);
+
+        // Build query for attendance records
+        $attendanceQuery = ProcessedAttendance::whereBetween('attendance_date', [$startDate, $endDate])
+            ->where('posting_status', 'not_posted')
+            ->with('employee');
+
+        // Apply filters
+        if ($department) {
+            $attendanceQuery->whereHas('employee', function ($q) use ($department) {
+                $q->where('Department', $department);
+            });
+        }
+
+        if (count($employeeIds) > 0) {  // Now safe to use count()
+            $attendanceQuery->whereIn('employee_id', $employeeIds);
+        }
+
+        // Get attendance records grouped by employee
+        $attendanceRecords = $attendanceQuery->get();
+        $employeeGroups = $attendanceRecords->groupBy('employee_id');
+
+        $preview = [];
+        $totals = [
+            'employees' => 0,
+            'records' => 0,
+            'days_worked' => 0,
+            'ot_hours' => 0,
+            'off_days' => 0,
+            'late_under_minutes' => 0,
+            'nsd_hours' => 0,
+            'slvl_days' => 0
+        ];
+
+        foreach ($employeeGroups as $employeeId => $records) {
+            $employee = $records->first()->employee;
+            
+            // Check if summary already exists
+            $existingSummary = \App\Models\PayrollSummary::where('employee_id', $employeeId)
+                ->where('year', $year)
+                ->where('month', $month)
+                ->where('period_type', $periodType)
+                ->first();
+
+            // Generate preview summary
+            $summaryData = \App\Models\PayrollSummary::generateFromAttendance($employeeId, $year, $month, $periodType);
+            
+            $preview[] = [
+                'employee_id' => $employeeId,
+                'employee_no' => $employee->idno,
+                'employee_name' => trim($employee->Fname . ' ' . $employee->Lname),
+                'department' => $employee->Department,
+                'line' => $employee->Line,
+                'record_count' => $records->count(),
+                'days_worked' => $summaryData['days_worked'],
+                'ot_hours' => $summaryData['ot_hours'],
+                'off_days' => $summaryData['off_days'],
+                'late_under_minutes' => $summaryData['late_under_minutes'],
+                'nsd_hours' => $summaryData['nsd_hours'],
+                'slvl_days' => $summaryData['slvl_days'],
+                'existing_summary' => $existingSummary ? [
+                    'id' => $existingSummary->id,
+                    'status' => $existingSummary->status,
+                    'posted_at' => $existingSummary->posted_at
+                ] : null,
+                'will_update' => $existingSummary && !$existingSummary->isPosted()
+            ];
+
+            // Add to totals
+            $totals['employees']++;
+            $totals['records'] += $records->count();
+            $totals['days_worked'] += $summaryData['days_worked'];
+            $totals['ot_hours'] += $summaryData['ot_hours'];
+            $totals['off_days'] += $summaryData['off_days'];
+            $totals['late_under_minutes'] += $summaryData['late_under_minutes'];
+            $totals['nsd_hours'] += $summaryData['nsd_hours'];
+            $totals['slvl_days'] += $summaryData['slvl_days'];
+        }
+
+        return response()->json([
+            'success' => true,
+            'preview' => $preview,
+            'totals' => $totals,
+            'period' => [
+                'start_date' => $startDate->format('Y-m-d'),
+                'end_date' => $endDate->format('Y-m-d'),
+                'period_type' => $periodType,
+                'year' => $year,
+                'month' => $month,
+                'label' => $periodType === '1st_half' ? '1-15' : '16-' . $endDate->day
+            ]
+        ]);
+
+    } catch (\Exception $e) {
+        Log::error('Error generating posting preview', [
+            'error' => $e->getMessage(),
+            'request_data' => $request->all()
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to generate posting preview: ' . $e->getMessage()
+        ], 500);
     }
+}
 }

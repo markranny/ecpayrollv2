@@ -310,7 +310,7 @@ const Sidebar = ({ showSidebar = true }) => {
             label: 'Timesheets',
             allowedRoles: ['superadmin', 'hrd_manager'],
             items: [
-                { label: 'DTR', path: '/timesheet/report' },
+                { label: 'DTR', path: '/payroll-summaries-page' },
                 { label: 'Attendance Report', path: '/timesheets/dtr' },
                 { label: 'Process Attendance', path: '/attendance' },
                 { label: 'Manual Entry', path: '/timesheet/manual-entry' },
