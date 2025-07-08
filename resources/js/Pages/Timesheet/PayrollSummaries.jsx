@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Head } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
-import { Search, Calendar, Filter, Download, Trash2, RefreshCw, Users, Calculator, FileText, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Search, Calendar, Filter, Download, Trash2, RefreshCw, Users, Calculator, FileText, AlertTriangle, CheckCircle, Clock, Target } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -200,6 +200,13 @@ const PayrollSummaries = ({ auth }) => {
     return isNaN(num) ? '0.00' : num.toFixed(decimals);
   };
 
+  // Format minutes to hours for display
+  const formatMinutesToHours = (minutes) => {
+    if (!minutes || minutes === 0) return '0.00';
+    const hours = parseFloat(minutes) / 60;
+    return hours.toFixed(2);
+  };
+
   // Clear messages after delay
   useEffect(() => {
     if (success) {
@@ -237,7 +244,7 @@ const PayrollSummaries = ({ auth }) => {
                   Payroll Summaries
                 </h1>
                 <p className="text-gray-600">
-                  View and manage posted payroll summaries generated from attendance data.
+                  View and manage posted payroll summaries generated from attendance data with accurate calculations.
                 </p>
               </div>
               
@@ -391,7 +398,7 @@ const PayrollSummaries = ({ auth }) => {
                 <Card>
                   <CardContent className="p-4">
                     <div className="flex items-center">
-                      <Calculator className="h-8 w-8 text-orange-500" />
+                      <Clock className="h-8 w-8 text-orange-500" />
                       <div className="ml-4">
                         <p className="text-sm font-medium text-gray-600">Total OT Hours</p>
                         <p className="text-2xl font-bold text-gray-900">{formatNumeric(statistics.total_ot_hours)}</p>
@@ -402,7 +409,7 @@ const PayrollSummaries = ({ auth }) => {
                 <Card>
                   <CardContent className="p-4">
                     <div className="flex items-center">
-                      <FileText className="h-8 w-8 text-purple-500" />
+                      <Target className="h-8 w-8 text-purple-500" />
                       <div className="ml-4">
                         <p className="text-sm font-medium text-gray-600">Avg Days/Employee</p>
                         <p className="text-2xl font-bold text-gray-900">{formatNumeric(statistics.avg_days_worked, 1)}</p>
@@ -437,9 +444,10 @@ const PayrollSummaries = ({ auth }) => {
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Days Worked</th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT Hours</th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Off Days</th>
-                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Late/Under</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Late/Under (Hrs)</th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">NSD Hours</th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SLVL Days</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Retro</th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Posted</th>
                         <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
@@ -467,23 +475,29 @@ const PayrollSummaries = ({ auth }) => {
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {summary.full_period}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
                             {formatNumeric(summary.days_worked, 1)}
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">
                             {formatNumeric(summary.ot_hours)}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {formatNumeric(summary.off_days, 1)}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                            {formatNumeric(summary.late_under_hours)} hrs
+                            <div className="flex items-center space-x-1">
+                              <Clock className="h-3 w-3 text-orange-500" />
+                              <span>{formatMinutesToHours(summary.late_under_minutes)}</span>
+                            </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {formatNumeric(summary.nsd_hours)}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                             {formatNumeric(summary.slvl_days, 1)}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {formatNumeric(summary.retro)}
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap">
                             <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
@@ -495,7 +509,7 @@ const PayrollSummaries = ({ auth }) => {
                             }`}>
                               {summary.status === 'posted' && <CheckCircle className="h-3 w-3 mr-1" />}
                               {summary.status === 'locked' && <AlertTriangle className="h-3 w-3 mr-1" />}
-                              {summary.status === 'draft' && <Info className="h-3 w-3 mr-1" />}
+                              {summary.status === 'draft' && <Clock className="h-3 w-3 mr-1" />}
                               {summary.status.charAt(0).toUpperCase() + summary.status.slice(1)}
                             </span>
                           </td>
@@ -516,6 +530,7 @@ const PayrollSummaries = ({ auth }) => {
                                 size="sm"
                                 onClick={() => handleDelete(summary.id)}
                                 className="text-red-600 hover:text-red-900"
+                                title="Delete and revert attendance records to not-posted"
                               >
                                 <Trash2 className="h-4 w-4" />
                               </Button>
