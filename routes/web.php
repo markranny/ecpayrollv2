@@ -317,13 +317,20 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
     Route::post('/attendance/post-to-payroll', [ProcessedAttendanceController::class, 'postToPayroll'])
         ->name('attendance.post-to-payroll');
     
-    // NEW: Payroll summaries management
+    // Payroll summaries management
     Route::get('/payroll-summaries', [ProcessedAttendanceController::class, 'getPayrollSummaries'])
         ->name('payroll-summaries.index');
     Route::get('/payroll-summaries/export', [ProcessedAttendanceController::class, 'exportPayrollSummaries'])
         ->name('payroll-summaries.export');
     Route::delete('/payroll-summaries/{id}', [ProcessedAttendanceController::class, 'deletePayrollSummary'])
         ->name('payroll-summaries.destroy');
+    
+    // Payroll summaries page view
+    Route::get('/payroll-summaries-page', function () {
+        return Inertia::render('Timesheet/PayrollSummaries', [
+            'auth' => ['user' => auth()->user()]
+        ]);
+    })->name('payroll-summaries.page');
 });
 
 /*

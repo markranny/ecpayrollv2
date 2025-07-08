@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Head, usePage } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
-import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X, Users, FileText, Eye, Moon, Sun, AlertCircle, CheckCircle2, Info, Calculator, Car, Upload, Calendar as CalendarIcon, Target, Send, Preview } from 'lucide-react';
+import { Search, Calendar, Filter, Edit, RefreshCw, Clock, AlertTriangle, CheckCircle, Download, Trash2, X, Users, FileText, Eye, Moon, Sun, AlertCircle, CheckCircle2, Info, Calculator, Car, Upload, Calendar as CalendarIcon, Target, Send } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -2069,7 +2069,7 @@ const ProcessedAttendanceList = () => {
                 <div className="mb-6 space-y-4">
                   <div className="p-4 bg-green-50 border border-green-200 rounded-lg">
                     <h3 className="text-lg font-medium text-green-800 mb-3 flex items-center">
-                      <Preview className="h-5 w-5 mr-2" />
+                      {/* <FilePreview className="h-5 w-5 mr-2" /> */}
                       Posting Preview
                     </h3>
                     
@@ -2114,4 +2114,450 @@ const ProcessedAttendanceList = () => {
                             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Records</th>
                             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Days</th>
                             <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">OT</th>
-                            <th className="px-4 py-
+                            <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {postPreview.preview.slice(0, 10).map((employee, index) => (
+                            <tr key={employee.employee_id} className={index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                              <td className="px-4 py-2 text-sm">
+                                <div>
+                                  <div className="font-medium text-gray-900">{employee.employee_name}</div>
+                                  <div className="text-gray-500">{employee.employee_no}</div>
+                                </div>
+                              </td>
+                              <td className="px-4 py-2 text-sm text-gray-500">{employee.department}</td>
+                              <td className="px-4 py-2 text-sm text-gray-500">{employee.record_count}</td>
+                              <td className="px-4 py-2 text-sm text-gray-500">{employee.days_worked.toFixed(1)}</td>
+                              <td className="px-4 py-2 text-sm text-gray-500">{employee.ot_hours.toFixed(2)}</td>
+                              <td className="px-4 py-2 text-sm">
+                                {employee.existing_summary ? (
+                                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                    employee.existing_summary.status === 'posted' 
+                                      ? 'bg-green-100 text-green-800' 
+                                      : 'bg-yellow-100 text-yellow-800'
+                                  }`}>
+                                    {employee.will_update ? 'Will Update' : 'Exists'}
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                    New
+                                  </span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {postPreview.preview.length > 10 && (
+                        <div className="p-3 bg-gray-50 text-center text-sm text-gray-600">
+                          ... and {postPreview.preview.length - 10} more employees
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex justify-end space-x-3 pt-6 border-t">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowPostModal(false);
+                    setPostPreview(null);
+                  }}
+                  disabled={posting}
+                >
+                  Cancel
+                </Button>
+                
+                <Button
+                  onClick={handlePostToPayroll}
+                  disabled={posting || !postPreview || postPreview.totals.employees === 0}
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                >
+                  {posting ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Posting...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="h-4 w-4 mr-2" />
+                      Confirm POST ({postPreview ? postPreview.totals.employees : 0} employees)
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Modal */}
+      {showImportModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative bg-white rounded-lg shadow-lg max-w-md w-full mx-4">
+            <div className="flex justify-between items-center p-6 border-b">
+              <h2 className="text-xl font-semibold text-gray-800">Import Attendance Data</h2>
+              <button
+                onClick={() => {
+                  setShowImportModal(false);
+                  setImportFile(null);
+                }}
+                className="text-gray-500 hover:text-gray-700"
+                aria-label="Close"
+                disabled={importing}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6">
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Select CSV File
+                </label>
+                <input
+                  type="file"
+                  accept=".csv,.txt"
+                  onChange={(e) => setImportFile(e.target.files[0])}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={importing}
+                />
+                <p className="mt-1 text-sm text-gray-500">
+                  Upload a CSV file with attendance data. Maximum size: 10MB
+                </p>
+              </div>
+
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <h4 className="font-medium text-blue-800 mb-2">Required CSV Format:</h4>
+                <p className="text-sm text-blue-700">
+                  Employee Number, Employee Name, Department, Date, Day, Time In, Break Out, Break In, Time Out, Next Day Timeout, Hours Worked, Night Shift, Trip
+                </p>
+              </div>
+
+              <div className="flex justify-end space-x-3">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowImportModal(false);
+                    setImportFile(null);
+                  }}
+                  disabled={importing}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleImport}
+                  disabled={importing || !importFile}
+                  className="bg-indigo-600 hover:bg-indigo-700"
+                >
+                  {importing ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Importing...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="h-4 w-4 mr-2" />
+                      Import Data
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Holiday Modal */}
+      {showHolidayModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative bg-white rounded-lg shadow-lg max-w-md w-full mx-4">
+            <div className="flex justify-between items-center p-6 border-b">
+              <h2 className="text-xl font-semibold text-gray-800">Set Holiday</h2>
+              <button
+                onClick={() => {
+                  setShowHolidayModal(false);
+                  setHolidayData({
+                    date: '',
+                    multiplier: '2.0',
+                    department: '',
+                    employee_ids: []
+                  });
+                }}
+                className="text-gray-500 hover:text-gray-700"
+                aria-label="Close"
+                disabled={settingHoliday}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6">
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Holiday Date *
+                  </label>
+                  <input
+                    type="date"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                    value={holidayData.date}
+                    onChange={(e) => setHolidayData(prev => ({ ...prev, date: e.target.value }))}
+                    disabled={settingHoliday}
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Holiday Multiplier *
+                  </label>
+                  <select
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                    value={holidayData.multiplier}
+                    onChange={(e) => setHolidayData(prev => ({ ...prev, multiplier: e.target.value }))}
+                    disabled={settingHoliday}
+                  >
+                    <option value="1.3">1.3 (Special Holiday)</option>
+                    <option value="2.0">2.0 (Regular Holiday)</option>
+                    <option value="2.6">2.6 (Regular Holiday + OT)</option>
+                    <option value="1.69">1.69 (Special Holiday + OT)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Department (Optional)
+                  </label>
+                  <select
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                    value={holidayData.department}
+                    onChange={(e) => setHolidayData(prev => ({ ...prev, department: e.target.value }))}
+                    disabled={settingHoliday}
+                  >
+                    <option value="">All Departments</option>
+                    {departments.map((dept) => (
+                      <option key={dept} value={dept}>
+                        {dept}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Leave empty to apply to all departments
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mt-4">
+                <h4 className="font-medium text-orange-800 mb-2">Note:</h4>
+                <p className="text-sm text-orange-700">
+                  This will set the holiday multiplier for all eligible attendance records on the selected date. 
+                  Records with existing overtime will be excluded.
+                </p>
+              </div>
+
+              <div className="flex justify-end space-x-3 mt-6">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowHolidayModal(false);
+                    setHolidayData({
+                      date: '',
+                      multiplier: '2.0',
+                      department: '',
+                      employee_ids: []
+                    });
+                  }}
+                  disabled={settingHoliday}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleSetHoliday}
+                  disabled={settingHoliday || !holidayData.date || !holidayData.multiplier}
+                  className="bg-orange-600 hover:bg-orange-700"
+                >
+                  {settingHoliday ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Setting...
+                    </>
+                  ) : (
+                    <>
+                      <Target className="h-4 w-4 mr-2" />
+                      Set Holiday
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Modal */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+          <div className="relative bg-white rounded-lg shadow-lg max-w-md w-full mx-4">
+            <div className="flex justify-between items-center p-6 border-b">
+              <h2 className="text-xl font-semibold text-gray-800">Delete Attendance Records</h2>
+              <button
+                onClick={() => {
+                  setShowDeleteModal(false);
+                  setDeleteRange({
+                    start_date: '',
+                    end_date: '',
+                    employee_id: '',
+                    department: ''
+                  });
+                }}
+                className="text-gray-500 hover:text-gray-700"
+                aria-label="Close"
+                disabled={deleting}
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="p-6">
+              <div className="mb-4">
+                <div className="flex space-x-4">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="deleteMode"
+                      value="selected"
+                      checked={deleteMode === 'selected'}
+                      onChange={(e) => setDeleteMode(e.target.value)}
+                      disabled={deleting}
+                      className="form-radio h-4 w-4 text-red-600"
+                    />
+                    <span className="ml-2 text-sm text-gray-700">Delete Selected ({selectedIds.length} records)</span>
+                  </label>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      name="deleteMode"
+                      value="range"
+                      checked={deleteMode === 'range'}
+                      onChange={(e) => setDeleteMode(e.target.value)}
+                      disabled={deleting}
+                      className="form-radio h-4 w-4 text-red-600"
+                    />
+                    <span className="ml-2 text-sm text-gray-700">Delete by Date Range</span>
+                  </label>
+                </div>
+              </div>
+
+              {deleteMode === 'range' && (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Start Date *
+                      </label>
+                      <input
+                        type="date"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                        value={deleteRange.start_date}
+                        onChange={(e) => setDeleteRange(prev => ({ ...prev, start_date: e.target.value }))}
+                        disabled={deleting}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        End Date *
+                      </label>
+                      <input
+                        type="date"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                        value={deleteRange.end_date}
+                        onChange={(e) => setDeleteRange(prev => ({ ...prev, end_date: e.target.value }))}
+                        disabled={deleting}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Department (Optional)
+                    </label>
+                    <select
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                      value={deleteRange.department}
+                      onChange={(e) => setDeleteRange(prev => ({ ...prev, department: e.target.value }))}
+                      disabled={deleting}
+                    >
+                      <option value="">All Departments</option>
+                      {departments.map((dept) => (
+                        <option key={dept} value={dept}>
+                          {dept}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mt-4">
+                <div className="flex items-start">
+                  <AlertTriangle className="h-5 w-5 text-red-600 mt-0.5 mr-2 flex-shrink-0" />
+                  <div>
+                    <h4 className="font-medium text-red-800">Warning</h4>
+                    <p className="text-sm text-red-700 mt-1">
+                      This action cannot be undone. {deleteMode === 'selected' 
+                        ? `${selectedIds.length} selected records will be permanently deleted.`
+                        : 'All attendance records in the specified date range will be permanently deleted.'
+                      }
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-3 mt-6">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowDeleteModal(false);
+                    setDeleteRange({
+                      start_date: '',
+                      end_date: '',
+                      employee_id: '',
+                      department: ''
+                    });
+                  }}
+                  disabled={deleting}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleBulkDelete}
+                  disabled={deleting || (deleteMode === 'selected' && selectedIds.length === 0) || 
+                           (deleteMode === 'range' && (!deleteRange.start_date || !deleteRange.end_date))}
+                  className="bg-red-600 hover:bg-red-700 text-white"
+                >
+                  {deleting ? (
+                    <>
+                      <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                      Deleting...
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="h-4 w-4 mr-2" />
+                      Confirm Delete
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </AuthenticatedLayout>
+  );
+};
+
+export default ProcessedAttendanceList;
