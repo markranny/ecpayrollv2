@@ -6,70 +6,75 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Carbon\Carbon;
 
-class PayrollSummary extends Model
+class ProcessedAttendance extends Model
 {
     use HasFactory;
 
+    protected $table = 'processed_attendances';
+
     protected $fillable = [
         'employee_id',
-        'employee_no',
-        'employee_name',
-        'cost_center',
-        'department',
-        'line',
-        'period_start',
-        'period_end',
-        'period_type',
-        'year',
-        'month',
-        'days_worked',
-        'ot_hours',
-        'off_days',
-        'late_under_minutes',
-        'nsd_hours',
-        'slvl_days',
-        'retro',
-        'travel_order_hours',
-        'holiday_hours',
-        'ot_reg_holiday_hours',
-        'ot_special_holiday_hours',
-        'offset_hours',
-        'trip_count',
-        'has_ct',
-        'has_cs',
-        'has_ob',
+        'attendance_date',
+        'day',
+        'time_in',
+        'time_out',
+        'break_in',
+        'break_out',
+        'next_day_timeout',
+        'hours_worked',
+        'late_minutes',
+        'undertime_minutes',
+        'overtime',
+        'travel_order',
+        'slvl',
+        'ct',
+        'cs',
+        'holiday',
+        'ot_reg_holiday',
+        'ot_special_holiday',
+        'restday',
+        'retromultiplier',
+        'offset',
+        'ob',
+        'trip',
+        'is_nightshift',
         'status',
-        'posted_by',
+        'source',
+        'remarks',
+        'posting_status',
         'posted_at',
-        'notes'
+        'posted_by',
     ];
 
     protected $casts = [
-        'period_start' => 'date',
-        'period_end' => 'date',
-        'year' => 'integer',
-        'month' => 'integer',
-        'days_worked' => 'decimal:2',
-        'ot_hours' => 'decimal:2',
-        'off_days' => 'decimal:2',
-        'late_under_minutes' => 'decimal:2',
-        'nsd_hours' => 'decimal:2',
-        'slvl_days' => 'decimal:2',
-        'retro' => 'decimal:2',
-        'travel_order_hours' => 'decimal:2',
-        'holiday_hours' => 'decimal:2',
-        'ot_reg_holiday_hours' => 'decimal:2',
-        'ot_special_holiday_hours' => 'decimal:2',
-        'offset_hours' => 'decimal:2',
-        'trip_count' => 'decimal:2',
-        'has_ct' => 'boolean',
-        'has_cs' => 'boolean',
-        'has_ob' => 'boolean',
-        'posted_at' => 'datetime'
+        'attendance_date' => 'date',
+        'time_in' => 'datetime',
+        'time_out' => 'datetime',
+        'break_in' => 'datetime',
+        'break_out' => 'datetime',
+        'next_day_timeout' => 'datetime',
+        'hours_worked' => 'decimal:2',
+        'late_minutes' => 'decimal:2',
+        'undertime_minutes' => 'decimal:2',
+        'overtime' => 'decimal:2',
+        'travel_order' => 'decimal:2',
+        'slvl' => 'decimal:1',
+        'ct' => 'boolean',
+        'cs' => 'boolean',
+        'holiday' => 'decimal:2',
+        'ot_reg_holiday' => 'decimal:2',
+        'ot_special_holiday' => 'decimal:2',
+        'restday' => 'boolean',
+        'retromultiplier' => 'decimal:2',
+        'offset' => 'decimal:2',
+        'ob' => 'boolean',
+        'trip' => 'decimal:2',
+        'is_nightshift' => 'boolean',
+        'posted_at' => 'datetime',
     ];
 
     /**
-     * Get the employee associated with this payroll summary.
+     * Get the employee that owns the attendance record.
      */
     public function employee()
     {
@@ -77,7 +82,7 @@ class PayrollSummary extends Model
     }
 
     /**
-     * Get the user who posted this summary.
+     * Get the user who posted this record.
      */
     public function postedBy()
     {
@@ -85,239 +90,203 @@ class PayrollSummary extends Model
     }
 
     /**
-     * Scope for first half period (1-15).
-     */
-    public function scopeFirstHalf($query)
-    {
-        return $query->where('period_type', '1st_half');
-    }
-
-    /**
-     * Scope for second half period (16-30/31).
-     */
-    public function scopeSecondHalf($query)
-    {
-        return $query->where('period_type', '2nd_half');
-    }
-
-    /**
-     * Scope for specific year and month.
-     */
-    public function scopeForPeriod($query, $year, $month, $periodType = null)
-    {
-        $query->where('year', $year)->where('month', $month);
-        
-        if ($periodType) {
-            $query->where('period_type', $periodType);
-        }
-        
-        return $query;
-    }
-
-    /**
-     * Scope for posted summaries.
+     * Scope for posted records.
      */
     public function scopePosted($query)
     {
-        return $query->where('status', 'posted');
+        return $query->where('posting_status', 'posted');
     }
 
     /**
-     * Scope for draft summaries.
+     * Scope for non-posted records.
      */
-    public function scopeDraft($query)
+    public function scopeNotPosted($query)
     {
-        return $query->where('status', 'draft');
+        return $query->where('posting_status', 'not_posted');
     }
 
     /**
-     * Get the period label.
+     * Scope for night shift records.
      */
-    public function getPeriodLabelAttribute()
+    public function scopeNightShift($query)
     {
-        return $this->period_type === '1st_half' ? '1-15' : '16-' . $this->period_end->day;
+        return $query->where('is_nightshift', true);
     }
 
     /**
-     * Get the full period description.
+     * Scope for manual edits.
      */
-    public function getFullPeriodAttribute()
+    public function scopeManualEdits($query)
     {
-        return Carbon::create($this->year, $this->month, 1)->format('F Y') . ' (' . $this->period_label . ')';
+        return $query->where('source', 'manual_edit');
     }
 
     /**
-     * Get late/undertime in hours.
-     */
-    public function getLateUnderHoursAttribute()
-    {
-        return round($this->late_under_minutes / 60, 2);
-    }
-
-    /**
-     * Check if summary is posted.
+     * Check if record is posted.
      */
     public function isPosted()
     {
-        return $this->status === 'posted';
+        return $this->posting_status === 'posted';
     }
 
     /**
-     * Check if summary is locked.
+     * Check if record is manually edited.
      */
-    public function isLocked()
+    public function isManuallyEdited()
     {
-        return $this->status === 'locked';
+        return $this->source === 'manual_edit';
     }
 
     /**
-     * Mark summary as posted.
+     * Get formatted attendance date.
      */
-    public function markAsPosted($userId = null)
+    public function getFormattedDateAttribute()
     {
-        $this->update([
-            'status' => 'posted',
-            'posted_by' => $userId ?? auth()->id(),
-            'posted_at' => now()
-        ]);
+        return $this->attendance_date ? $this->attendance_date->format('Y-m-d') : null;
     }
 
     /**
-     * Get summary statistics for a period.
+     * Get total late and undertime in minutes.
      */
-    public static function getPeriodStatistics($year, $month, $periodType)
+    public function getTotalLateUndertimeMinutesAttribute()
     {
-        return self::forPeriod($year, $month, $periodType)
-            ->selectRaw('
-                COUNT(*) as total_employees,
-                SUM(days_worked) as total_days_worked,
-                SUM(ot_hours) as total_ot_hours,
-                SUM(off_days) as total_off_days,
-                SUM(late_under_minutes) as total_late_under_minutes,
-                SUM(nsd_hours) as total_nsd_hours,
-                SUM(slvl_days) as total_slvl_days,
-                SUM(retro) as total_retro,
-                AVG(days_worked) as avg_days_worked,
-                AVG(ot_hours) as avg_ot_hours
-            ')
-            ->first();
+        return ($this->late_minutes ?? 0) + ($this->undertime_minutes ?? 0);
     }
 
     /**
-     * Calculate period dates based on year, month, and period type.
+     * Get late and undertime in hours.
      */
-    public static function calculatePeriodDates($year, $month, $periodType)
+    public function getLateUndertimeHoursAttribute()
     {
-        $startDate = Carbon::create($year, $month, 1);
+        return round($this->total_late_undertime_minutes / 60, 2);
+    }
+
+    /**
+     * Calculate hours worked from time in/out with break deduction.
+     */
+    public function calculateHoursWorked()
+    {
+        if (!$this->time_in) {
+            return 0;
+        }
+
+        $timeOut = null;
         
-        if ($periodType === '1st_half') {
-            $endDate = Carbon::create($year, $month, 15);
+        // Use next_day_timeout for night shifts, otherwise use time_out
+        if ($this->is_nightshift && $this->next_day_timeout) {
+            $timeOut = $this->next_day_timeout;
+        } elseif ($this->time_out) {
+            $timeOut = $this->time_out;
+        }
+
+        if (!$timeOut) {
+            return 0;
+        }
+
+        $timeIn = Carbon::parse($this->time_in);
+        $timeOut = Carbon::parse($timeOut);
+
+        // Handle next day scenarios for night shifts
+        if ($this->is_nightshift && $timeOut->lt($timeIn)) {
+            $timeOut->addDay();
+        }
+
+        // Calculate total minutes worked
+        $totalMinutes = $timeOut->diffInMinutes($timeIn);
+
+        // Subtract break time if available
+        $breakMinutes = 0;
+        if ($this->break_out && $this->break_in) {
+            $breakOut = Carbon::parse($this->break_out);
+            $breakIn = Carbon::parse($this->break_in);
+            
+            if ($breakIn->gt($breakOut)) {
+                $breakMinutes = $breakIn->diffInMinutes($breakOut);
+            }
         } else {
-            $endDate = $startDate->copy()->endOfMonth();
+            // Default 1-hour break if no break times recorded
+            $breakMinutes = 60;
         }
+
+        $netMinutes = max(0, $totalMinutes - $breakMinutes);
         
-        return [$startDate, $endDate];
+        return round($netMinutes / 60, 2);
     }
 
     /**
-     * FIXED: Generate summary data from attendance records with proper calculations.
+     * Calculate late minutes based on expected time in.
      */
-    public static function generateFromAttendance($employeeId, $year, $month, $periodType)
+    public function calculateLateMinutes($expectedTimeIn = '08:00:00')
     {
-        [$startDate, $endDate] = self::calculatePeriodDates($year, $month, $periodType);
-        
-        // Get employee information
-        $employee = Employee::findOrFail($employeeId);
-        
-        // Get attendance records for the period (only non-posted records)
-        $attendanceRecords = ProcessedAttendance::where('employee_id', $employeeId)
-            ->whereBetween('attendance_date', [$startDate, $endDate])
-            ->where('posting_status', 'not_posted') // Only process non-posted records
-            ->get();
-        
-        // Initialize summary values
-        $summary = [
-            'employee_id' => $employeeId,
-            'employee_no' => $employee->idno,
-            'employee_name' => trim($employee->Fname . ' ' . $employee->Lname),
-            'cost_center' => $employee->CostCenter,
-            'department' => $employee->Department,
-            'line' => $employee->Line,
-            'period_start' => $startDate,
-            'period_end' => $endDate,
-            'period_type' => $periodType,
-            'year' => $year,
-            'month' => $month,
-            'days_worked' => 0,
-            'ot_hours' => 0,
-            'off_days' => 0,
-            'late_under_minutes' => 0,
-            'nsd_hours' => 0,
-            'slvl_days' => 0,
-            'retro' => 0,
-            'travel_order_hours' => 0,
-            'holiday_hours' => 0,
-            'ot_reg_holiday_hours' => 0,
-            'ot_special_holiday_hours' => 0,
-            'offset_hours' => 0,
-            'trip_count' => 0,
-            'has_ct' => false,
-            'has_cs' => false,
-            'has_ob' => false
-        ];
-        
-        foreach ($attendanceRecords as $record) {
-            // FIXED: Days worked calculation
-            // Count actual working days (exclude full SLVL days but include partial SLVL)
-            if ($record->slvl == 0 && $record->hours_worked > 0) {
-                // Full working day with no SLVL
-                $summary['days_worked'] += 1;
-            } elseif ($record->slvl > 0 && $record->slvl < 1) {
-                // Partial SLVL day (0.5 SLVL = 0.5 working day)
-                $summary['days_worked'] += (1 - $record->slvl);
-            } elseif ($record->slvl == 0 && $record->hours_worked == 0) {
-                // No work hours and no SLVL - might be absent or other reason
-                // Don't count as working day
-            }
-            // If slvl >= 1, it's a full leave day, don't count as working day
-            
-            // FIXED: OT hours calculation
-            $summary['ot_hours'] += $record->overtime ?? 0;
-            
-            // FIXED: Rest days (off days) calculation
-            if ($record->restday) {
-                $summary['off_days'] += 1;
-            }
-            
-            // FIXED: Late and undertime calculation (convert to total minutes)
-            $summary['late_under_minutes'] += ($record->late_minutes ?? 0) + ($record->undertime_minutes ?? 0);
-            
-            // FIXED: Night shift differential hours calculation
-            // NSD hours = hours worked during night shift
-            if ($record->is_nightshift && $record->hours_worked > 0) {
-                $summary['nsd_hours'] += $record->hours_worked;
-            }
-            
-            // FIXED: SLVL days calculation
-            $summary['slvl_days'] += $record->slvl ?? 0;
-            
-            // FIXED: Retro calculation
-            $summary['retro'] += $record->retromultiplier ?? 0;
-            
-            // Additional fields for comprehensive payroll
-            $summary['travel_order_hours'] += $record->travel_order ?? 0;
-            $summary['holiday_hours'] += $record->holiday ?? 0;
-            $summary['ot_reg_holiday_hours'] += $record->ot_reg_holiday ?? 0;
-            $summary['ot_special_holiday_hours'] += $record->ot_special_holiday ?? 0;
-            $summary['offset_hours'] += $record->offset ?? 0;
-            $summary['trip_count'] += $record->trip ?? 0;
-            
-            // Boolean flags - set to true if any record has these
-            if ($record->ct) $summary['has_ct'] = true;
-            if ($record->cs) $summary['has_cs'] = true;
-            if ($record->ob) $summary['has_ob'] = true;
+        if (!$this->time_in || !$this->attendance_date) {
+            return 0;
         }
+
+        $attendanceDate = Carbon::parse($this->attendance_date);
+        $expectedTime = $attendanceDate->copy()->setTimeFromTimeString($expectedTimeIn);
+        $actualTimeIn = Carbon::parse($this->time_in);
+
+        if ($actualTimeIn->gt($expectedTime)) {
+            return $actualTimeIn->diffInMinutes($expectedTime);
+        }
+
+        return 0;
+    }
+
+    /**
+     * Calculate undertime minutes based on standard work hours.
+     */
+    public function calculateUndertimeMinutes($standardWorkHours = 8)
+    {
+        if (!$this->hours_worked) {
+            return 0;
+        }
+
+        $standardMinutes = $standardWorkHours * 60;
+        $workedMinutes = $this->hours_worked * 60;
+
+        if ($workedMinutes < $standardMinutes) {
+            return $standardMinutes - $workedMinutes;
+        }
+
+        return 0;
+    }
+
+    /**
+     * Auto-calculate and save metrics.
+     */
+    public function recalculateMetrics()
+    {
+        $this->hours_worked = $this->calculateHoursWorked();
+        $this->late_minutes = $this->calculateLateMinutes();
+        $this->undertime_minutes = $this->calculateUndertimeMinutes();
         
-        return $summary;
+        return $this->save();
+    }
+
+    /**
+     * Scope for filtering by date range.
+     */
+    public function scopeWhereDateBetween($query, $startDate, $endDate)
+    {
+        return $query->whereBetween('attendance_date', [$startDate, $endDate]);
+    }
+
+    /**
+     * Scope for filtering by employee.
+     */
+    public function scopeWhereEmployee($query, $employeeId)
+    {
+        return $query->where('employee_id', $employeeId);
+    }
+
+    /**
+     * Scope for filtering by department through employee relationship.
+     */
+    public function scopeWhereDepartment($query, $department)
+    {
+        return $query->whereHas('employee', function ($q) use ($department) {
+            $q->where('Department', $department);
+        });
     }
 }
