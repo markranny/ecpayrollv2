@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Employee;
 use App\Models\Department;
 use App\Models\ProcessedAttendance;
+use App\Models\PayrollSummary;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -280,12 +281,20 @@ private function autoRecalculateMetrics($attendances)
                     ]);
                 }
                 
-                // Apply undertime calculation rules
                 if ($isHalfday) {
                     // For halfday, no undertime calculation
                     $undertimeMinutes = 0;
                     Log::info("Halfday detected - setting undertime minutes to 0", [
                         'attendance_id' => $attendance->id
+                    ]);
+                } elseif ($hoursWorked == 0 || !$timeOut) {
+                    // If no valid hours worked or no time_out, set undertime to 0
+                    // This prevents showing undertime when there's insufficient data
+                    $undertimeMinutes = 0;
+                    Log::info("No valid work hours calculated - setting undertime minutes to 0", [
+                        'attendance_id' => $attendance->id,
+                        'hours_worked' => $hoursWorked,
+                        'has_time_out' => !empty($timeOut)
                     ]);
                 } else {
                     // Calculate undertime based on 9-hour minimum requirement
@@ -294,13 +303,28 @@ private function autoRecalculateMetrics($attendances)
                     $netWorkedMinutes = $hoursWorked * 60;
                     
                     if ($netWorkedMinutes < $minimumWorkMinutes) {
-                        $undertimeMinutes = $minimumWorkMinutes - $netWorkedMinutes;
+                        $calculatedUndertime = round($minimumWorkMinutes - $netWorkedMinutes, 2);
+                        
+                        // If undertime is less than 60 minutes (1 hour), set to 0
+                        if ($calculatedUndertime < 60) {
+                            $undertimeMinutes = 0;
+                            Log::info("Undertime less than 60 minutes - setting to 0", [
+                                'attendance_id' => $attendance->id,
+                                'calculated_undertime' => $calculatedUndertime,
+                                'final_undertime' => $undertimeMinutes
+                            ]);
+                        } else {
+                            $undertimeMinutes = $calculatedUndertime;
+                        }
+                    } else {
+                        $undertimeMinutes = 0;
                     }
                     
                     Log::info("Undertime calculation", [
                         'attendance_id' => $attendance->id,
                         'hours_worked' => $hoursWorked,
                         'minimum_work_hours' => $minimumWorkHours,
+                        'net_worked_minutes' => $netWorkedMinutes,
                         'undertime_minutes' => $undertimeMinutes,
                         'is_undertime' => $hoursWorked < $minimumWorkHours
                     ]);
@@ -2675,295 +2699,6 @@ public function setHoliday(Request $request)
     }
 
     /**
-     * Get payroll summaries with filtering and pagination
-     */
-    public function getPayrollSummaries(Request $request)
-    {
-        try {
-            $validator = Validator::make($request->all(), [
-                'year' => 'nullable|integer|min:2020|max:2030',
-                'month' => 'nullable|integer|min:1|max:12',
-                'period_type' => 'nullable|in:1st_half,2nd_half',
-                'department' => 'nullable|string',
-                'status' => 'nullable|in:draft,posted,locked',
-                'page' => 'nullable|integer|min:1',
-                'per_page' => 'nullable|integer|min:1|max:100'
-            ]);
-
-            if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validator->errors()
-                ], 422);
-            }
-
-            // Get filter parameters with defaults
-            $year = $request->input('year', now()->year);
-            $month = $request->input('month', now()->month);
-            $periodType = $request->input('period_type');
-            $department = $request->input('department');
-            $status = $request->input('status');
-            $perPage = $request->input('per_page', 25);
-
-            // Build query
-            $query = \App\Models\PayrollSummary::with(['employee', 'postedBy'])
-                ->where('year', $year)
-                ->where('month', $month);
-
-            // Apply filters
-            if ($periodType) {
-                $query->where('period_type', $periodType);
-            }
-
-            if ($department) {
-                $query->where('department', $department);
-            }
-
-            if ($status) {
-                $query->where('status', $status);
-            }
-
-            // Order by creation date descending
-            $query->orderBy('created_at', 'desc');
-
-            // Paginate results
-            $summaries = $query->paginate($perPage);
-
-            // Calculate statistics
-            $statisticsQuery = \App\Models\PayrollSummary::where('year', $year)
-                ->where('month', $month);
-
-            if ($periodType) {
-                $statisticsQuery->where('period_type', $periodType);
-            }
-            if ($department) {
-                $statisticsQuery->where('department', $department);
-            }
-            if ($status) {
-                $statisticsQuery->where('status', $status);
-            }
-
-            $statistics = $statisticsQuery->selectRaw('
-                COUNT(*) as total_summaries,
-                SUM(days_worked) as total_days_worked,
-                SUM(ot_hours) as total_ot_hours,
-                SUM(off_days) as total_off_days,
-                SUM(late_under_minutes) as total_late_under_minutes,
-                SUM(nsd_hours) as total_nsd_hours,
-                SUM(slvl_days) as total_slvl_days,
-                SUM(retro) as total_retro,
-                AVG(days_worked) as avg_days_worked,
-                AVG(ot_hours) as avg_ot_hours
-            ')->first();
-
-            // Process the summaries data
-            $processedSummaries = $summaries->map(function ($summary) {
-                $summary->full_period = $summary->getFullPeriodAttribute();
-                return $summary;
-            });
-
-            return response()->json([
-                'success' => true,
-                'data' => $processedSummaries,
-                'pagination' => [
-                    'total' => $summaries->total(),
-                    'per_page' => $summaries->perPage(),
-                    'current_page' => $summaries->currentPage(),
-                    'last_page' => $summaries->lastPage(),
-                    'from' => $summaries->firstItem(),
-                    'to' => $summaries->lastItem()
-                ],
-                'statistics' => $statistics,
-                'filters' => [
-                    'year' => $year,
-                    'month' => $month,
-                    'period_type' => $periodType,
-                    'department' => $department,
-                    'status' => $status
-                ]
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Error fetching payroll summaries: ' . $e->getMessage(), [
-                'request_data' => $request->all(),
-                'exception' => $e
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to fetch payroll summaries: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
-     * Export payroll summaries to CSV
-     */
-    public function exportPayrollSummaries(Request $request)
-    {
-        try {
-            $validator = Validator::make($request->all(), [
-                'year' => 'nullable|integer|min:2020|max:2030',
-                'month' => 'nullable|integer|min:1|max:12',
-                'period_type' => 'nullable|in:1st_half,2nd_half',
-                'department' => 'nullable|string',
-                'status' => 'nullable|in:draft,posted,locked'
-            ]);
-
-            if ($validator->fails()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Validation failed',
-                    'errors' => $validator->errors()
-                ], 422);
-            }
-
-            // Get filter parameters with defaults
-            $year = $request->input('year', now()->year);
-            $month = $request->input('month', now()->month);
-            $periodType = $request->input('period_type');
-            $department = $request->input('department');
-            $status = $request->input('status');
-
-            // Build query
-            $query = \App\Models\PayrollSummary::with(['employee', 'postedBy'])
-                ->where('year', $year)
-                ->where('month', $month);
-
-            // Apply filters
-            if ($periodType) {
-                $query->where('period_type', $periodType);
-            }
-            if ($department) {
-                $query->where('department', $department);
-            }
-            if ($status) {
-                $query->where('status', $status);
-            }
-
-            // Order by employee name
-            $query->orderBy('employee_name', 'asc');
-
-            // Get all matching records
-            $summaries = $query->get();
-
-            // Prepare file name
-            $fileName = 'payroll_summaries_' . $year . '_' . str_pad($month, 2, '0', STR_PAD_LEFT);
-            if ($periodType) {
-                $fileName .= '_' . $periodType;
-            }
-            if ($department) {
-                $fileName .= '_' . str_replace(' ', '_', $department);
-            }
-            $fileName .= '_' . date('Y-m-d_H-i-s') . '.csv';
-
-            // Define headers
-            $headers = [
-                'Content-Type' => 'text/csv',
-                'Content-Disposition' => 'attachment; filename="' . $fileName . '"',
-                'Pragma' => 'no-cache',
-                'Cache-Control' => 'must-revalidate, post-check=0, pre-check=0',
-                'Expires' => '0'
-            ];
-
-            // Create callback for streamed response
-            $callback = function() use ($summaries) {
-                $file = fopen('php://output', 'w');
-
-                // Add CSV header row
-                fputcsv($file, [
-                    'Employee No',
-                    'Employee Name',
-                    'Cost Center',
-                    'Department',
-                    'Line',
-                    'Period Start',
-                    'Period End',
-                    'Period Type',
-                    'Year',
-                    'Month',
-                    'Days Worked',
-                    'OT Hours',
-                    'Off Days',
-                    'Late/Under Minutes',
-                    'Late/Under Hours',
-                    'NSD Hours',
-                    'SLVL Days',
-                    'Retro',
-                    'Travel Order Hours',
-                    'Holiday Hours',
-                    'OT Reg Holiday Hours',
-                    'OT Special Holiday Hours',
-                    'Offset Hours',
-                    'Trip Count',
-                    'Has CT',
-                    'Has CS',
-                    'Has OB',
-                    'Status',
-                    'Posted By',
-                    'Posted At',
-                    'Created At'
-                ]);
-
-                // Add data rows
-                foreach ($summaries as $summary) {
-                    $row = [
-                        $summary->employee_no,
-                        $summary->employee_name,
-                        $summary->cost_center,
-                        $summary->department,
-                        $summary->line,
-                        $summary->period_start ? $summary->period_start->format('Y-m-d') : '',
-                        $summary->period_end ? $summary->period_end->format('Y-m-d') : '',
-                        $summary->period_type,
-                        $summary->year,
-                        $summary->month,
-                        number_format($summary->days_worked, 2),
-                        number_format($summary->ot_hours, 2),
-                        number_format($summary->off_days, 2),
-                        number_format($summary->late_under_minutes, 2),
-                        number_format($summary->late_under_minutes / 60, 2),
-                        number_format($summary->nsd_hours, 2),
-                        number_format($summary->slvl_days, 2),
-                        number_format($summary->retro, 2),
-                        number_format($summary->travel_order_hours, 2),
-                        number_format($summary->holiday_hours, 2),
-                        number_format($summary->ot_reg_holiday_hours, 2),
-                        number_format($summary->ot_special_holiday_hours, 2),
-                        number_format($summary->offset_hours, 2),
-                        number_format($summary->trip_count, 2),
-                        $summary->has_ct ? 'Yes' : 'No',
-                        $summary->has_cs ? 'Yes' : 'No',
-                        $summary->has_ob ? 'Yes' : 'No',
-                        ucfirst($summary->status),
-                        $summary->postedBy ? $summary->postedBy->name : '',
-                        $summary->posted_at ? $summary->posted_at->format('Y-m-d H:i:s') : '',
-                        $summary->created_at ? $summary->created_at->format('Y-m-d H:i:s') : ''
-                    ];
-
-                    fputcsv($file, $row);
-                }
-
-                fclose($file);
-            };
-
-            return response()->stream($callback, 200, $headers);
-
-        } catch (\Exception $e) {
-            Log::error('Error exporting payroll summaries: ' . $e->getMessage(), [
-                'request_data' => $request->all(),
-                'exception' => $e
-            ]);
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to export payroll summaries: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
      * Delete a payroll summary and revert attendance records
      */
     public function deletePayrollSummary($id)
@@ -3042,4 +2777,421 @@ public function setHoliday(Request $request)
             ], 500);
         }
     }
+
+    /**
+ * Get attendance details for a specific payroll summary
+ */
+public function getPayrollSummaryAttendanceDetails($summaryId)
+{
+    try {
+        // Find the payroll summary
+        $summary = PayrollSummary::findOrFail($summaryId);
+        
+        // Get the processed attendance records that were used to create this summary
+        $attendanceRecords = ProcessedAttendance::where('employee_id', $summary->employee_id)
+            ->whereBetween('attendance_date', [$summary->period_start, $summary->period_end])
+            ->where('posting_status', 'posted')
+            ->with(['employee:id,idno,Fname,Lname,Department,Line'])
+            ->orderBy('attendance_date', 'asc')
+            ->get();
+        
+        // Transform the data for the frontend
+        $transformedRecords = $attendanceRecords->map(function ($record) {
+            return [
+                'id' => $record->id,
+                'employee_id' => $record->employee_id,
+                'attendance_date' => $record->attendance_date,
+                'day' => $record->day,
+                'time_in' => $record->time_in,
+                'time_out' => $record->time_out,
+                'break_in' => $record->break_in,
+                'break_out' => $record->break_out,
+                'next_day_timeout' => $record->next_day_timeout,
+                'hours_worked' => (float) $record->hours_worked,
+                'late_minutes' => (float) $record->late_minutes,
+                'undertime_minutes' => (float) $record->undertime_minutes,
+                'overtime' => (float) $record->overtime,
+                'travel_order' => (float) $record->travel_order,
+                'slvl' => (float) $record->slvl,
+                'ct' => (bool) $record->ct,
+                'cs' => (bool) $record->cs,
+                'holiday' => (float) $record->holiday,
+                'ot_reg_holiday' => (float) $record->ot_reg_holiday,
+                'ot_special_holiday' => (float) $record->ot_special_holiday,
+                'restday' => (bool) $record->restday,
+                'retromultiplier' => (float) $record->retromultiplier,
+                'offset' => (float) $record->offset,
+                'ob' => (bool) $record->ob,
+                'trip' => (float) $record->trip,
+                'is_nightshift' => (bool) $record->is_nightshift,
+                'source' => $record->source,
+                'posting_status' => $record->posting_status,
+                'posted_at' => $record->posted_at,
+                'remarks' => $record->remarks,
+            ];
+        });
+        
+        return response()->json([
+            'success' => true,
+            'data' => $transformedRecords,
+            'summary' => [
+                'employee_name' => $summary->employee_name,
+                'employee_no' => $summary->employee_no,
+                'department' => $summary->department,
+                'period' => $summary->full_period,
+                'total_records' => $transformedRecords->count(),
+            ]
+        ]);
+        
+    } catch (\Exception $e) {
+        Log::error('Error getting payroll summary attendance details: ' . $e->getMessage(), [
+            'summary_id' => $summaryId,
+            'trace' => $e->getTraceAsString()
+        ]);
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to load attendance details: ' . $e->getMessage()
+        ], 500);
+    }
+}
+
+/**
+ * Enhanced getPayrollSummaries method with search functionality
+ */
+public function getPayrollSummaries(Request $request)
+{
+    try {
+        $year = $request->input('year', now()->year);
+        $month = $request->input('month', now()->month);
+        $periodType = $request->input('period_type');
+        $department = $request->input('department');
+        $status = $request->input('status');
+        $search = $request->input('search'); // Add search parameter
+        $page = $request->input('page', 1);
+        $perPage = $request->input('per_page', 25);
+        
+        // Build the query
+        $query = PayrollSummary::query()
+            ->with(['employee:id,idno,Fname,Lname,Department,Line', 'postedBy:id,name'])
+            ->where('year', $year)
+            ->where('month', $month);
+        
+        // Apply filters
+        if ($periodType) {
+            $query->where('period_type', $periodType);
+        }
+        
+        if ($department) {
+            $query->where('department', $department);
+        }
+        
+        if ($status) {
+            $query->where('status', $status);
+        }
+        
+        // Apply search filter
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('employee_name', 'LIKE', "%{$search}%")
+                  ->orWhere('employee_no', 'LIKE', "%{$search}%")
+                  ->orWhere('department', 'LIKE', "%{$search}%")
+                  ->orWhere('line', 'LIKE', "%{$search}%");
+            });
+        }
+        
+        // Get total count for statistics
+        $totalQuery = clone $query;
+        $totalCount = $totalQuery->count();
+        
+        // Apply pagination
+        $summaries = $query->orderBy('employee_name', 'asc')
+            ->paginate($perPage, ['*'], 'page', $page);
+        
+        // Calculate statistics
+        $statisticsQuery = PayrollSummary::query()
+            ->where('year', $year)
+            ->where('month', $month);
+            
+        if ($periodType) {
+            $statisticsQuery->where('period_type', $periodType);
+        }
+        if ($department) {
+            $statisticsQuery->where('department', $department);
+        }
+        if ($status) {
+            $statisticsQuery->where('status', $status);
+        }
+        if ($search) {
+            $statisticsQuery->where(function ($q) use ($search) {
+                $q->where('employee_name', 'LIKE', "%{$search}%")
+                  ->orWhere('employee_no', 'LIKE', "%{$search}%")
+                  ->orWhere('department', 'LIKE', "%{$search}%")
+                  ->orWhere('line', 'LIKE', "%{$search}%");
+            });
+        }
+        
+        $statistics = $statisticsQuery->selectRaw('
+            COUNT(*) as total_summaries,
+            SUM(days_worked) as total_days_worked,
+            SUM(ot_hours) as total_ot_hours,
+            SUM(late_under_minutes) as total_late_under_minutes,
+            SUM(nsd_hours) as total_nsd_hours,
+            SUM(slvl_days) as total_slvl_days,
+            AVG(days_worked) as avg_days_worked,
+            AVG(ot_hours) as avg_ot_hours
+        ')->first();
+        
+        // Transform summaries data
+        $transformedSummaries = $summaries->getCollection()->map(function ($summary) {
+            return [
+                'id' => $summary->id,
+                'employee_id' => $summary->employee_id,
+                'employee_no' => $summary->employee_no,
+                'employee_name' => $summary->employee_name,
+                'cost_center' => $summary->cost_center,
+                'department' => $summary->department,
+                'line' => $summary->line,
+                'period_start' => $summary->period_start,
+                'period_end' => $summary->period_end,
+                'period_type' => $summary->period_type,
+                'year' => $summary->year,
+                'month' => $summary->month,
+                'days_worked' => (float) $summary->days_worked,
+                'ot_hours' => (float) $summary->ot_hours,
+                'off_days' => (float) $summary->off_days,
+                'late_under_minutes' => (float) $summary->late_under_minutes,
+                'nsd_hours' => (float) $summary->nsd_hours,
+                'slvl_days' => (float) $summary->slvl_days,
+                'retro' => (float) $summary->retro,
+                'travel_order_hours' => (float) $summary->travel_order_hours,
+                'holiday_hours' => (float) $summary->holiday_hours,
+                'ot_reg_holiday_hours' => (float) $summary->ot_reg_holiday_hours,
+                'ot_special_holiday_hours' => (float) $summary->ot_special_holiday_hours,
+                'offset_hours' => (float) $summary->offset_hours,
+                'trip_count' => (float) $summary->trip_count,
+                'has_ct' => (bool) $summary->has_ct,
+                'has_cs' => (bool) $summary->has_cs,
+                'has_ob' => (bool) $summary->has_ob,
+                'status' => $summary->status,
+                'posted_by' => $summary->postedBy,
+                'posted_at' => $summary->posted_at,
+                'notes' => $summary->notes,
+                'created_at' => $summary->created_at,
+                'updated_at' => $summary->updated_at,
+                // Add formatted period for display
+                'full_period' => $this->getFullPeriodLabel($summary->year, $summary->month, $summary->period_type),
+            ];
+        });
+        
+        return response()->json([
+            'success' => true,
+            'data' => $transformedSummaries,
+            'pagination' => [
+                'current_page' => $summaries->currentPage(),
+                'last_page' => $summaries->lastPage(),
+                'per_page' => $summaries->perPage(),
+                'total' => $summaries->total(),
+                'from' => $summaries->firstItem(),
+                'to' => $summaries->lastItem(),
+            ],
+            'statistics' => [
+                'total_summaries' => $statistics->total_summaries ?: 0,
+                'total_days_worked' => (float) ($statistics->total_days_worked ?: 0),
+                'total_ot_hours' => (float) ($statistics->total_ot_hours ?: 0),
+                'total_late_under_minutes' => (float) ($statistics->total_late_under_minutes ?: 0),
+                'total_nsd_hours' => (float) ($statistics->total_nsd_hours ?: 0),
+                'total_slvl_days' => (float) ($statistics->total_slvl_days ?: 0),
+                'avg_days_worked' => (float) ($statistics->avg_days_worked ?: 0),
+                'avg_ot_hours' => (float) ($statistics->avg_ot_hours ?: 0),
+            ],
+            'filters' => [
+                'year' => $year,
+                'month' => $month,
+                'period_type' => $periodType,
+                'department' => $department,
+                'status' => $status,
+                'search' => $search,
+            ]
+        ]);
+        
+    } catch (\Exception $e) {
+        Log::error('Error getting payroll summaries: ' . $e->getMessage(), [
+            'filters' => $request->all(),
+            'trace' => $e->getTraceAsString()
+        ]);
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to load payroll summaries: ' . $e->getMessage()
+        ], 500);
+    }
+}
+
+/**
+ * Helper method to format period label
+ */
+private function getFullPeriodLabel($year, $month, $periodType)
+{
+    $monthName = \Carbon\Carbon::create($year, $month, 1)->format('F Y');
+    $periodLabel = $periodType === '1st_half' ? '(1-15)' : '(16-30/31)';
+    
+    return "{$monthName} {$periodLabel}";
+}
+
+/**
+ * Enhanced exportPayrollSummaries method with search support
+ */
+public function exportPayrollSummaries(Request $request)
+{
+    try {
+        $year = $request->input('year', now()->year);
+        $month = $request->input('month', now()->month);
+        $periodType = $request->input('period_type');
+        $department = $request->input('department');
+        $status = $request->input('status');
+        $search = $request->input('search'); // Add search parameter
+        
+        // Build the query (same as getPayrollSummaries but without pagination)
+        $query = PayrollSummary::query()
+            ->with(['employee:id,idno,Fname,Lname,Department,Line', 'postedBy:id,name'])
+            ->where('year', $year)
+            ->where('month', $month);
+        
+        // Apply filters
+        if ($periodType) {
+            $query->where('period_type', $periodType);
+        }
+        
+        if ($department) {
+            $query->where('department', $department);
+        }
+        
+        if ($status) {
+            $query->where('status', $status);
+        }
+        
+        // Apply search filter
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('employee_name', 'LIKE', "%{$search}%")
+                  ->orWhere('employee_no', 'LIKE', "%{$search}%")
+                  ->orWhere('department', 'LIKE', "%{$search}%")
+                  ->orWhere('line', 'LIKE', "%{$search}%");
+            });
+        }
+        
+        $summaries = $query->orderBy('employee_name', 'asc')->get();
+        
+        // Create CSV content
+        $csvData = [];
+        
+        // Add header row
+        $csvData[] = [
+            'Employee ID',
+            'Employee Name',
+            'Department',
+            'Line',
+            'Cost Center',
+            'Period',
+            'Year',
+            'Month',
+            'Period Type',
+            'Days Worked',
+            'OT Hours',
+            'Off Days',
+            'Late/Under Minutes',
+            'Late/Under Hours',
+            'NSD Hours',
+            'SLVL Days',
+            'Retro',
+            'Travel Order Hours',
+            'Holiday Hours',
+            'OT Regular Holiday Hours',
+            'OT Special Holiday Hours',
+            'Offset Hours',
+            'Trip Count',
+            'Has CT',
+            'Has CS',
+            'Has OB',
+            'Status',
+            'Posted By',
+            'Posted At',
+            'Notes'
+        ];
+        
+        // Add data rows
+        foreach ($summaries as $summary) {
+            $csvData[] = [
+                $summary->employee_no,
+                $summary->employee_name,
+                $summary->department,
+                $summary->line,
+                $summary->cost_center,
+                $this->getFullPeriodLabel($summary->year, $summary->month, $summary->period_type),
+                $summary->year,
+                $summary->month,
+                $summary->period_type,
+                number_format($summary->days_worked, 1),
+                number_format($summary->ot_hours, 2),
+                number_format($summary->off_days, 1),
+                number_format($summary->late_under_minutes, 2),
+                number_format($summary->late_under_minutes / 60, 2),
+                number_format($summary->nsd_hours, 2),
+                number_format($summary->slvl_days, 1),
+                number_format($summary->retro, 2),
+                number_format($summary->travel_order_hours, 2),
+                number_format($summary->holiday_hours, 2),
+                number_format($summary->ot_reg_holiday_hours, 2),
+                number_format($summary->ot_special_holiday_hours, 2),
+                number_format($summary->offset_hours, 2),
+                number_format($summary->trip_count, 1),
+                $summary->has_ct ? 'Yes' : 'No',
+                $summary->has_cs ? 'Yes' : 'No',
+                $summary->has_ob ? 'Yes' : 'No',
+                ucfirst($summary->status),
+                $summary->postedBy ? $summary->postedBy->name : '',
+                $summary->posted_at ? $summary->posted_at->format('Y-m-d H:i:s') : '',
+                $summary->notes ?: ''
+            ];
+        }
+        
+        // Generate CSV content
+        $csvContent = '';
+        foreach ($csvData as $row) {
+            $csvContent .= '"' . implode('","', $row) . '"' . "\n";
+        }
+        
+        // Generate filename
+        $filename = 'payroll_summaries_' . $year . '_' . str_pad($month, 2, '0', STR_PAD_LEFT);
+        if ($periodType) {
+            $filename .= '_' . $periodType;
+        }
+        if ($department) {
+            $filename .= '_' . str_replace(' ', '_', strtolower($department));
+        }
+        if ($search) {
+            $filename .= '_search_' . str_replace(' ', '_', strtolower($search));
+        }
+        $filename .= '_' . now()->format('Y-m-d') . '.csv';
+        
+        return response($csvContent)
+            ->header('Content-Type', 'text/csv')
+            ->header('Content-Disposition', 'attachment; filename="' . $filename . '"')
+            ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            ->header('Pragma', 'no-cache')
+            ->header('Expires', '0');
+            
+    } catch (\Exception $e) {
+        Log::error('Error exporting payroll summaries: ' . $e->getMessage(), [
+            'filters' => $request->all(),
+            'trace' => $e->getTraceAsString()
+        ]);
+        
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to export payroll summaries: ' . $e->getMessage()
+        ], 500);
+    }
+}
 }

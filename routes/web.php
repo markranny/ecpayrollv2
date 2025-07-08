@@ -325,6 +325,11 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
     Route::delete('/payroll-summaries/{id}', [ProcessedAttendanceController::class, 'deletePayrollSummary'])
         ->name('payroll-summaries.destroy');
     
+    // IMPORTANT: Add this route for attendance details
+    Route::get('/payroll-summaries/{id}/attendance-details', [ProcessedAttendanceController::class, 'getPayrollSummaryAttendanceDetails'])
+        ->name('payroll-summaries.attendance-details')
+        ->where('id', '[0-9]+');
+    
     // Payroll summaries page view
     Route::get('/payroll-summaries-page', function () {
         return Inertia::render('Timesheet/PayrollSummaries', [

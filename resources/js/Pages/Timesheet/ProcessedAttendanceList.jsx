@@ -1295,42 +1295,45 @@ const ProcessedAttendanceList = () => {
         <Sidebar />
         <div className="flex-1 p-4">
           <div className="max-w-7xl mx-auto">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h1 className="text-2xl font-bold text-gray-900 mb-1">
+            <div className="mb-6">
+              {/* Header Text Section */}
+              <div className="mb-4">
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 mb-1">
                   Processed Attendance Records (Non-Posted Only)
                 </h1>
-                <p className="text-gray-600">
+                <p className="text-sm sm:text-base text-gray-600">
                   View and manage non-posted attendance records with automatic recalculation and payroll posting.
                 </p>
-                <p className="text-sm text-blue-600 mt-1">
+                <p className="text-xs sm:text-sm text-blue-600 mt-1">
                   💡 Tip: Hold any row for 1 second to view details, double-click to edit attendance times
                 </p>
                 {recalculated_count > 0 && (
-                  <p className="text-sm text-green-600 mt-1">
+                  <p className="text-xs sm:text-sm text-green-600 mt-1">
                     ✅ Auto-recalculated {recalculated_count} records for accurate display
                   </p>
                 )}
               </div>
               
-              {/* Action Buttons */}
-              <div className="flex items-center space-x-2">
+              {/* Action Buttons Section */}
+              <div className="flex flex-wrap items-center gap-2">
                 {/* POST Button - Primary Action */}
                 <Button
                   onClick={() => setShowPostModal(true)}
                   disabled={posting}
                   size="sm"
-                  className="bg-green-600 hover:bg-green-700 text-white border-green-600"
+                  className="bg-green-600 hover:bg-green-700 text-white border-green-600 text-xs sm:text-sm"
                 >
                   {posting ? (
                     <>
-                      <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
-                      Posting...
+                      <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 animate-spin" />
+                      <span className="hidden sm:inline">Posting...</span>
+                      <span className="sm:hidden">Post...</span>
                     </>
                   ) : (
                     <>
-                      <Send className="h-4 w-4 mr-1" />
-                      POST to Payroll
+                      <Send className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                      <span className="hidden sm:inline">POST to Payroll</span>
+                      <span className="sm:hidden">POST</span>
                     </>
                   )}
                 </Button>
@@ -1340,15 +1343,22 @@ const ProcessedAttendanceList = () => {
                   disabled={recalculating}
                   variant="outline"
                   size="sm"
-                  className="bg-purple-600 hover:bg-purple-700 text-white border-purple-600"
+                  className="bg-purple-600 hover:bg-purple-700 text-white border-purple-600 text-xs sm:text-sm"
                   title="Manually recalculate late/undertime for current view"
                 >
                   {recalculating ? (
-                    <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                    <>
+                      <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 animate-spin" />
+                      <span className="hidden sm:inline">Recalculating...</span>
+                      <span className="sm:hidden">Calc...</span>
+                    </>
                   ) : (
-                    <Calculator className="h-4 w-4 mr-1" />
+                    <>
+                      <Calculator className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                      <span className="hidden sm:inline">Recalculate</span>
+                      <span className="sm:hidden">Calc</span>
+                    </>
                   )}
-                  {recalculating ? 'Recalculating...' : 'Recalculate'}
                 </Button>
 
                 <Button
@@ -1356,23 +1366,30 @@ const ProcessedAttendanceList = () => {
                   disabled={exporting}
                   variant="outline"
                   size="sm"
-                  className="bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
+                  className="bg-blue-600 hover:bg-blue-700 text-white border-blue-600 text-xs sm:text-sm"
                 >
                   {exporting ? (
-                    <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                    <>
+                      <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 animate-spin" />
+                      <span className="hidden sm:inline">Downloading...</span>
+                      <span className="sm:hidden">Down...</span>
+                    </>
                   ) : (
-                    <Download className="h-4 w-4 mr-1" />
+                    <>
+                      <Download className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                      <span className="hidden sm:inline">Download</span>
+                      <span className="sm:hidden">Down</span>
+                    </>
                   )}
-                  {exporting ? 'Downloading...' : 'Download'}
                 </Button>
 
                 <Button
                   onClick={() => setShowImportModal(true)}
                   variant="outline"
                   size="sm"
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-600"
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white border-indigo-600 text-xs sm:text-sm"
                 >
-                  <Upload className="h-4 w-4 mr-1" />
+                  <Upload className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
                   Import
                 </Button>
 
@@ -1380,10 +1397,11 @@ const ProcessedAttendanceList = () => {
                   onClick={() => setShowHolidayModal(true)}
                   variant="outline"
                   size="sm"
-                  className="bg-orange-600 hover:bg-orange-700 text-white border-orange-600"
+                  className="bg-orange-600 hover:bg-orange-700 text-white border-orange-600 text-xs sm:text-sm"
                 >
-                  <Target className="h-4 w-4 mr-1" />
-                  Set Holiday
+                  <Target className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                  <span className="hidden sm:inline">Set Holiday</span>
+                  <span className="sm:hidden">Holiday</span>
                 </Button>
                 
                 <Button
@@ -1391,14 +1409,20 @@ const ProcessedAttendanceList = () => {
                   disabled={exporting}
                   variant="outline"
                   size="sm"
-                  className="bg-green-600 hover:bg-green-700 text-white border-green-600"
+                  className="bg-green-600 hover:bg-green-700 text-white border-green-600 text-xs sm:text-sm"
                 >
                   {exporting ? (
-                    <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                    <>
+                      <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 animate-spin" />
+                      <span className="hidden sm:inline">Exporting...</span>
+                      <span className="sm:hidden">Exp...</span>
+                    </>
                   ) : (
-                    <FileText className="h-4 w-4 mr-1" />
+                    <>
+                      <FileText className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                      Export
+                    </>
                   )}
-                  {exporting ? 'Exporting...' : 'Export'}
                 </Button>
                 
                 {selectedIds.length > 0 && (
@@ -1409,10 +1433,11 @@ const ProcessedAttendanceList = () => {
                     }}
                     variant="outline"
                     size="sm"
-                    className="bg-red-600 hover:bg-red-700 text-white border-red-600"
+                    className="bg-red-600 hover:bg-red-700 text-white border-red-600 text-xs sm:text-sm"
                   >
-                    <Trash2 className="h-4 w-4 mr-1" />
-                    Delete ({selectedIds.length})
+                    <Trash2 className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                    <span className="hidden sm:inline">Delete ({selectedIds.length})</span>
+                    <span className="sm:hidden">Del ({selectedIds.length})</span>
                   </Button>
                 )}
                 
@@ -1423,24 +1448,32 @@ const ProcessedAttendanceList = () => {
                   }}
                   variant="outline"
                   size="sm"
-                  className="bg-red-600 hover:bg-red-700 text-white border-red-600"
+                  className="bg-red-600 hover:bg-red-700 text-white border-red-600 text-xs sm:text-sm"
                 >
-                  <Trash2 className="h-4 w-4 mr-1" />
-                  Delete Range
+                  <Trash2 className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                  <span className="hidden sm:inline">Delete Range</span>
+                  <span className="sm:hidden">Del Range</span>
                 </Button>
                 
                 <Button
                   onClick={handleSync}
                   disabled={syncing}
                   size="sm"
-                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                  className="bg-blue-600 hover:bg-blue-700 text-white text-xs sm:text-sm"
                 >
                   {syncing ? (
-                    <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                    <>
+                      <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 animate-spin" />
+                      <span className="hidden sm:inline">Syncing...</span>
+                      <span className="sm:hidden">Sync...</span>
+                    </>
                   ) : (
-                    <RefreshCw className="h-4 w-4 mr-1" />
+                    <>
+                      <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                      <span className="hidden sm:inline">Sync Data</span>
+                      <span className="sm:hidden">Sync</span>
+                    </>
                   )}
-                  {syncing ? 'Syncing...' : 'Sync Data'}
                 </Button>
               </div>
             </div>
@@ -1569,13 +1602,13 @@ const ProcessedAttendanceList = () => {
                   </div>
                 </div>
                 
-                <div className="flex justify-end space-x-2">
+                {/* <div className="flex justify-end space-x-2">
                   <Button variant="outline" onClick={resetFilters}>Reset</Button>
                   <Button onClick={applyFilters}>
                     <Filter className="h-4 w-4 mr-2" />
                     Apply Filters
                   </Button>
-                </div>
+                </div> */}
               </CardContent>
             </Card>
 
