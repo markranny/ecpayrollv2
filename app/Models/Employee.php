@@ -264,4 +264,34 @@ public function getLeaveStatistics($year = null)
         'year' => $year,
     ];
 }
+
+/**
+ * Get the deductions for the employee.
+ */
+public function deductions()
+{
+    return $this->hasMany(Deduction::class, 'employee_id', 'id');
+}
+
+/**
+ * Get the latest deduction or default values
+ */
+public function getLatestDeduction($cutoff = null)
+{
+    $query = $this->deductions();
+    
+    if ($cutoff) {
+        $query->where('cutoff', $cutoff);
+    }
+    
+    return $query->latest('date_posted')->first();
+}
+
+/**
+ * Get the default deduction for the employee
+ */
+public function getDefaultDeduction()
+{
+    return $this->deductions()->where('is_default', true)->latest()->first();
+}
 }

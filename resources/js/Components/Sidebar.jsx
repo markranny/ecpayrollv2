@@ -323,7 +323,8 @@ const Sidebar = ({ showSidebar = true }) => {
             label: 'Payroll',
             allowedRoles: ['superadmin', 'finance'],
             items: [
-                { label: 'Benefits', path: '/benefits' }
+                { label: 'Benefits', path: '/benefits' },
+                { label: 'Deductions', path: '/deductions' },
                 /* { label: 'Contribution Lists', path: '/payroll/contributions' },
                 { label: 'Deduction Lists', path: '/payroll/deductions' },
                 { label: 'Debit Summary', path: '/payroll/debit' },
