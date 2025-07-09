@@ -91,20 +91,15 @@ class BenefitController extends Controller
         ]);
     }
 
-    // ... (keeping existing store, update, updateField methods unchanged)
-
-    /**
-     * Download Excel template for benefits import - Enhanced with employee list
-     */
     public function downloadTemplate()
     {
         $spreadsheet = new Spreadsheet();
         
-        // Create the main template sheet
-        $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setTitle('Benefits Template');
+        // Create the Benefits Template sheet
+        $benefitsSheet = $spreadsheet->getActiveSheet();
+        $benefitsSheet->setTitle('Benefits Template');
         
-        // Set headers with better formatting
+        // Define headers for benefits template
         $headers = [
             'A1' => 'Employee ID',
             'B1' => 'Employee Name',
@@ -121,67 +116,142 @@ class BenefitController extends Controller
             'M1' => 'Date (YYYY-MM-DD)'
         ];
         
+        // Set headers with styling
         foreach ($headers as $cell => $header) {
-            $sheet->setCellValue($cell, $header);
-            $sheet->getStyle($cell)->getFont()->setBold(true);
-            $sheet->getStyle($cell)->getFill()
-                ->setFillType(Fill::FILL_SOLID)
-                ->getStartColor()->setARGB('FFE2EFDA');
-            $sheet->getStyle($cell)->getAlignment()
-                ->setHorizontal(Alignment::HORIZONTAL_CENTER);
+            $benefitsSheet->setCellValue($cell, $header);
         }
+        
+        // Style the header row
+        $headerRange = 'A1:M1';
+        $benefitsSheet->getStyle($headerRange)->applyFromArray([
+            'font' => [
+                'bold' => true,
+                'color' => ['rgb' => 'FFFFFF'],
+                'size' => 12
+            ],
+            'fill' => [
+                'fillType' => Fill::FILL_SOLID,
+                'color' => ['rgb' => '4472C4']
+            ],
+            'alignment' => [
+                'horizontal' => Alignment::HORIZONTAL_CENTER,
+                'vertical' => Alignment::VERTICAL_CENTER
+            ],
+            'borders' => [
+                'allBorders' => [
+                    'borderStyle' => Border::BORDER_THIN,
+                    'color' => ['rgb' => '000000']
+                ]
+            ]
+        ]);
         
         // Auto-size columns
         foreach (range('A', 'M') as $column) {
-            $sheet->getColumnDimension($column)->setAutoSize(true);
+            $benefitsSheet->getColumnDimension($column)->setAutoSize(true);
         }
         
-        // Add sample data
-        $sheet->setCellValue('A2', 'EMP001');
-        $sheet->setCellValue('B2', 'Sample Employee');
-        $sheet->setCellValue('C2', 'IT Department');
-        $sheet->setCellValue('D2', '5000.00');
-        $sheet->setCellValue('E2', '500.00');
-        $sheet->setCellValue('F2', '1000.00');
-        $sheet->setCellValue('G2', '800.00');
-        $sheet->setCellValue('H2', '320.00');
-        $sheet->setCellValue('I2', '100.00');
-        $sheet->setCellValue('J2', '100.00');
-        $sheet->setCellValue('K2', '400.00');
-        $sheet->setCellValue('L2', '1st');
-        $sheet->setCellValue('M2', date('Y-m-d'));
+        // Add sample data rows (5 examples)
+        $sampleData = [
+            ['EMP001', 'Sample Employee 1', 'IT Department', '5000.00', '500.00', '1000.00', '800.00', '300.00', '500.00', '200.00', '400.00', '1st', date('Y-m-d')],
+            ['EMP002', 'Sample Employee 2', 'HR Department', '4500.00', '400.00', '800.00', '600.00', '250.00', '400.00', '180.00', '350.00', '2nd', date('Y-m-d')],
+            ['EMP003', 'Sample Employee 3', 'Finance Department', '5500.00', '600.00', '1200.00', '900.00', '350.00', '600.00', '220.00', '450.00', '1st', date('Y-m-d')],
+            ['EMP004', 'Sample Employee 4', 'Operations', '4000.00', '300.00', '700.00', '500.00', '200.00', '350.00', '150.00', '300.00', '2nd', date('Y-m-d')],
+            ['EMP005', 'Sample Employee 5', 'Marketing', '4800.00', '450.00', '900.00', '700.00', '280.00', '450.00', '190.00', '380.00', '1st', date('Y-m-d')]
+        ];
         
-        // Create Employee List Sheet
-        $employeeSheet = $spreadsheet->createSheet(1);
+        // Add sample data
+        $row = 2;
+        foreach ($sampleData as $rowData) {
+            $col = 'A';
+            foreach ($rowData as $value) {
+                $benefitsSheet->setCellValue($col . $row, $value);
+                $col++;
+            }
+            $row++;
+        }
+        
+        // Style sample data rows
+        $sampleRange = 'A2:M6';
+        $benefitsSheet->getStyle($sampleRange)->applyFromArray([
+            'fill' => [
+                'fillType' => Fill::FILL_SOLID,
+                'color' => ['rgb' => 'FFF2CC']
+            ],
+            'borders' => [
+                'allBorders' => [
+                    'borderStyle' => Border::BORDER_THIN,
+                    'color' => ['rgb' => 'CCCCCC']
+                ]
+            ],
+            'alignment' => [
+                'horizontal' => Alignment::HORIZONTAL_CENTER
+            ]
+        ]);
+        
+        // Add instructions
+        $benefitsSheet->setCellValue('A8', 'INSTRUCTIONS:');
+        $benefitsSheet->setCellValue('A9', '1. Replace sample data with actual employee information');
+        $benefitsSheet->setCellValue('A10', '2. Employee ID must match exactly with system records');
+        $benefitsSheet->setCellValue('A11', '3. Use numeric values for all benefit amounts (e.g., 1000.00)');
+        $benefitsSheet->setCellValue('A12', '4. Cutoff must be either "1st" or "2nd"');
+        $benefitsSheet->setCellValue('A13', '5. Date format: YYYY-MM-DD (e.g., ' . date('Y-m-d') . ')');
+        $benefitsSheet->setCellValue('A14', '6. Delete sample rows before importing');
+        
+        // Style instructions
+        $benefitsSheet->getStyle('A8')->getFont()->setBold(true)->setSize(12);
+        $benefitsSheet->getStyle('A8:A14')->getFont()->setColor(new \PhpOffice\PhpSpreadsheet\Style\Color('FF0000'));
+        
+        // Create Employee List sheet
+        $employeeSheet = $spreadsheet->createSheet();
         $employeeSheet->setTitle('Employee List');
         
         // Get all active employees
         $employees = Employee::where('JobStatus', 'Active')
-            ->select('idno', 'Lname', 'Fname', 'MName', 'Suffix', 'Department')
+            ->select('idno', 'Lname', 'Fname', 'MName', 'Suffix', 'Department', 'Jobtitle')
+            ->orderBy('Department')
             ->orderBy('Lname')
-            ->orderBy('Fname')
             ->get();
         
         // Employee list headers
         $empHeaders = [
             'A1' => 'Employee ID',
             'B1' => 'Last Name',
-            'C1' => 'First Name', 
+            'C1' => 'First Name',
             'D1' => 'Middle Name',
             'E1' => 'Suffix',
             'F1' => 'Full Name',
-            'G1' => 'Department'
+            'G1' => 'Department',
+            'H1' => 'Job Title'
         ];
         
+        // Set employee headers
         foreach ($empHeaders as $cell => $header) {
             $employeeSheet->setCellValue($cell, $header);
-            $employeeSheet->getStyle($cell)->getFont()->setBold(true);
-            $employeeSheet->getStyle($cell)->getFill()
-                ->setFillType(Fill::FILL_SOLID)
-                ->getStartColor()->setARGB('FFD9E1F2');
-            $employeeSheet->getStyle($cell)->getAlignment()
-                ->setHorizontal(Alignment::HORIZONTAL_CENTER);
         }
+        
+        // Style employee headers
+        $empHeaderRange = 'A1:H1';
+        $employeeSheet->getStyle($empHeaderRange)->applyFromArray([
+            'font' => [
+                'bold' => true,
+                'color' => ['rgb' => 'FFFFFF'],
+                'size' => 12
+            ],
+            'fill' => [
+                'fillType' => Fill::FILL_SOLID,
+                'color' => ['rgb' => '70AD47']
+            ],
+            'alignment' => [
+                'horizontal' => Alignment::HORIZONTAL_CENTER,
+                'vertical' => Alignment::VERTICAL_CENTER
+            ],
+            'borders' => [
+                'allBorders' => [
+                    'borderStyle' => Border::BORDER_THIN,
+                    'color' => ['rgb' => '000000']
+                ]
+            ]
+        ]);
         
         // Add employee data
         $row = 2;
@@ -195,58 +265,157 @@ class BenefitController extends Controller
             $employeeSheet->setCellValue('E' . $row, $employee->Suffix ?? '');
             $employeeSheet->setCellValue('F' . $row, $fullName);
             $employeeSheet->setCellValue('G' . $row, $employee->Department ?? '');
+            $employeeSheet->setCellValue('H' . $row, $employee->Jobtitle ?? '');
+            
             $row++;
         }
         
         // Auto-size employee sheet columns
-        foreach (range('A', 'G') as $column) {
+        foreach (range('A', 'H') as $column) {
             $employeeSheet->getColumnDimension($column)->setAutoSize(true);
         }
         
-        // Create Instructions Sheet
-        $instructionSheet = $spreadsheet->createSheet(2);
-        $instructionSheet->setTitle('Instructions');
-        
-        $instructions = [
-            'A1' => 'BENEFITS IMPORT INSTRUCTIONS',
-            'A3' => '1. Use the "Benefits Template" sheet to enter benefit data',
-            'A4' => '2. Employee ID must match exactly with the Employee List',
-            'A5' => '3. All monetary values should be in decimal format (e.g., 1000.00)',
-            'A6' => '4. Cutoff should be either "1st" or "2nd"',
-            'A7' => '5. Date should be in YYYY-MM-DD format',
-            'A8' => '6. Check the Employee List sheet for valid Employee IDs',
-            'A9' => '7. Leave cells empty or 0.00 for zero amounts',
-            'A10' => '8. Save as Excel file (.xlsx) before importing',
-            'A12' => 'BENEFIT FIELDS EXPLANATION:',
-            'A13' => '• Allowances: Monthly allowances for the employee',
-            'A14' => '• MF Shares: Mutual Fund share contributions',
-            'A15' => '• MF Loan: Mutual Fund loan deductions',
-            'A16' => '• SSS Loan: Social Security System loan deductions',
-            'A17' => '• SSS Premium: Social Security System premium',
-            'A18' => '• HMDF Loan: Home Development Mutual Fund loan',
-            'A19' => '• HMDF Premium: Home Development Mutual Fund premium',
-            'A20' => '• PhilHealth: PhilHealth premium contributions'
-        ];
-        
-        foreach ($instructions as $cell => $text) {
-            $instructionSheet->setCellValue($cell, $text);
-            if ($cell === 'A1' || $cell === 'A12') {
-                $instructionSheet->getStyle($cell)->getFont()->setBold(true)->setSize(14);
-                $instructionSheet->getStyle($cell)->getFill()
-                    ->setFillType(Fill::FILL_SOLID)
-                    ->getStartColor()->setARGB('FFFFEB9C');
-            }
+        // Style employee data
+        if ($row > 2) {
+            $empDataRange = 'A2:H' . ($row - 1);
+            $employeeSheet->getStyle($empDataRange)->applyFromArray([
+                'borders' => [
+                    'allBorders' => [
+                        'borderStyle' => Border::BORDER_THIN,
+                        'color' => ['rgb' => 'CCCCCC']
+                    ]
+                ],
+                'alignment' => [
+                    'horizontal' => Alignment::HORIZONTAL_LEFT
+                ]
+            ]);
         }
         
-        $instructionSheet->getColumnDimension('A')->setWidth(80);
+        // Add summary at the bottom of employee sheet
+        $summaryRow = $row + 2;
+        $employeeSheet->setCellValue('A' . $summaryRow, 'Total Active Employees: ' . ($row - 2));
+        $employeeSheet->getStyle('A' . $summaryRow)->getFont()->setBold(true);
         
-        // Set active sheet back to template
+        // Create Default Values sheet for reference
+        $defaultsSheet = $spreadsheet->createSheet();
+        $defaultsSheet->setTitle('Default Values Reference');
+        
+        // Get employees with default benefits
+        $employeesWithDefaults = Employee::with(['benefits' => function ($query) {
+                $query->where('is_default', true)->latest();
+            }])
+            ->where('JobStatus', 'Active')
+            ->select('id', 'idno', 'Lname', 'Fname', 'MName', 'Suffix', 'Department')
+            ->get();
+        
+        // Default values headers
+        $defaultHeaders = [
+            'A1' => 'Employee ID',
+            'B1' => 'Employee Name',
+            'C1' => 'Department',
+            'D1' => 'Allowances',
+            'E1' => 'MF Shares',
+            'F1' => 'MF Loan',
+            'G1' => 'SSS Loan',
+            'H1' => 'SSS Premium',
+            'I1' => 'HMDF Loan',
+            'J1' => 'HMDF Premium',
+            'K1' => 'PhilHealth'
+        ];
+        
+        // Set default headers
+        foreach ($defaultHeaders as $cell => $header) {
+            $defaultsSheet->setCellValue($cell, $header);
+        }
+        
+        // Style default headers
+        $defaultHeaderRange = 'A1:K1';
+        $defaultsSheet->getStyle($defaultHeaderRange)->applyFromArray([
+            'font' => [
+                'bold' => true,
+                'color' => ['rgb' => 'FFFFFF'],
+                'size' => 12
+            ],
+            'fill' => [
+                'fillType' => Fill::FILL_SOLID,
+                'color' => ['rgb' => 'FFC000']
+            ],
+            'alignment' => [
+                'horizontal' => Alignment::HORIZONTAL_CENTER,
+                'vertical' => Alignment::VERTICAL_CENTER
+            ],
+            'borders' => [
+                'allBorders' => [
+                    'borderStyle' => Border::BORDER_THIN,
+                    'color' => ['rgb' => '000000']
+                ]
+            ]
+        ]);
+        
+        // Add default values data
+        $row = 2;
+        foreach ($employeesWithDefaults as $employee) {
+            $benefit = $employee->benefits->first();
+            $employeeName = trim($employee->Lname . ', ' . $employee->Fname . ' ' . ($employee->MName ?? ''));
+            
+            $defaultsSheet->setCellValue('A' . $row, $employee->idno);
+            $defaultsSheet->setCellValue('B' . $row, $employeeName);
+            $defaultsSheet->setCellValue('C' . $row, $employee->Department ?? '');
+            
+            if ($benefit) {
+                $defaultsSheet->setCellValue('D' . $row, number_format($benefit->allowances ?? 0, 2));
+                $defaultsSheet->setCellValue('E' . $row, number_format($benefit->mf_shares ?? 0, 2));
+                $defaultsSheet->setCellValue('F' . $row, number_format($benefit->mf_loan ?? 0, 2));
+                $defaultsSheet->setCellValue('G' . $row, number_format($benefit->sss_loan ?? 0, 2));
+                $defaultsSheet->setCellValue('H' . $row, number_format($benefit->sss_prem ?? 0, 2));
+                $defaultsSheet->setCellValue('I' . $row, number_format($benefit->hmdf_loan ?? 0, 2));
+                $defaultsSheet->setCellValue('J' . $row, number_format($benefit->hmdf_prem ?? 0, 2));
+                $defaultsSheet->setCellValue('K' . $row, number_format($benefit->philhealth ?? 0, 2));
+            } else {
+                // Set default zeros if no default benefit exists
+                foreach (range('D', 'K') as $col) {
+                    $defaultsSheet->setCellValue($col . $row, '0.00');
+                }
+            }
+            
+            $row++;
+        }
+        
+        // Auto-size default sheet columns
+        foreach (range('A', 'K') as $column) {
+            $defaultsSheet->getColumnDimension($column)->setAutoSize(true);
+        }
+        
+        // Style default data
+        if ($row > 2) {
+            $defaultDataRange = 'A2:K' . ($row - 1);
+            $defaultsSheet->getStyle($defaultDataRange)->applyFromArray([
+                'borders' => [
+                    'allBorders' => [
+                        'borderStyle' => Border::BORDER_THIN,
+                        'color' => ['rgb' => 'CCCCCC']
+                    ]
+                ],
+                'alignment' => [
+                    'horizontal' => Alignment::HORIZONTAL_CENTER
+                ]
+            ]);
+        }
+        
+        // Add note at the bottom
+        $noteRow = $row + 2;
+        $defaultsSheet->setCellValue('A' . $noteRow, 'NOTE: This sheet shows current default values for employees. Use this as reference when creating new benefits.');
+        $defaultsSheet->getStyle('A' . $noteRow)->getFont()->setBold(true)->setItalic(true);
+        $defaultsSheet->mergeCells('A' . $noteRow . ':K' . $noteRow);
+        
+        // Set the active sheet back to Benefits Template
         $spreadsheet->setActiveSheetIndex(0);
         
         $writer = new Xlsx($spreadsheet);
         
         // Set headers for download
-        $filename = 'benefits_import_template_with_employees_' . date('Y-m-d') . '.xlsx';
+        $date = date('Y-m-d');
+        $filename = "benefits_import_template_with_employee_list_{$date}.xlsx";
         
         header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         header('Content-Disposition: attachment;filename="' . $filename . '"');
@@ -257,12 +426,12 @@ class BenefitController extends Controller
     }
 
     /**
-     * Import benefits from Excel file - Enhanced validation
+     * Enhanced import method to handle the new template format
      */
     public function import(Request $request)
     {
         $request->validate([
-            'file' => 'required|file|mimes:xlsx,xls,csv|max:10240',
+            'file' => 'required|file|mimes:xlsx,xls,csv|max:10240', // 10MB max
             'cutoff' => 'required|in:1st,2nd',
             'date' => 'required|date',
         ]);
@@ -274,7 +443,15 @@ class BenefitController extends Controller
             
             // Load the spreadsheet
             $spreadsheet = IOFactory::load($file->getPathname());
-            $worksheet = $spreadsheet->getActiveSheet();
+            
+            // Try to get the Benefits Template sheet first, fallback to first sheet
+            $worksheet = null;
+            try {
+                $worksheet = $spreadsheet->getSheetByName('Benefits Template');
+            } catch (\Exception $e) {
+                $worksheet = $spreadsheet->getActiveSheet();
+            }
+            
             $rows = $worksheet->toArray();
             
             // Remove header row
@@ -282,56 +459,50 @@ class BenefitController extends Controller
             
             $imported = 0;
             $errors = [];
-            $warnings = [];
-            
-            // Get all employee IDs for validation
-            $validEmployeeIds = Employee::where('JobStatus', 'Active')
-                ->pluck('id', 'idno')
-                ->toArray();
+            $skippedSamples = 0;
             
             DB::beginTransaction();
             
             foreach ($rows as $index => $row) {
-                $rowNumber = $index + 2;
+                $rowNumber = $index + 2; // +2 because we removed header and array is 0-indexed
                 
                 // Skip empty rows
                 if (empty(array_filter($row))) {
                     continue;
                 }
                 
+                // Skip sample data rows (check if employee ID starts with "EMP" and name contains "Sample")
+                if (isset($row[0]) && isset($row[1]) && 
+                    (strpos($row[0], 'EMP') === 0 || strpos($row[1], 'Sample') !== false)) {
+                    $skippedSamples++;
+                    continue;
+                }
+                
                 try {
-                    $employeeIdno = trim($row[0] ?? '');
-                    
-                    if (empty($employeeIdno)) {
-                        $errors[] = "Row {$rowNumber}: Employee ID is required.";
-                        continue;
-                    }
-                    
                     // Find employee by ID
-                    if (!isset($validEmployeeIds[$employeeIdno])) {
-                        $errors[] = "Row {$rowNumber}: Employee with ID '{$employeeIdno}' not found or inactive.";
+                    $employee = Employee::where('idno', trim($row[0]))->first();
+                    
+                    if (!$employee) {
+                        $errors[] = "Row {$rowNumber}: Employee with ID '{$row[0]}' not found.";
                         continue;
                     }
-                    
-                    $employeeId = $validEmployeeIds[$employeeIdno];
                     
                     // Check if benefit already exists
-                    $existingBenefit = Benefit::where('employee_id', $employeeId)
+                    $existingBenefit = Benefit::where('employee_id', $employee->id)
                         ->where('cutoff', $cutoff)
                         ->where('date', $date)
                         ->first();
                     
-                    // Validate numeric values
                     $benefitData = [
-                        'employee_id' => $employeeId,
-                        'allowances' => $this->validateNumericValue($row[3] ?? 0, $rowNumber, 'Allowances'),
-                        'mf_shares' => $this->validateNumericValue($row[4] ?? 0, $rowNumber, 'MF Shares'),
-                        'mf_loan' => $this->validateNumericValue($row[5] ?? 0, $rowNumber, 'MF Loan'),
-                        'sss_loan' => $this->validateNumericValue($row[6] ?? 0, $rowNumber, 'SSS Loan'),
-                        'sss_prem' => $this->validateNumericValue($row[7] ?? 0, $rowNumber, 'SSS Premium'),
-                        'hmdf_loan' => $this->validateNumericValue($row[8] ?? 0, $rowNumber, 'HMDF Loan'),
-                        'hmdf_prem' => $this->validateNumericValue($row[9] ?? 0, $rowNumber, 'HMDF Premium'),
-                        'philhealth' => $this->validateNumericValue($row[10] ?? 0, $rowNumber, 'PhilHealth'),
+                        'employee_id' => $employee->id,
+                        'allowances' => floatval($row[3] ?? 0),      // Column D
+                        'mf_shares' => floatval($row[4] ?? 0),       // Column E
+                        'mf_loan' => floatval($row[5] ?? 0),         // Column F
+                        'sss_loan' => floatval($row[6] ?? 0),        // Column G
+                        'sss_prem' => floatval($row[7] ?? 0),        // Column H
+                        'hmdf_loan' => floatval($row[8] ?? 0),       // Column I
+                        'hmdf_prem' => floatval($row[9] ?? 0),       // Column J
+                        'philhealth' => floatval($row[10] ?? 0),     // Column K
                         'cutoff' => $cutoff,
                         'date' => $date,
                         'is_posted' => false,
@@ -341,12 +512,10 @@ class BenefitController extends Controller
                     if ($existingBenefit) {
                         // Update existing benefit if not posted
                         if ($existingBenefit->is_posted) {
-                            $errors[] = "Row {$rowNumber}: Benefit for employee '{$employeeIdno}' is already posted and cannot be updated.";
+                            $errors[] = "Row {$rowNumber}: Benefit for employee '{$row[0]}' is already posted and cannot be updated.";
                             continue;
                         }
-                        
                         $existingBenefit->update($benefitData);
-                        $warnings[] = "Row {$rowNumber}: Updated existing benefit for employee '{$employeeIdno}'.";
                     } else {
                         // Create new benefit
                         Benefit::create($benefitData);
@@ -361,18 +530,17 @@ class BenefitController extends Controller
             
             DB::commit();
             
+            $message = "Successfully imported {$imported} benefits.";
+            if ($skippedSamples > 0) {
+                $message .= " Skipped {$skippedSamples} sample data rows.";
+            }
+            
             return response()->json([
                 'success' => true,
-                'message' => "Successfully imported {$imported} benefits.",
+                'message' => $message,
                 'imported_count' => $imported,
-                'errors' => $errors,
-                'warnings' => $warnings,
-                'summary' => [
-                    'total_rows_processed' => count($rows),
-                    'successful_imports' => $imported,
-                    'errors_count' => count($errors),
-                    'warnings_count' => count($warnings)
-                ]
+                'skipped_samples' => $skippedSamples,
+                'errors' => $errors
             ]);
             
         } catch (\Exception $e) {
@@ -592,8 +760,6 @@ class BenefitController extends Controller
             ],
         ]);
     }
-
-    // ... (keeping all other existing methods unchanged - store, update, updateField, etc.)
     
     /**
      * Store a newly created or update existing benefit in storage.

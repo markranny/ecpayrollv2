@@ -1073,20 +1073,35 @@ const ProcessedAttendanceList = () => {
     }
   };
 
-  // Format time for display
   const formatTime = (timeString) => {
-    if (!timeString) return '-';
-    try {
-      const time = new Date(timeString);
-      return time.toLocaleTimeString('en-US', {
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-      });
-    } catch (err) {
-      return 'Invalid Time';
-    }
-  };
+        if (!timeString) return '-';
+        
+        try {
+            let timeOnly;
+            // Handle ISO 8601 format
+            if (timeString.includes('T')) {
+                const [, time] = timeString.split('T');
+                timeOnly = time.slice(0, 5); // Extract HH:MM
+            } else {
+                // If the time includes a date (like "2024-04-10 14:30:00"), split and take the time part
+                const timeParts = timeString.split(' ');
+                timeOnly = timeParts[timeParts.length - 1].slice(0, 5);
+            }
+            
+            // Parse hours and minutes
+            const [hours, minutes] = timeOnly.split(':');
+            const hourNum = parseInt(hours, 10);
+            
+            // Convert to 12-hour format with AM/PM
+            const ampm = hourNum >= 12 ? 'PM' : 'AM';
+            const formattedHours = hourNum % 12 || 12; // handle midnight and noon
+            
+            return `${formattedHours}:${minutes} ${ampm}`;
+        } catch (error) {
+            console.error('Time formatting error:', error);
+            return '-';
+        }
+    };
 
   // Format numeric values
   const formatNumeric = (value, decimals = 2) => {

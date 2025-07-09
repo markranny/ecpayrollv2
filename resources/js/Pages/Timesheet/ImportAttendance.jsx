@@ -61,130 +61,44 @@ const ImportAttendance = () => {
         setValidationStatus(null);
     };
 
-    // Enhanced formatDate function for better Excel date handling
-    const formatDate = (date) => {
-        if (!date) return '';
-        try {
-            // Check for MM/DD/YYYY format (common in the template)
-            if (typeof date === 'string' && date.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
-                const parts = date.split('/');
-                if (parts.length === 3) {
-                    const month = String(parseInt(parts[0], 10)).padStart(2, '0');
-                    const day = String(parseInt(parts[1], 10)).padStart(2, '0');
-                    const year = parts[2];
-                    return `${year}-${month}-${day}`;
-                }
-            }
-            
-            // Handle Excel serial date numbers
-            if (typeof date === 'number') {
-                // Excel dates start from December 30, 1899
-                const excelEpoch = new Date(1899, 11, 30);
-                const millisecondsPerDay = 24 * 60 * 60 * 1000;
-                const dateObj = new Date(excelEpoch.getTime() + date * millisecondsPerDay);
-                
-                const year = dateObj.getFullYear();
-                const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-                const day = String(dateObj.getDate()).padStart(2, '0');
-                return `${year}-${month}-${day}`;
-            }
-            
-            // Handle string dates in various formats
-            if (typeof date === 'string') {
-                // Handle Excel's short date format (e.g., "16-Jan")
-                if (date.match(/^\d{1,2}[-\/][a-zA-Z]{3,}$/)) {
-                    const [day, monthStr] = date.split(/[-\/]/);
-                    const monthNames = {
-                        jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, 
-                        jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
-                    };
-                    const monthIndex = monthNames[monthStr.toLowerCase().substr(0, 3)];
-                    const currentYear = new Date().getFullYear();
-                    
-                    const dateObj = new Date(currentYear, monthIndex, parseInt(day, 10));
-                    const year = dateObj.getFullYear();
-                    const month = String(dateObj.getMonth() + 1).padStart(2, '0');
-                    const dayFormatted = String(dateObj.getDate()).padStart(2, '0');
-                    return `${year}-${month}-${dayFormatted}`;
-                }
-                
-                // Try to parse other common date formats
-                const d = new Date(date);
-                if (!isNaN(d.getTime())) {
-                    const year = d.getFullYear();
-                    const month = String(d.getMonth() + 1).padStart(2, '0');
-                    const day = String(d.getDate()).padStart(2, '0');
-                    return `${year}-${month}-${day}`;
-                }
-            }
-            
-            // Return original value if we can't parse it
-            return date;
-        } catch {
-            return date;
-        }
-    };
-
-    // Enhanced formatTime function for Excel time values
-    const formatTime = (time) => {
-        if (!time) return '';
-        
-        // Check for empty time values
-        if (time === 0 || time === '0' || time === '0:00' || 
-            time === '00:00' || time === '0:00:00' || time === '00:00:00') {
-            return '';
-        }
-        
-        try {
-            // Handle Excel time (decimal)
-            if (typeof time === 'number') {
-                // Ignore values too small (close to zero)
-                if (Math.abs(time) < 0.0001) return '';
-                
-                const totalSeconds = Math.round(time * 86400);
-                const hours = Math.floor(totalSeconds / 3600);
-                const minutes = Math.floor((totalSeconds % 3600) / 60);
-                const period = hours >= 12 ? 'PM' : 'AM';
-                const formattedHours = hours % 12 || 12;
-                return `${String(formattedHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')} ${period}`;
-            }
-
-            // For string values already in time format
-            if (typeof time === 'string') {
-                // Check if it's already in a well-known format like "HH:MM AM/PM"
-                if (/^\d{1,2}:\d{2}(:\d{2})?\s*(AM|PM)$/i.test(time)) {
-                    return time;
-                }
-                
-                // Check for 24-hour format
-                if (/^\d{1,2}:\d{2}(:\d{2})?$/.test(time)) {
-                    const [hours, minutes] = time.split(':').map(Number);
-                    const period = hours >= 12 ? 'PM' : 'AM';
-                    const formattedHours = hours % 12 || 12;
-                    return `${String(formattedHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')} ${period}`;
-                }
-                
-                // Try to parse as time
-                try {
-                    const d = new Date(`2000-01-01 ${time}`);
-                    if (!isNaN(d.getTime())) {
-                        const hours = d.getHours();
-                        const minutes = d.getMinutes();
-                        const period = hours >= 12 ? 'PM' : 'AM';
-                        const formattedHours = hours % 12 || 12;
-                        return `${String(formattedHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')} ${period}`;
-                    }
-                } catch {
-                    // Fall through to return original if parsing fails
-                }
-            }
-            
-            // Return original value if we can't parse it
-            return time;
-        } catch {
-            return time;
-        }
-    };
+    const formatDate = (dateString) => {
+          try {
+              return format(new Date(dateString), 'yyyy-MM-dd');
+          } catch (error) {
+              console.error('Error formatting date:', error);
+              return 'Invalid date';
+          }
+      };
+      
+      const formatTime = (timeString) => {
+          if (!timeString) return '-';
+          
+          try {
+              let timeOnly;
+              // Handle ISO 8601 format
+              if (timeString.includes('T')) {
+                  const [, time] = timeString.split('T');
+                  timeOnly = time.slice(0, 5); // Extract HH:MM
+              } else {
+                  // If the time includes a date (like "2024-04-10 14:30:00"), split and take the time part
+                  const timeParts = timeString.split(' ');
+                  timeOnly = timeParts[timeParts.length - 1].slice(0, 5);
+              }
+              
+              // Parse hours and minutes
+              const [hours, minutes] = timeOnly.split(':');
+              const hourNum = parseInt(hours, 10);
+              
+              // Convert to 12-hour format with AM/PM
+              const ampm = hourNum >= 12 ? 'PM' : 'AM';
+              const formattedHours = hourNum % 12 || 12; // handle midnight and noon
+              
+              return `${formattedHours}:${minutes} ${ampm}`;
+          } catch (error) {
+              console.error('Time formatting error:', error);
+              return '-';
+          }
+      };
 
     // Format numeric values (like hours worked) to 2 decimal places
     const formatNumeric = (value) => {
