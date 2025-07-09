@@ -59,34 +59,26 @@ const EditableCell = ({
     };
 
     const handleKeyDown = (e) => {
-        // Handle Enter key to save
         if (e.key === 'Enter') {
             if (onSave) {
                 onSave(localValue);
             }
             e.preventDefault();
         }
-        // Pass keyboard events up to parent for navigation
         if (onKeyDown) {
             onKeyDown(e, rowIndex, colIndex, field);
         }
     };
 
-    // Handle paste functionality
     const handlePaste = (e) => {
-        // Get pasted data from clipboard
         const clipboardData = e.clipboardData || window.clipboardData;
         const pastedData = clipboardData.getData('text');
         
-        // Check if it contains multiple lines/cells (from Excel)
         if (pastedData.includes('\t') || pastedData.includes('\n')) {
             e.preventDefault();
-            
-            // Split the pasted data into rows and cells
             const rows = pastedData.split(/\r\n|\n|\r/).filter(row => row.trim() !== '');
             const grid = rows.map(row => row.split('\t'));
             
-            // Notify parent component about pasted data
             if (onChange) {
                 onChange(localValue, { pastedData: grid, rowIndex, colIndex });
             }
@@ -96,23 +88,21 @@ const EditableCell = ({
     if (isDisabled) {
         return (
             <div 
-                className="p-2 text-right text-gray-700 cursor-default" 
+                className="p-3 text-right text-gray-700 cursor-default h-12 flex items-center justify-end" 
                 onClick={(e) => {
                     e.stopPropagation();
                     if (onClick) onClick();
                 }}
-                style={{ minWidth: '80px', overflow: 'visible' }}
             >
                 {parseFloat(value).toFixed(2)}
             </div>
         );
     }
 
-    // Cell appearance when not editing
     if (!isEditing) {
         return (
             <div 
-                className={`p-2 text-right ${benefitExists ? 'text-gray-700' : 'text-gray-400'} cursor-pointer hover:bg-gray-100`}
+                className={`p-3 text-right ${benefitExists ? 'text-gray-700' : 'text-gray-400'} cursor-pointer hover:bg-gray-100 h-12 flex items-center justify-end`}
                 onClick={(e) => {
                     e.stopPropagation();
                     if (benefitExists) {
@@ -121,39 +111,37 @@ const EditableCell = ({
                         if (onCreateAndEdit) onCreateAndEdit();
                     }
                 }}
-                style={{ minWidth: '80px', overflow: 'visible' }}
             >
                 {benefitExists ? parseFloat(value).toFixed(2) : "0.00"}
             </div>
         );
     }
 
-    // Cell appearance when editing
     return (
-        <input
-            ref={inputRef}
-            type="number"
-            step="0.01"
-            min="0"
-            className="w-full p-1 px-2 border border-blue-400 rounded text-right bg-white text-black font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            value={localValue}
-            onChange={handleChange}
-            onBlur={handleBlur}
-            onKeyDown={handleKeyDown}
-            onPaste={handlePaste}
-            data-row={rowIndex}
-            data-col={colIndex}
-            data-field={field}
-            onClick={(e) => e.stopPropagation()}
-            style={{ 
-                boxShadow: "0 0 0 1px rgba(59, 130, 246, 0.5)", 
-                fontSize: '14px',
-                height: '32px',
-                minWidth: '80px',
-                width: '100%' 
-            }}
-            autoComplete="off"
-        />
+        <div className="p-2 h-12 flex items-center">
+            <input
+                ref={inputRef}
+                type="number"
+                step="0.01"
+                min="0"
+                className="w-full p-1 px-2 border border-blue-400 rounded text-right bg-white text-black font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                value={localValue}
+                onChange={handleChange}
+                onBlur={handleBlur}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                data-row={rowIndex}
+                data-col={colIndex}
+                data-field={field}
+                onClick={(e) => e.stopPropagation()}
+                style={{ 
+                    boxShadow: "0 0 0 1px rgba(59, 130, 246, 0.5)", 
+                    fontSize: '14px',
+                    height: '32px'
+                }}
+                autoComplete="off"
+            />
+        </div>
     );
 };
 
@@ -260,9 +248,8 @@ const BenefitsTable = ({
     onBulkSetDefaultBenefits,
     onExportToExcel,
     pagination,
-    // Updated field columns with allowances and reorganized order
     fieldColumnsParam = [
-        'allowances',     // Moved to first position
+        'allowances',
         'mf_shares',
         'mf_loan',
         'sss_loan',
@@ -272,7 +259,7 @@ const BenefitsTable = ({
         'philhealth'
     ]
 }) => {
-    // Transform field columns with proper width settings and better labels
+    // Fixed column definitions with consistent widths
     const fieldColumns = Array.isArray(fieldColumnsParam) && typeof fieldColumnsParam[0] === 'string' 
         ? fieldColumnsParam.map(field => {
             const labelMap = {
@@ -289,10 +276,19 @@ const BenefitsTable = ({
             return {
                 id: field,
                 label: labelMap[field] || field.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()),
-                width: field === 'allowances' ? '130px' : '120px' // Slightly wider for allowances
+                width: '130px' // Consistent width for all columns
             };
         })
         : fieldColumnsParam;
+
+    // Fixed column width configuration
+    const columnWidths = {
+        checkbox: '60px',
+        actions: '120px',
+        employee: '280px',
+        benefit: '130px',
+        status: '120px'
+    };
 
     const [editingCell, setEditingCell] = useState(null);
     const [selectedItems, setSelectedItems] = useState([]);
@@ -307,15 +303,13 @@ const BenefitsTable = ({
     
     const tableRef = useRef(null);
     
-    // Setup virtualized rows for better performance with large datasets
     const rowVirtualizer = useVirtualizer({
         count: employees.length,
         getScrollElement: () => tableRef.current,
-        estimateSize: () => 60,
+        estimateSize: () => 64, // Fixed row height
         overscan: 5,
     });
 
-    // Reset selection when employees change
     useEffect(() => {
         setSelectedItems([]);
         setSelectAll(false);
@@ -333,7 +327,6 @@ const BenefitsTable = ({
         });
     };
 
-    // New function to handle creating a benefit and then editing it
     const handleCreateAndEditCell = (employeeId, field, rowIndex, colIndex) => {
         setCreatingBenefit({
             employeeId,
@@ -345,7 +338,6 @@ const BenefitsTable = ({
         onCreateBenefit(employeeId);
     };
 
-    // Watch for benefit creation and start editing when it's done
     useEffect(() => {
         if (creatingBenefit) {
             const { employeeId, field, rowIndex, colIndex } = creatingBenefit;
@@ -377,7 +369,6 @@ const BenefitsTable = ({
         setEditingCell(null);
     };
 
-    // Handle bulk paste from Excel
     const handleBulkPaste = (data, startRow, startCol) => {
         const columnToFieldMap = fieldColumns.reduce((map, column, index) => {
             map[index] = column.id;
@@ -413,7 +404,6 @@ const BenefitsTable = ({
         setEditingCell(null);
     };
 
-    // Handle keyboard navigation
     const handleKeyNavigation = (e, rowIndex, colIndex, field) => {
         const currentEmployee = employees[rowIndex];
         const currentBenefit = getEmployeeBenefit(currentEmployee);
@@ -486,27 +476,22 @@ const BenefitsTable = ({
         }
     };
 
-    // Get benefit record for an employee or null if none exists
     const getEmployeeBenefit = (employee) => {
         return employee.benefits && employee.benefits.length > 0 ? employee.benefits[0] : null;
     };
     
-    // Check if a benefit is posted (locked)
     const isBenefitPosted = (benefit) => {
         return benefit && benefit.is_posted;
     };
     
-    // Check if a benefit is marked as default
     const isBenefitDefault = (benefit) => {
         return benefit && benefit.is_default;
     };
 
-    // Format employee name
     const formatEmployeeName = (employee) => {
         return `${employee.Lname}, ${employee.Fname} ${employee.MName || ''}`.trim();
     };
 
-    // Handle item selection
     const toggleItemSelection = (benefitId, event) => {
         if (event) {
             event.stopPropagation();
@@ -519,7 +504,6 @@ const BenefitsTable = ({
         }
     };
 
-    // Handle select all
     const toggleSelectAll = (event) => {
         if (event) {
             event.stopPropagation();
@@ -538,7 +522,6 @@ const BenefitsTable = ({
         setSelectAll(!selectAll);
     };
 
-    // Export selected benefits to Excel
     const handleExportSelected = () => {
         if (selectedItems.length === 0) return;
         
@@ -550,7 +533,6 @@ const BenefitsTable = ({
         if (onExportToExcel) {
             onExportToExcel(selectedEmployees);
         } else {
-            // Default export implementation
             const wb = XLSX.utils.book_new();
             
             const exportData = selectedEmployees.map(employee => {
@@ -572,9 +554,9 @@ const BenefitsTable = ({
             const ws = XLSX.utils.json_to_sheet(exportData);
             
             const columnWidths = [
-                { wch: 15 }, // Employee ID
-                { wch: 30 }, // Employee Name
-                { wch: 20 }, // Department
+                { wch: 15 },
+                { wch: 30 },
+                { wch: 20 },
             ];
             
             fieldColumns.forEach(() => {
@@ -591,7 +573,6 @@ const BenefitsTable = ({
         }
     };
 
-    // Bulk post benefits
     const handleBulkPost = () => {
         if (selectedItems.length === 0) return;
         
@@ -608,7 +589,6 @@ const BenefitsTable = ({
         });
     };
 
-    // Bulk set as default
     const handleBulkSetDefault = () => {
         if (selectedItems.length === 0) return;
         
@@ -625,7 +605,6 @@ const BenefitsTable = ({
         });
     };
 
-    // Render empty row message
     if (employees.length === 0 && !loading) {
         return (
             <div className="p-8 text-center text-gray-500">
@@ -637,8 +616,7 @@ const BenefitsTable = ({
     }
 
     return (
-        <div className="overflow-x-auto">
-            {/* Bulk Action Bar */}
+        <div className="overflow-hidden">
             <BulkActionBar 
                 selectedItems={selectedItems}
                 onClearSelection={() => {
@@ -653,13 +631,14 @@ const BenefitsTable = ({
             
             <div 
                 ref={tableRef} 
-                className="relative w-full" 
+                className="relative w-full border border-gray-200 rounded-lg" 
                 style={{ height: 'calc(100vh - 350px)', overflow: 'auto' }}
             >
-                <table className="min-w-full divide-y divide-gray-200 table-fixed">
+                {/* Fixed table layout with consistent column widths */}
+                <table className="min-w-full divide-y divide-gray-200" style={{ tableLayout: 'fixed' }}>
                     <thead className="bg-gray-50 sticky top-0 z-10">
                         <tr>
-                            <th scope="col" className="px-2 py-3 text-center" style={{ width: '40px' }}>
+                            <th scope="col" className="px-4 py-3 text-center" style={{ width: columnWidths.checkbox }}>
                                 <div 
                                     className="flex items-center justify-center cursor-pointer" 
                                     onClick={(e) => toggleSelectAll(e)}
@@ -672,10 +651,10 @@ const BenefitsTable = ({
                                     />
                                 </div>
                             </th>
-                            <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ width: '100px' }}>
+                            <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ width: columnWidths.actions }}>
                                 Actions
                             </th>
-                            <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ width: '200px' }}>
+                            <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ width: columnWidths.employee }}>
                                 Employee
                             </th>
                             {fieldColumns.map((column) => (
@@ -683,12 +662,12 @@ const BenefitsTable = ({
                                     key={column.id} 
                                     scope="col" 
                                     className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider"
-                                    style={{ width: column.width }}
+                                    style={{ width: columnWidths.benefit }}
                                 >
                                     {column.label}
                                 </th>
                             ))}
-                            <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ width: '100px' }}>
+                            <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ width: columnWidths.status }}>
                                 Status
                             </th>
                         </tr>
@@ -717,7 +696,7 @@ const BenefitsTable = ({
                                         transform: `translateY(${virtualRow.start}px)`,
                                     }}
                                 >
-                                    <td className="px-2 py-3 whitespace-nowrap text-center" style={{ width: '40px' }}>
+                                    <td className="px-4 py-3 whitespace-nowrap text-center" style={{ width: columnWidths.checkbox }}>
                                         {benefit && !isPosted ? (
                                             <div 
                                                 className="flex items-center justify-center cursor-pointer" 
@@ -734,15 +713,15 @@ const BenefitsTable = ({
                                         )}
                                     </td>
                                     
-                                    <td className="px-4 py-3 whitespace-nowrap" style={{ width: '100px' }}>
-                                        <div className="flex space-x-2">
+                                    <td className="px-4 py-3 whitespace-nowrap" style={{ width: columnWidths.actions }}>
+                                        <div className="flex space-x-1">
                                             {benefit ? (
                                                 <>
                                                     {!isPosted && (
                                                         <Button
                                                             variant="outline"
                                                             size="sm"
-                                                            className="p-2"
+                                                            className="p-1 h-8 w-8"
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
                                                                 setConfirmation({
@@ -764,7 +743,7 @@ const BenefitsTable = ({
                                                     <Button
                                                         variant="outline"
                                                         size="sm"
-                                                        className={`p-2 ${isDefault ? 'bg-yellow-50' : ''}`}
+                                                        className={`p-1 h-8 w-8 ${isDefault ? 'bg-yellow-50' : ''}`}
                                                         onClick={(e) => {
                                                             e.stopPropagation();
                                                             setConfirmation({
@@ -786,7 +765,7 @@ const BenefitsTable = ({
                                                 <Button
                                                     variant="outline"
                                                     size="sm"
-                                                    className="p-2"
+                                                    className="p-1 h-8 w-8"
                                                     onClick={(e) => {
                                                         e.stopPropagation();
                                                         onCreateBenefit(employee.id);
@@ -799,23 +778,22 @@ const BenefitsTable = ({
                                         </div>
                                     </td>
                                     
-                                    <td className="px-4 py-3 whitespace-nowrap" style={{ width: '200px' }}>
+                                    <td className="px-4 py-3 whitespace-nowrap" style={{ width: columnWidths.employee }}>
                                         <div className="flex flex-col">
-                                            <div className="text-sm font-medium text-gray-900">
+                                            <div className="text-sm font-medium text-gray-900 truncate">
                                                 {formatEmployeeName(employee)}
                                             </div>
-                                            <div className="text-sm text-gray-500">
+                                            <div className="text-sm text-gray-500 truncate">
                                                 {employee.Department || 'N/A'}
                                             </div>
                                         </div>
                                     </td>
                                     
-                                    {/* Benefit cells */}
                                     {fieldColumns.map((column, colIndex) => (
                                         <td 
                                             key={column.id} 
-                                            className="px-4 py-3 whitespace-nowrap relative"
-                                            style={{ width: column.width }}
+                                            className="px-0 py-0 whitespace-nowrap relative"
+                                            style={{ width: columnWidths.benefit }}
                                         >
                                             <EditableCell 
                                                 value={benefit ? benefit[column.id] || 0 : 0}
@@ -837,7 +815,7 @@ const BenefitsTable = ({
                                         </td>
                                     ))}
                                     
-                                    <td className="px-4 py-3 whitespace-nowrap text-center" style={{ width: '100px' }}>
+                                    <td className="px-4 py-3 whitespace-nowrap text-center" style={{ width: columnWidths.status }}>
                                         {benefit ? (
                                             isPosted ? (
                                                 <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
