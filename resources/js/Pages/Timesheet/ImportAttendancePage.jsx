@@ -93,44 +93,61 @@ const ImportAttendance = () => {
         setShowSuccessActions(false);
     };
 
-    const formatDate = (dateString) => {
-          try {
-              return format(new Date(dateString), 'yyyy-MM-dd');
-          } catch (error) {
-              console.error('Error formatting date:', error);
-              return 'Invalid date';
-          }
-      };
-      
-      const formatTime = (timeString) => {
-          if (!timeString) return '-';
-          
-          try {
-              let timeOnly;
-              // Handle ISO 8601 format
-              if (timeString.includes('T')) {
-                  const [, time] = timeString.split('T');
-                  timeOnly = time.slice(0, 5); // Extract HH:MM
-              } else {
-                  // If the time includes a date (like "2024-04-10 14:30:00"), split and take the time part
-                  const timeParts = timeString.split(' ');
-                  timeOnly = timeParts[timeParts.length - 1].slice(0, 5);
-              }
-              
-              // Parse hours and minutes
-              const [hours, minutes] = timeOnly.split(':');
-              const hourNum = parseInt(hours, 10);
-              
-              // Convert to 12-hour format with AM/PM
-              const ampm = hourNum >= 12 ? 'PM' : 'AM';
-              const formattedHours = hourNum % 12 || 12; // handle midnight and noon
-              
-              return `${formattedHours}:${minutes} ${ampm}`;
-          } catch (error) {
-              console.error('Time formatting error:', error);
-              return '-';
-          }
-      };
+    // Format Excel date values to YYYY-MM-DD
+    const formatDate = (date) => {
+        if (!date) return '';
+        try {
+            // Handle Excel serial date numbers
+            if (typeof date === 'number') {
+                const excelEpoch = new Date(1899, 11, 30); // Excel epoch starts from Dec 30, 1899
+                const millisecondsPerDay = 24 * 60 * 60 * 1000;
+                const dateObj = new Date(excelEpoch.getTime() + date * millisecondsPerDay);
+                
+                const year = dateObj.getFullYear();
+                const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+                const day = String(dateObj.getDate()).padStart(2, '0');
+                return `${year}-${month}-${day}`;
+            }
+            
+            // Handle string dates
+            const d = new Date(date);
+            if (isNaN(d.getTime())) return date;
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        } catch {
+            return date;
+        }
+    };
+
+    // Format time values to HH:MM AM/PM
+    const formatTime = (time) => {
+        if (!time) return '';
+        try {
+            // Handle Excel time (decimal)
+            if (typeof time === 'number') {
+                const totalSeconds = Math.round(time * 86400);
+                const hours = Math.floor(totalSeconds / 3600);
+                const minutes = Math.floor((totalSeconds % 3600) / 60);
+                const period = hours >= 12 ? 'PM' : 'AM';
+                const formattedHours = hours % 12 || 12;
+                return `${String(formattedHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')} ${period}`;
+            }
+
+            // Convert string time to proper format
+            const d = new Date(`2000-01-01 ${time}`);
+            if (isNaN(d.getTime())) return time;
+            
+            const hours = d.getHours();
+            const minutes = d.getMinutes();
+            const period = hours >= 12 ? 'PM' : 'AM';
+            const formattedHours = hours % 12 || 12;
+            return `${String(formattedHours).padStart(2, '0')}:${String(minutes).padStart(2, '0')} ${period}`;
+        } catch {
+            return time;
+        }
+    };
 
     // Format numeric values (like hours worked) to 2 decimal places
     const formatNumeric = (value) => {

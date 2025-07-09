@@ -580,7 +580,6 @@ Route::middleware(['auth', 'verified', 'role:finance,superadmin'])->group(functi
     Route::get('/api/employee-defaults', [BenefitController::class, 'getEmployeeDefaults']);
     Route::get('/employee-defaults', [BenefitController::class, 'showEmployeeDefaultsPage'])->name('employee-defaults.index');
 
-    // Deductions Routes (Updated - removed manage defaults page)
     Route::get('/deductions', [DeductionController::class, 'index'])->name('deductions.index');
     Route::post('/deductions', [DeductionController::class, 'store'])->name('deductions.store');
     Route::patch('/deductions/{id}', [DeductionController::class, 'update'])->name('deductions.update');
@@ -588,12 +587,16 @@ Route::middleware(['auth', 'verified', 'role:finance,superadmin'])->group(functi
     Route::post('/deductions/{id}/post', [DeductionController::class, 'postDeduction'])->name('deductions.post');
     Route::post('/deductions/{id}/set-default', [DeductionController::class, 'setDefault'])->name('deductions.set-default');
     Route::post('/deductions/post-all', [DeductionController::class, 'postAll'])->name('deductions.post-all');
+    
+    // NEW: Delete all not posted deductions route
+    Route::post('/deductions/delete-all-not-posted', [DeductionController::class, 'deleteAllNotPosted'])->name('deductions.delete-all-not-posted');
+    
     Route::post('/deductions/bulk-post', [DeductionController::class, 'bulkPost'])->name('deductions.bulk-post');
     Route::post('/deductions/bulk-set-default', [DeductionController::class, 'bulkSetDefault'])->name('deductions.bulk-set-default');
     Route::post('/deductions/create-from-default', [DeductionController::class, 'createFromDefault'])->name('deductions.create-from-default');
     Route::post('/deductions/bulk-create', [DeductionController::class, 'bulkCreateFromDefault'])->name('deductions.bulk-create');
     
-    // NEW: Deductions Import/Export Routes
+    // Deductions Import/Export Routes
     Route::get('/deductions/template/download', [DeductionController::class, 'downloadTemplate'])->name('deductions.template.download');
     Route::post('/deductions/import', [DeductionController::class, 'import'])->name('deductions.import');
     Route::get('/deductions/export', [DeductionController::class, 'export'])->name('deductions.export');

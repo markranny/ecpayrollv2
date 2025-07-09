@@ -15,7 +15,8 @@ import {
     Upload,
     Plus,
     Save,
-    AlertCircle
+    AlertCircle,
+    Trash2
 } from 'lucide-react';
 import ConfirmModal from '@/Components/ConfirmModal';
 import axios from 'axios';
@@ -287,6 +288,42 @@ const DeductionsPage = ({ employees: initialEmployees, cutoff: initialCutoff, mo
         });
     };
 
+    // Delete all not posted deductions
+    const deleteAllNotPostedDeductions = () => {
+        setConfirmModal({
+            isOpen: true,
+            title: 'Delete All Not Posted Deductions',
+            message: `Are you sure you want to delete ALL not posted deductions for the ${filters.cutoff} cutoff of ${filters.month}/${filters.year}? This action cannot be undone.`,
+            confirmText: 'Delete All Not Posted',
+            confirmVariant: 'destructive',
+            onConfirm: async () => {
+                try {
+                    setLoading(true);
+                    
+                    const response = await axios.post('/deductions/delete-all-not-posted', {
+                        cutoff: filters.cutoff,
+                        start_date: dateRange.start,
+                        end_date: dateRange.end
+                    });
+                    
+                    // Reload data after deletion
+                    applyFilters();
+                    
+                    setConfirmModal({ ...confirmModal, isOpen: false });
+                    setAlertMessage(`${response.data.deleted_count} not posted deductions deleted successfully`);
+                    setTimeout(() => setAlertMessage(null), 3000);
+                } catch (error) {
+                    console.error('Error deleting not posted deductions:', error);
+                    setConfirmModal({ ...confirmModal, isOpen: false });
+                    setAlertMessage(error.response?.data?.message || 'Error deleting deductions');
+                    setTimeout(() => setAlertMessage(null), 3000);
+                } finally {
+                    setLoading(false);
+                }
+            }
+        });
+    };
+
     // Create deductions for all active employees
     const createBulkDeductions = () => {
         setConfirmModal({
@@ -456,35 +493,43 @@ const DeductionsPage = ({ employees: initialEmployees, cutoff: initialCutoff, mo
                                     Manage employee deductions including advances, charges, meals, and miscellaneous deductions.
                                 </p>
                             </div>
-                            <div className="flex items-center space-x-4">
+                            <div className="flex items-center space-x-2">
                                 <Button
                                     onClick={() => setShowImportModal(true)}
-                                    className="px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors duration-200 flex items-center"
+                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 flex items-center"
                                 >
-                                    <Upload className="w-5 h-5 mr-2" />
+                                    <Upload className="w-4 h-4 mr-2" />
                                     Import
                                 </Button>
                                 <Button
                                     onClick={exportToExcel}
-                                    className="px-5 py-2.5 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-colors duration-200 flex items-center"
+                                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors duration-200 flex items-center"
                                 >
-                                    <Download className="w-5 h-5 mr-2" />
+                                    <Download className="w-4 h-4 mr-2" />
                                     Export
                                 </Button>
                                 <Button
                                     onClick={createBulkDeductions}
-                                    className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-colors duration-200 flex items-center"
+                                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors duration-200 flex items-center"
                                 >
-                                    <Plus className="w-5 h-5 mr-2" />
-                                    Create All Deductions
+                                    <Plus className="w-4 h-4 mr-2" />
+                                    Create All
+                                </Button>
+                                <Button
+                                    onClick={deleteAllNotPostedDeductions}
+                                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors duration-200 flex items-center"
+                                    disabled={status?.pendingCount === 0}
+                                >
+                                    <Trash2 className="w-4 h-4 mr-2" />
+                                    Delete All Not Posted
                                 </Button>
                                 <Button
                                     onClick={postAllDeductions}
-                                    className="px-5 py-2.5 bg-orange-600 text-white rounded-xl hover:bg-orange-700 transition-colors duration-200 flex items-center"
+                                    className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors duration-200 flex items-center"
                                     disabled={status?.pendingCount === 0}
                                 >
-                                    <Save className="w-5 h-5 mr-2" />
-                                    Post All Deductions
+                                    <Save className="w-4 h-4 mr-2" />
+                                    Post All
                                 </Button>
                             </div>
                         </div>

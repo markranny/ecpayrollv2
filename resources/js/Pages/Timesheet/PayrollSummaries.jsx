@@ -68,45 +68,34 @@ const PayrollSummaryDetailModal = ({ isOpen, summary, onClose }) => {
 
   // Format time for display
   const formatTime = (timeString) => {
-  if (!timeString) return '-';
-  
-  try {
-    // Handle H:i:s format (like "16:13:00" or "08:13:00")
-    if (timeString.match(/^\d{1,2}:\d{2}:\d{2}$/)) {
-      const [hours, minutes] = timeString.split(':').map(Number);
-      
-      // Convert to 12-hour format
-      let hour12 = hours;
-      const ampm = hours >= 12 ? 'PM' : 'AM';
-      
-      if (hours === 0) {
-        hour12 = 12; // 12 AM
-      } else if (hours > 12) {
-        hour12 = hours - 12; // PM hours
-      }
-      
-      return `${hour12}:${minutes.toString().padStart(2, '0')} ${ampm}`;
-    }
-    
-    // Handle full datetime strings as fallback
-    if (timeString.includes('T') || timeString.includes(' ')) {
-      const date = new Date(timeString);
-      if (!isNaN(date.getTime())) {
-        return date.toLocaleTimeString('en-US', {
-          hour: 'numeric',
-          minute: '2-digit',
-          hour12: true
-        });
-      }
-    }
-    
-    return '-';
-    
-  } catch (error) {
-    console.error('Time formatting error:', error, 'Input:', timeString);
-    return '-';
-  }
-};
+        if (!timeString) return '-';
+        
+        try {
+            let timeOnly;
+            // Handle ISO 8601 format
+            if (timeString.includes('T')) {
+                const [, time] = timeString.split('T');
+                timeOnly = time.slice(0, 5); // Extract HH:MM
+            } else {
+                // If the time includes a date (like "2024-04-10 14:30:00"), split and take the time part
+                const timeParts = timeString.split(' ');
+                timeOnly = timeParts[timeParts.length - 1].slice(0, 5);
+            }
+            
+            // Parse hours and minutes
+            const [hours, minutes] = timeOnly.split(':');
+            const hourNum = parseInt(hours, 10);
+            
+            // Convert to 12-hour format with AM/PM
+            const ampm = hourNum >= 12 ? 'PM' : 'AM';
+            const formattedHours = hourNum % 12 || 12; // handle midnight and noon
+            
+            return `${formattedHours}:${minutes} ${ampm}`;
+        } catch (error) {
+            console.error('Time formatting error:', error);
+            return '-';
+        }
+    };
 
 // Alternative time formatting function for backend time strings
 const formatTimeFromBackend = (timeString) => {

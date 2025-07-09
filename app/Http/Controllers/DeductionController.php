@@ -552,7 +552,7 @@ class DeductionController extends Controller
     }
 
     /**
-     * Download Excel template for deductions import
+     * Download Excel template for deductions import with actual employee data
      */
     public function downloadTemplate()
     {
@@ -577,6 +577,36 @@ class DeductionController extends Controller
         foreach ($headers as $cell => $header) {
             $sheet->setCellValue($cell, $header);
             $sheet->getStyle($cell)->getFont()->setBold(true);
+            $sheet->getStyle($cell)->getFill()
+                ->setFillType(\PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID)
+                ->getStartColor()->setARGB('FFE2E8F0');
+        }
+        
+        // Get all active employees
+        $employees = Employee::where('JobStatus', 'Active')
+            ->select('idno', 'Lname', 'Fname', 'MName', 'Department')
+            ->orderBy('Lname')
+            ->orderBy('Fname')
+            ->get();
+        
+        // Add employee data starting from row 2
+        $row = 2;
+        foreach ($employees as $employee) {
+            $employeeName = trim($employee->Lname . ', ' . $employee->Fname . ' ' . ($employee->MName ?? ''));
+            
+            $sheet->setCellValue('A' . $row, $employee->idno);
+            $sheet->setCellValue('B' . $row, $employeeName);
+            $sheet->setCellValue('C' . $row, $employee->Department ?? '');
+            $sheet->setCellValue('D' . $row, '0.00'); // Default values
+            $sheet->setCellValue('E' . $row, '0.00');
+            $sheet->setCellValue('F' . $row, '0.00');
+            $sheet->setCellValue('G' . $row, '0.00');
+            $sheet->setCellValue('H' . $row, '0.00');
+            $sheet->setCellValue('I' . $row, '0.00');
+            $sheet->setCellValue('J' . $row, '1st'); // Default cutoff
+            $sheet->setCellValue('K' . $row, date('Y-m-d')); // Current date
+            
+            $row++;
         }
         
         // Auto-size columns
@@ -584,18 +614,24 @@ class DeductionController extends Controller
             $sheet->getColumnDimension($column)->setAutoSize(true);
         }
         
-        // Add sample data
-        $sheet->setCellValue('A2', 'EMP001');
-        $sheet->setCellValue('B2', 'Sample Employee');
-        $sheet->setCellValue('C2', 'IT Department');
-        $sheet->setCellValue('D2', '0.00');
-        $sheet->setCellValue('E2', '0.00');
-        $sheet->setCellValue('F2', '0.00');
-        $sheet->setCellValue('G2', '0.00');
-        $sheet->setCellValue('H2', '0.00');
-        $sheet->setCellValue('I2', '0.00');
-        $sheet->setCellValue('J2', '1st');
-        $sheet->setCellValue('K2', date('Y-m-d'));
+        // Set minimum column widths
+        $sheet->getColumnDimension('A')->setWidth(15);
+        $sheet->getColumnDimension('B')->setWidth(30);
+        $sheet->getColumnDimension('C')->setWidth(20);
+        
+        // Add data validation for cutoff column
+        $cutoffValidation = $sheet->getDataValidation('J2:J' . ($row - 1));
+        $cutoffValidation->setType(\PhpOffice\PhpSpreadsheet\Cell\DataValidation::TYPE_LIST);
+        $cutoffValidation->setErrorStyle(\PhpOffice\PhpSpreadsheet\Cell\DataValidation::STYLE_INFORMATION);
+        $cutoffValidation->setAllowBlank(false);
+        $cutoffValidation->setShowInputMessage(true);
+        $cutoffValidation->setShowErrorMessage(true);
+        $cutoffValidation->setShowDropDown(true);
+        $cutoffValidation->setErrorTitle('Input error');
+        $cutoffValidation->setError('Please select either "1st" or "2nd"');
+        $cutoffValidation->setPromptTitle('Cutoff Period');
+        $cutoffValidation->setPrompt('Select cutoff period');
+        $cutoffValidation->setFormula1('"1st,2nd"');
         
         $writer = new Xlsx($spreadsheet);
         
@@ -816,4 +852,33 @@ class DeductionController extends Controller
         $writer->save('php://output');
         exit;
     }
+
+    /**
+     * Delete all not posted deductions for a specific cutoff period.
+     */
+    public function deleteAllNotPosted(Request $request)
+    {
+        $cutoff = $request->input('cutoff', '1st');
+        $startDate = $request->input('start_date');
+        $endDate = $request->input('end_date');
+        
+        if (!$startDate || !$endDate) {
+            throw ValidationException::withMessages([
+                'date' => ['Start date and end date are required.'],
+            ]);
+        }
+        
+        // Delete all unposted deductions for the specified period
+        $deletedCount = Deduction::whereBetween('date', [$startDate, $endDate])
+            ->where('cutoff', $cutoff)
+            ->where('is_posted', false)
+            ->delete();
+        
+        return response()->json([
+            'message' => "{$deletedCount} not posted deductions have been successfully deleted.",
+            'deleted_count' => $deletedCount
+        ]);
+    }
+
+
 }
