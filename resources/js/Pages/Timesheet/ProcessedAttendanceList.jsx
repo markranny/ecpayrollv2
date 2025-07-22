@@ -378,7 +378,7 @@ const ProcessedAttendanceList = () => {
       if (nightShiftFilter) params.append('night_shift_only', 'true');
       if (postingStatusFilter) params.append('posting_status', postingStatusFilter);
       
-      const response = await fetch('/attendance/download-template?' + params.toString(), {
+      const response = await fetch('/processattendance/download-template?' + params.toString(), {
         method: 'GET',
         headers: {
           'X-Requested-With': 'XMLHttpRequest',
@@ -528,7 +528,7 @@ const ProcessedAttendanceList = () => {
 
       const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
 
-      const response = await fetch('/attendance/import', {
+      const response = await fetch('/processattendance/import', {
         method: 'POST',
         headers: {
           'X-CSRF-TOKEN': csrfToken,
@@ -1771,42 +1771,45 @@ const ProcessedAttendanceList = () => {
                     <div className="overflow-x-auto flex-1">
                       <table className="min-w-full divide-y divide-gray-200 h-full">
                         <thead className="bg-gray-50 sticky top-0 z-10">
-                          <tr>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                              <input
-                                type="checkbox"
-                                className="form-checkbox h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
-                                checked={selectAll}
-                                onChange={(e) => handleSelectAll(e.target.checked)}
-                              />
-                            </th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dept</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time In</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break Out</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break In</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time Out</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Late/Under</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Night Shift</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hours</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Travel</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SLVL</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CT</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CS</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Holiday</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                              <div className="flex items-center space-x-1">
-                                <Car className="h-4 w-4" />
-                                <span>Trip</span>
-                              </div>
-                            </th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
-                            <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                            <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                          </tr>
-                        </thead>
+                        <tr>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            <input
+                              type="checkbox"
+                              className="form-checkbox h-4 w-4 text-blue-600 rounded focus:ring-blue-500"
+                              checked={selectAll}
+                              onChange={(e) => handleSelectAll(e.target.checked)}
+                            />
+                          </th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Dept</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time In</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break Out</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break In</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time Out</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Late/Under</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Night Shift</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hours</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Travel</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SLVL</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CT</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CS</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Holiday</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            <div className="flex items-center space-x-1">
+                              <Car className="h-4 w-4" />
+                              <span>Trip</span>
+                            </div>
+                          </th>
+                          {/* ADD THESE NEW COLUMNS */}
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT Reg</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT Spl</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                          <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                      </thead>
                         <tbody className="bg-white divide-y divide-gray-200 overflow-y-auto">
                           {attendances.map((attendance) => (
                             <tr 
@@ -1897,6 +1900,12 @@ const ProcessedAttendanceList = () => {
                                   <Car className="h-3 w-3 text-blue-500" />
                                   <span>{formatNumeric(attendance.trip, 1)}</span>
                                 </div>
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {formatNumeric(attendance.ot_reg_holiday)}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {formatNumeric(attendance.ot_special_holiday)}
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap">
                                 {renderStatusBadge(attendance.source, 'source')}

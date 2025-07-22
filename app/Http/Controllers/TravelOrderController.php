@@ -190,14 +190,15 @@ class TravelOrderController extends Controller
             $validated = $request->validate([
                 'employee_ids' => 'required|array|min:1',
                 'employee_ids.*' => 'required|integer|exists:employees,id',
-                'start_date' => 'required|date|after_or_equal:today',
-                'end_date' => 'required|date|after_or_equal:start_date',
+                /* 'start_date' => 'required|date|after_or_equal:today',
+                'end_date' => 'required|date|after_or_equal:start_date', */
+                'start_date' => 'required|date',
+                'end_date' => 'required|date',
                 'departure_time' => 'nullable|string',
                 'return_time' => 'nullable|string',
                 'destination' => 'required|string|max:255',
                 'transportation_type' => 'required|string|max:100',
                 'purpose' => 'required|string|max:1000',
-                // Fixed boolean validation - accept string values and convert them
                 'accommodation_required' => 'sometimes|in:0,1,true,false',
                 'meal_allowance' => 'sometimes|in:0,1,true,false',
                 'return_to_office' => 'sometimes|in:0,1,true,false',

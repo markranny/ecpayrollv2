@@ -279,13 +279,17 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
     Route::post('/attendance/recalculate-all', [ProcessedAttendanceController::class, 'recalculateAll'])
         ->name('attendance.recalculate-all');
     
-    // Download template/data route
-    Route::get('/attendance/download-template', [ProcessedAttendanceController::class, 'downloadTemplate'])
-        ->name('attendance.download-template');
-    
-    // Import attendance data route
-    Route::post('/attendance/import', [ProcessedAttendanceController::class, 'importAttendance'])
+    Route::get('/processattendance/download-template', [ProcessedAttendanceController::class, 'downloadTemplate'])
+        ->name('processattendance.download-template');
+    Route::post('/processattendance/import', [ProcessedAttendanceController::class, 'importAttendance'])
         ->name('attendance.import');
+
+    Route::get('/attendance/import', [AttendanceController::class, 'showImportPage'])
+        ->name('attendance.import');
+    Route::post('/attendance/import', [AttendanceController::class, 'import'])
+        ->name('attendance.import.process');
+    Route::get('/attendance/template/download', [AttendanceController::class, 'downloadTemplate'])
+        ->name('attendance.template.download');
     
     // Set holiday route - FIXED: Ensure this route is properly defined
     Route::post('/attendance/set-holiday', [ProcessedAttendanceController::class, 'setHoliday'])

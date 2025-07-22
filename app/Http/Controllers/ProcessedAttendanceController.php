@@ -1248,7 +1248,7 @@ public function update(Request $request, $id)
                 
                 // Get date range for sync - default to current month if not provided
                 $startDate = '2025-01-01';
-                $endDate = '2025-01-31';
+                $endDate = '2025-08-31';
                 
                 Log::info("Syncing attendance data from {$startDate} to {$endDate}");
                 

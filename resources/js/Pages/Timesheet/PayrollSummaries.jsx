@@ -68,109 +68,58 @@ const PayrollSummaryDetailModal = ({ isOpen, summary, onClose }) => {
 
   // Format time for display
   const formatTime = (timeString) => {
-        if (!timeString) return '-';
+    if (!timeString) return '-';
+    
+    try {
+      // Handle the backend time format (H:i:s)
+      if (timeString.match(/^\d{1,2}:\d{2}:\d{2}$/)) {
+        const [hours, minutes] = timeString.split(':').map(Number);
+        const date = new Date();
+        date.setHours(hours, minutes, 0, 0);
         
-        try {
-            let timeOnly;
-            // Handle ISO 8601 format
-            if (timeString.includes('T')) {
-                const [, time] = timeString.split('T');
-                timeOnly = time.slice(0, 5); // Extract HH:MM
-            } else {
-                // If the time includes a date (like "2024-04-10 14:30:00"), split and take the time part
-                const timeParts = timeString.split(' ');
-                timeOnly = timeParts[timeParts.length - 1].slice(0, 5);
-            }
-            
-            // Parse hours and minutes
-            const [hours, minutes] = timeOnly.split(':');
-            const hourNum = parseInt(hours, 10);
-            
-            // Convert to 12-hour format with AM/PM
-            const ampm = hourNum >= 12 ? 'PM' : 'AM';
-            const formattedHours = hourNum % 12 || 12; // handle midnight and noon
-            
-            return `${formattedHours}:${minutes} ${ampm}`;
-        } catch (error) {
-            console.error('Time formatting error:', error);
-            return '-';
-        }
-    };
-
-// Alternative time formatting function for backend time strings
-const formatTimeFromBackend = (timeString) => {
-  if (!timeString) return '-';
-  
-  try {
-    // Handle Laravel timestamp formats
-    let timeOnly;
-    
-    if (timeString.includes('T')) {
-      // ISO format
-      const date = new Date(timeString);
-      if (isNaN(date.getTime())) return '-';
+        return date.toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        });
+      }
       
-      return date.toLocaleTimeString('en-US', {
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true,
-        timeZone: 'Asia/Manila'
-      });
-    } else if (timeString.includes(' ')) {
-      // Format: "2025-01-16 08:13:00"
-      const [datePart, timePart] = timeString.split(' ');
-      timeOnly = timePart;
-    } else {
-      // Time only: "08:13:00"
-      timeOnly = timeString;
-    }
-    
-    // Parse time only
-    const [hours, minutes] = timeOnly.split(':').map(Number);
-    
-    if (isNaN(hours) || isNaN(minutes)) {
+      // Handle ISO 8601 format
+      if (timeString.includes('T')) {
+        const date = new Date(timeString);
+        if (isNaN(date.getTime())) return '-';
+        
+        return date.toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true,
+          timeZone: 'Asia/Manila'
+        });
+      }
+      
+      // Handle "YYYY-MM-DD HH:MM:SS" format
+      if (timeString.includes(' ')) {
+        const [datePart, timePart] = timeString.split(' ');
+        const [hours, minutes] = timePart.split(':').map(Number);
+        
+        if (isNaN(hours) || isNaN(minutes)) return '-';
+        
+        const date = new Date();
+        date.setHours(hours, minutes, 0, 0);
+        
+        return date.toLocaleTimeString('en-US', {
+          hour: 'numeric',
+          minute: '2-digit',
+          hour12: true
+        });
+      }
+      
+      return '-';
+    } catch (error) {
+      console.error('Time formatting error:', error);
       return '-';
     }
-    
-    // Create a date object for today with the specified time
-    const date = new Date();
-    date.setHours(hours, minutes, 0, 0);
-    
-    return date.toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true
-    });
-    
-  } catch (error) {
-    console.error('Time formatting error:', error);
-    return '-';
-  }
-};
-
-const formatTimeForTable = (timeString) => {
-  if (!timeString) return '-';
-  
-  try {
-    // Handle the backend time format (H:i:s)
-    if (timeString.match(/^\d{2}:\d{2}:\d{2}$/)) {
-      const [hours, minutes] = timeString.split(':').map(Number);
-      const date = new Date();
-      date.setHours(hours, minutes, 0, 0);
-      
-      return date.toLocaleTimeString('en-US', {
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true
-      });
-    }
-    
-    // Fallback to standard formatting
-    return formatTime(timeString);
-  } catch (err) {
-    return 'Invalid Time';
-  }
-};
+  };
 
   // Format numeric values
   const formatNumeric = (value, decimals = 2) => {
@@ -179,10 +128,12 @@ const formatTimeForTable = (timeString) => {
     return isNaN(num) ? '0.00' : num.toFixed(decimals);
   };
 
-  // Format minutes to hours for display
+  // FIXED: Format minutes to hours for display (corrected calculation)
   const formatMinutesToHours = (minutes) => {
     if (!minutes || minutes === 0) return '0.00';
-    const hours = parseFloat(minutes) / 60;
+    const num = parseFloat(minutes);
+    if (isNaN(num)) return '0.00';
+    const hours = num / 60;
     return hours.toFixed(2);
   };
 
@@ -381,28 +332,28 @@ const formatTimeForTable = (timeString) => {
                         
                         {/* Time In */}
                         <td className="px-3 py-3 text-sm text-gray-900 font-medium">
-                        {formatTime(attendance.time_in)}
+                          {formatTime(attendance.time_in)}
                         </td>
 
                         {/* Break Out */}
                         <td className="px-3 py-3 text-sm text-gray-600">
-                        {formatTime(attendance.break_out)}
+                          {formatTime(attendance.break_out)}
                         </td>
 
                         {/* Break In */}
                         <td className="px-3 py-3 text-sm text-gray-600">
-                        {formatTime(attendance.break_in)}
+                          {formatTime(attendance.break_in)}
                         </td>
 
                         {/* Time Out */}
                         <td className="px-3 py-3 text-sm text-gray-900 font-medium">
-                        {attendance.is_nightshift && attendance.next_day_timeout 
+                          {attendance.is_nightshift && attendance.next_day_timeout 
                             ? formatTime(attendance.next_day_timeout)
                             : formatTime(attendance.time_out)
-                        }
+                          }
                         </td>
                         
-                        {/* Late/Under */}
+                        {/* FIXED: Late/Under - now properly calculated and displayed */}
                         <td className="px-3 py-3">
                           {(attendance.late_minutes > 0 || attendance.undertime_minutes > 0) ? (
                             <div className="space-y-1">
@@ -481,6 +432,16 @@ const formatTimeForTable = (timeString) => {
                             <Car className="h-3 w-3 mr-1" />
                             {formatNumeric(attendance.trip, 1)}
                           </div>
+                        </td>
+                        
+                        {/* OT REG - ADDED */}
+                        <td className="px-3 py-3 text-sm text-gray-600">
+                          {formatNumeric(attendance.ot_reg_holiday)}
+                        </td>
+                        
+                        {/* OT SPL - ADDED */}
+                        <td className="px-3 py-3 text-sm text-gray-600">
+                          {formatNumeric(attendance.ot_special_holiday)}
                         </td>
                         
                       </tr>
@@ -793,10 +754,12 @@ const PayrollSummaries = ({ auth }) => {
 
   // Format minutes to hours for display
   const formatMinutesToHours = (minutes) => {
-    if (!minutes || minutes === 0) return '0.00';
-    const hours = parseFloat(minutes) / 60;
-    return hours.toFixed(2);
-  };
+  if (!minutes || minutes === 0) return '0.00';
+  const num = parseFloat(minutes);
+  if (isNaN(num)) return '0.00';
+  const hours = num / 60;  // Simple division by 60
+  return hours.toFixed(2);
+};
 
   // Clear messages after delay
   useEffect(() => {
@@ -832,11 +795,11 @@ const PayrollSummaries = ({ auth }) => {
             <div className="flex items-center justify-between mb-6">
               <div>
                 <h1 className="text-2xl font-bold text-gray-900 mb-1">
-                  Payroll Summaries
+                  Daily Time Records
                 </h1>
-                <p className="text-gray-600">
+                {/* <p className="text-gray-600">
                   View and manage posted payroll summaries generated from attendance data with accurate calculations.
-                </p>
+                </p> */}
                 <p className="text-sm text-blue-600 mt-1">
                   💡 Tip: Double-click any row to view detailed attendance records
                 </p>
