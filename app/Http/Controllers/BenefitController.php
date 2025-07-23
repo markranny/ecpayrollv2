@@ -17,6 +17,7 @@ use PhpOffice\PhpSpreadsheet\IOFactory;
 use PhpOffice\PhpSpreadsheet\Style\Fill;
 use PhpOffice\PhpSpreadsheet\Style\Color;
 use PhpOffice\PhpSpreadsheet\Style\Alignment;
+use PhpOffice\PhpSpreadsheet\Style\Border;
 
 class BenefitController extends Controller
 {
@@ -1229,6 +1230,276 @@ class BenefitController extends Controller
             throw ValidationException::withMessages([
                 'general' => ['Failed to create benefit entries: ' . $e->getMessage()],
             ]);
+        }
+    }
+
+    /**
+     * Delete all not posted benefits for a specific cutoff period.
+     */
+    public function deleteAllNotPosted(Request $request)
+    {
+        $cutoff = $request->input('cutoff', '1st');
+        $startDate = $request->input('start_date');
+        $endDate = $request->input('end_date');
+        
+        if (!$startDate || !$endDate) {
+            throw ValidationException::withMessages([
+                'date' => ['Start date and end date are required.'],
+            ]);
+        }
+        
+        // Delete all unposted benefits for the specified period
+        $deletedCount = Benefit::whereBetween('date', [$startDate, $endDate])
+            ->where('cutoff', $cutoff)
+            ->where('is_posted', false)
+            ->delete();
+        
+        return response()->json([
+            'message' => "{$deletedCount} not posted benefits have been successfully deleted.",
+            'deleted_count' => $deletedCount
+        ]);
+    }
+
+    /**
+     * Download template specifically for employee defaults
+     */
+    public function downloadDefaultsTemplate()
+    {
+        $spreadsheet = new Spreadsheet();
+        
+        // Create the Employee Defaults Template sheet
+        $defaultsSheet = $spreadsheet->getActiveSheet();
+        $defaultsSheet->setTitle('Employee Defaults Template');
+        
+        // Define headers for defaults template
+        $headers = [
+            'A1' => 'Employee ID',
+            'B1' => 'Employee Name',
+            'C1' => 'Department',
+            'D1' => 'Allowances',
+            'E1' => 'MF Shares',
+            'F1' => 'MF Loan',
+            'G1' => 'SSS Loan',
+            'H1' => 'SSS Premium',
+            'I1' => 'HMDF Loan',
+            'J1' => 'HMDF Premium',
+            'K1' => 'PhilHealth'
+        ];
+        
+        // Set headers with styling
+        foreach ($headers as $cell => $header) {
+            $defaultsSheet->setCellValue($cell, $header);
+        }
+        
+        // Style the header row
+        $headerRange = 'A1:K1';
+        $defaultsSheet->getStyle($headerRange)->applyFromArray([
+            'font' => [
+                'bold' => true,
+                'color' => ['rgb' => 'FFFFFF'],
+                'size' => 12
+            ],
+            'fill' => [
+                'fillType' => Fill::FILL_SOLID,
+                'color' => ['rgb' => '4472C4']
+            ],
+            'alignment' => [
+                'horizontal' => Alignment::HORIZONTAL_CENTER,
+                'vertical' => Alignment::VERTICAL_CENTER
+            ],
+            'borders' => [
+                'allBorders' => [
+                    'borderStyle' => Border::BORDER_THIN,
+                    'color' => ['rgb' => '000000']
+                ]
+            ]
+        ]);
+        
+        // Get all active employees with their current default benefits
+        $employees = Employee::with(['benefits' => function ($query) {
+                $query->where('is_default', true)->latest();
+            }])
+            ->where('JobStatus', 'Active')
+            ->select('id', 'idno', 'Lname', 'Fname', 'MName', 'Suffix', 'Department')
+            ->orderBy('Department')
+            ->orderBy('Lname')
+            ->get();
+        
+        // Add employee data
+        $row = 2;
+        foreach ($employees as $employee) {
+            $benefit = $employee->benefits->first();
+            $employeeName = trim($employee->Lname . ', ' . $employee->Fname . ' ' . ($employee->MName ?? ''));
+            
+            $defaultsSheet->setCellValue('A' . $row, $employee->idno);
+            $defaultsSheet->setCellValue('B' . $row, $employeeName);
+            $defaultsSheet->setCellValue('C' . $row, $employee->Department ?? '');
+            
+            if ($benefit) {
+                $defaultsSheet->setCellValue('D' . $row, number_format($benefit->allowances ?? 0, 2));
+                $defaultsSheet->setCellValue('E' . $row, number_format($benefit->mf_shares ?? 0, 2));
+                $defaultsSheet->setCellValue('F' . $row, number_format($benefit->mf_loan ?? 0, 2));
+                $defaultsSheet->setCellValue('G' . $row, number_format($benefit->sss_loan ?? 0, 2));
+                $defaultsSheet->setCellValue('H' . $row, number_format($benefit->sss_prem ?? 0, 2));
+                $defaultsSheet->setCellValue('I' . $row, number_format($benefit->hmdf_loan ?? 0, 2));
+                $defaultsSheet->setCellValue('J' . $row, number_format($benefit->hmdf_prem ?? 0, 2));
+                $defaultsSheet->setCellValue('K' . $row, number_format($benefit->philhealth ?? 0, 2));
+            } else {
+                // Set default zeros if no default benefit exists
+                foreach (range('D', 'K') as $col) {
+                    $defaultsSheet->setCellValue($col . $row, '0.00');
+                }
+            }
+            
+            $row++;
+        }
+        
+        // Auto-size columns
+        foreach (range('A', 'K') as $column) {
+            $defaultsSheet->getColumnDimension($column)->setAutoSize(true);
+        }
+        
+        // Style data rows
+        if ($row > 2) {
+            $dataRange = 'A2:K' . ($row - 1);
+            $defaultsSheet->getStyle($dataRange)->applyFromArray([
+                'borders' => [
+                    'allBorders' => [
+                        'borderStyle' => Border::BORDER_THIN,
+                        'color' => ['rgb' => 'CCCCCC']
+                    ]
+                ],
+                'alignment' => [
+                    'horizontal' => Alignment::HORIZONTAL_CENTER
+                ]
+            ]);
+        }
+        
+        // Add instructions
+        $instructionRow = $row + 2;
+        $defaultsSheet->setCellValue('A' . $instructionRow, 'INSTRUCTIONS:');
+        $defaultsSheet->setCellValue('A' . ($instructionRow + 1), '1. This template contains current default values for all employees');
+        $defaultsSheet->setCellValue('A' . ($instructionRow + 2), '2. Modify the benefit amounts as needed');
+        $defaultsSheet->setCellValue('A' . ($instructionRow + 3), '3. Employee ID must match exactly with system records');
+        $defaultsSheet->setCellValue('A' . ($instructionRow + 4), '4. Use numeric values for all benefit amounts (e.g., 1000.00)');
+        $defaultsSheet->setCellValue('A' . ($instructionRow + 5), '5. Import will update the default values for each employee');
+        
+        // Style instructions
+        $defaultsSheet->getStyle('A' . $instructionRow)->getFont()->setBold(true)->setSize(12);
+        $defaultsSheet->getStyle('A' . $instructionRow . ':A' . ($instructionRow + 5))->getFont()->setColor(new Color('FF0000'));
+        
+        $writer = new Xlsx($spreadsheet);
+        
+        // Set headers for download
+        $date = date('Y-m-d');
+        $filename = "employee_defaults_template_{$date}.xlsx";
+        
+        header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        header('Content-Disposition: attachment;filename="' . $filename . '"');
+        header('Cache-Control: max-age=0');
+        
+        $writer->save('php://output');
+        exit;
+    }
+
+    /**
+     * Import employee default benefits
+     */
+    public function importDefaults(Request $request)
+    {
+        $request->validate([
+            'file' => 'required|file|mimes:xlsx,xls,csv|max:10240', // 10MB max
+        ]);
+
+        try {
+            $file = $request->file('file');
+            
+            // Load the spreadsheet
+            $spreadsheet = IOFactory::load($file->getPathname());
+            $worksheet = $spreadsheet->getActiveSheet();
+            $rows = $worksheet->toArray();
+            
+            // Remove header row
+            array_shift($rows);
+            
+            $imported = 0;
+            $updated = 0;
+            $errors = [];
+            
+            DB::beginTransaction();
+            
+            foreach ($rows as $index => $row) {
+                $rowNumber = $index + 2; // +2 because we removed header and array is 0-indexed
+                
+                // Skip empty rows
+                if (empty(array_filter($row))) {
+                    continue;
+                }
+                
+                try {
+                    // Find employee by ID
+                    $employee = Employee::where('idno', trim($row[0]))->first();
+                    
+                    if (!$employee) {
+                        $errors[] = "Row {$rowNumber}: Employee with ID '{$row[0]}' not found.";
+                        continue;
+                    }
+                    
+                    // Check if default benefit already exists
+                    $existingBenefit = Benefit::where('employee_id', $employee->id)
+                        ->where('is_default', true)
+                        ->first();
+                    
+                    $benefitData = [
+                        'employee_id' => $employee->id,
+                        'allowances' => floatval($row[3] ?? 0),      // Column D
+                        'mf_shares' => floatval($row[4] ?? 0),       // Column E
+                        'mf_loan' => floatval($row[5] ?? 0),         // Column F
+                        'sss_loan' => floatval($row[6] ?? 0),        // Column G
+                        'sss_prem' => floatval($row[7] ?? 0),        // Column H
+                        'hmdf_loan' => floatval($row[8] ?? 0),       // Column I
+                        'hmdf_prem' => floatval($row[9] ?? 0),       // Column J
+                        'philhealth' => floatval($row[10] ?? 0),     // Column K
+                        'cutoff' => '1st', // Default cutoff for templates
+                        'date' => now()->toDateString(),
+                        'is_posted' => false,
+                        'is_default' => true,
+                    ];
+                    
+                    if ($existingBenefit) {
+                        // Update existing default benefit
+                        $existingBenefit->update($benefitData);
+                        $updated++;
+                    } else {
+                        // Create new default benefit
+                        Benefit::create($benefitData);
+                        $imported++;
+                    }
+                    
+                } catch (\Exception $e) {
+                    $errors[] = "Row {$rowNumber}: " . $e->getMessage();
+                }
+            }
+            
+            DB::commit();
+            
+            $message = "Successfully processed defaults: {$imported} created, {$updated} updated.";
+            
+            return response()->json([
+                'success' => true,
+                'message' => $message,
+                'imported_count' => $imported,
+                'updated_count' => $updated,
+                'errors' => $errors
+            ]);
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Import failed: ' . $e->getMessage()
+            ], 500);
         }
     }
 }

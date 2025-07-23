@@ -566,26 +566,35 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
 |--------------------------------------------------------------------------
 */
 Route::middleware(['auth', 'verified', 'role:finance,superadmin'])->group(function () {
+    
     Route::get('/benefits', [BenefitController::class, 'index'])->name('benefits.index');
     Route::post('/benefits', [BenefitController::class, 'store'])->name('benefits.store');
     Route::patch('/benefits/{id}', [BenefitController::class, 'update'])->name('benefits.update');
-    Route::patch('/benefits/{id}/field', [BenefitController::class, 'updateField'])->name('benefits.update-field');
+    Route::patch('/benefits/{id}/field', [BenefitController::class, 'updateField'])->name('benefits.updateField');
     Route::post('/benefits/{id}/post', [BenefitController::class, 'postBenefit'])->name('benefits.post');
-    Route::post('/benefits/{id}/set-default', [BenefitController::class, 'setDefault'])->name('benefits.set-default');
-    Route::post('/benefits/post-all', [BenefitController::class, 'postAll'])->name('benefits.post-all');
-    Route::post('/benefits/bulk-post', [BenefitController::class, 'bulkPost'])->name('benefits.bulk-post');
-    Route::post('/benefits/bulk-set-default', [BenefitController::class, 'bulkSetDefault'])->name('benefits.bulk-set-default');
-    Route::post('/benefits/create-from-default', [BenefitController::class, 'createFromDefault'])->name('benefits.create-from-default');
-    Route::post('/benefits/bulk-create', [BenefitController::class, 'bulkCreateFromDefault'])->name('benefits.bulk-create');
+    Route::post('/benefits/post-all', [BenefitController::class, 'postAll'])->name('benefits.postAll');
+    Route::post('/benefits/bulk-post', [BenefitController::class, 'bulkPost'])->name('benefits.bulkPost');
+    Route::post('/benefits/{id}/set-default', [BenefitController::class, 'setDefault'])->name('benefits.setDefault');
+    Route::post('/benefits/bulk-set-default', [BenefitController::class, 'bulkSetDefaultBenefits'])->name('benefits.bulkSetDefault');
+    Route::post('/benefits/create-from-default', [BenefitController::class, 'createFromDefault'])->name('benefits.createFromDefault');
+    Route::post('/benefits/bulk-create', [BenefitController::class, 'bulkCreateFromDefault'])->name('benefits.bulkCreate');
     
-    // NEW: Benefits Import/Export Routes
+    // Template and import/export routes
     Route::get('/benefits/template/download', [BenefitController::class, 'downloadTemplate'])->name('benefits.template.download');
     Route::post('/benefits/import', [BenefitController::class, 'import'])->name('benefits.import');
     Route::get('/benefits/export', [BenefitController::class, 'export'])->name('benefits.export');
     
-    // Benefits Defaults Management
-    Route::get('/api/employee-defaults', [BenefitController::class, 'getEmployeeDefaults']);
+    // NEW: Delete all not posted benefits
+    Route::post('/benefits/delete-all-not-posted', [BenefitController::class, 'deleteAllNotPosted'])->name('benefits.deleteAllNotPosted');
+    
+    // Employee defaults routes
     Route::get('/employee-defaults', [BenefitController::class, 'showEmployeeDefaultsPage'])->name('employee-defaults.index');
+    Route::get('/api/employee-defaults', [BenefitController::class, 'getEmployeeDefaults'])->name('api.employee-defaults');
+    
+    // NEW: Employee defaults template and import/export
+    Route::get('/benefits/defaults/template/download', [BenefitController::class, 'downloadDefaultsTemplate'])->name('benefits.defaults.template.download');
+    Route::post('/benefits/defaults/import', [BenefitController::class, 'importDefaults'])->name('benefits.defaults.import');
+    Route::get('/benefits/defaults/export', [BenefitController::class, 'exportDefaults'])->name('benefits.defaults.export');
 
     Route::get('/deductions', [DeductionController::class, 'index'])->name('deductions.index');
     Route::post('/deductions', [DeductionController::class, 'store'])->name('deductions.store');

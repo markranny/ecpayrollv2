@@ -16,7 +16,8 @@ import {
     Plus,
     Save,
     Settings,
-    AlertCircle
+    AlertCircle,
+    Trash2
 } from 'lucide-react';
 import ConfirmModal from '@/Components/ConfirmModal';
 import axios from 'axios';
@@ -288,6 +289,42 @@ const BenefitsPage = ({ employees: initialEmployees, cutoff: initialCutoff, mont
         });
     };
 
+    // DELETE ALL NOT POSTED BENEFITS - NEW FUNCTION
+    const deleteAllNotPostedBenefits = () => {
+        setConfirmModal({
+            isOpen: true,
+            title: 'Delete All Not Posted Benefits',
+            message: `Are you sure you want to delete ALL not posted benefits for the ${filters.cutoff} cutoff of ${filters.month}/${filters.year}? This action cannot be undone.`,
+            confirmText: 'Delete All Not Posted',
+            confirmVariant: 'destructive',
+            onConfirm: async () => {
+                try {
+                    setLoading(true);
+                    
+                    const response = await axios.post('/benefits/delete-all-not-posted', {
+                        cutoff: filters.cutoff,
+                        start_date: dateRange.start,
+                        end_date: dateRange.end
+                    });
+                    
+                    // Reload data after deletion
+                    applyFilters();
+                    
+                    setConfirmModal({ ...confirmModal, isOpen: false });
+                    setAlertMessage(`${response.data.deleted_count} not posted benefits deleted successfully`);
+                    setTimeout(() => setAlertMessage(null), 3000);
+                } catch (error) {
+                    console.error('Error deleting not posted benefits:', error);
+                    setConfirmModal({ ...confirmModal, isOpen: false });
+                    setAlertMessage(error.response?.data?.message || 'Error deleting benefits');
+                    setTimeout(() => setAlertMessage(null), 3000);
+                } finally {
+                    setLoading(false);
+                }
+            }
+        });
+    };
+
     // Create benefits for all active employees
     const createBulkBenefits = () => {
         setConfirmModal({
@@ -462,41 +499,49 @@ const BenefitsPage = ({ employees: initialEmployees, cutoff: initialCutoff, mont
                                     Manage employee benefits, loans, deductions, and allowances.
                                 </p>
                             </div>
-                            <div className="flex items-center space-x-4">
+                            <div className="flex items-center space-x-2">
                                 <Button
                                     onClick={() => setShowImportModal(true)}
-                                    className="px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors duration-200 flex items-center"
+                                    className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors duration-200 flex items-center"
                                 >
-                                    <Upload className="w-5 h-5 mr-2" />
+                                    <Upload className="w-4 h-4 mr-2" />
                                     Import
                                 </Button>
                                 <Button
                                     onClick={exportToExcel}
-                                    className="px-5 py-2.5 bg-green-600 text-white rounded-xl hover:bg-green-700 transition-colors duration-200 flex items-center"
+                                    className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors duration-200 flex items-center"
                                 >
-                                    <Download className="w-5 h-5 mr-2" />
+                                    <Download className="w-4 h-4 mr-2" />
                                     Export
                                 </Button>
                                 <Button
                                     onClick={createBulkBenefits}
-                                    className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl hover:bg-indigo-700 transition-colors duration-200 flex items-center"
+                                    className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors duration-200 flex items-center"
                                 >
-                                    <Plus className="w-5 h-5 mr-2" />
-                                    Create All Benefits
+                                    <Plus className="w-4 h-4 mr-2" />
+                                    Create All
+                                </Button>
+                                <Button
+                                    onClick={deleteAllNotPostedBenefits}
+                                    className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors duration-200 flex items-center"
+                                    disabled={status?.pendingCount === 0}
+                                >
+                                    <Trash2 className="w-4 h-4 mr-2" />
+                                    Delete All Not Posted
                                 </Button>
                                 <Button
                                     onClick={postAllBenefits}
-                                    className="px-5 py-2.5 bg-orange-600 text-white rounded-xl hover:bg-orange-700 transition-colors duration-200 flex items-center"
+                                    className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors duration-200 flex items-center"
                                     disabled={status?.pendingCount === 0}
                                 >
-                                    <Save className="w-5 h-5 mr-2" />
-                                    Post All Benefits
+                                    <Save className="w-4 h-4 mr-2" />
+                                    Post All
                                 </Button>
                                 <Button
                                     onClick={navigateToDefaults}
-                                    className="px-5 py-2.5 bg-gray-600 text-white rounded-xl hover:bg-gray-700 transition-colors duration-200 flex items-center"
+                                    className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors duration-200 flex items-center"
                                 >
-                                    <Settings className="w-5 h-5 mr-2" />
+                                    <Settings className="w-4 h-4 mr-2" />
                                     Manage Defaults
                                 </Button>
                             </div>

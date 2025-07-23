@@ -12,7 +12,6 @@ import {
     CheckSquare,
     Download
 } from 'lucide-react';
-import { useVirtualizer } from '@tanstack/react-virtual';
 import * as XLSX from 'xlsx';
 
 const EditableCell = ({ 
@@ -87,14 +86,8 @@ const EditableCell = ({
 
     if (isDisabled) {
         return (
-            <div 
-                className="p-3 text-right text-gray-700 cursor-default h-12 flex items-center justify-end" 
-                onClick={(e) => {
-                    e.stopPropagation();
-                    if (onClick) onClick();
-                }}
-            >
-                {parseFloat(value).toFixed(2)}
+            <div className="px-3 py-2 text-right text-gray-700 cursor-default min-h-[36px] flex items-center justify-end">
+                {parseFloat(value || 0).toFixed(2)}
             </div>
         );
     }
@@ -102,7 +95,7 @@ const EditableCell = ({
     if (!isEditing) {
         return (
             <div 
-                className={`p-3 text-right ${benefitExists ? 'text-gray-700' : 'text-gray-400'} cursor-pointer hover:bg-gray-100 h-12 flex items-center justify-end`}
+                className={`px-3 py-2 text-right ${benefitExists ? 'text-gray-700' : 'text-gray-400'} cursor-pointer hover:bg-gray-100 min-h-[36px] flex items-center justify-end transition-colors`}
                 onClick={(e) => {
                     e.stopPropagation();
                     if (benefitExists) {
@@ -112,13 +105,13 @@ const EditableCell = ({
                     }
                 }}
             >
-                {benefitExists ? parseFloat(value).toFixed(2) : "0.00"}
+                {benefitExists ? parseFloat(value || 0).toFixed(2) : "0.00"}
             </div>
         );
     }
 
     return (
-        <div className="p-2 h-12 flex items-center">
+        <div className="px-3 py-2">
             <input
                 ref={inputRef}
                 type="number"
@@ -259,36 +252,27 @@ const BenefitsTable = ({
         'philhealth'
     ]
 }) => {
-    // Fixed column definitions with consistent widths
+    // Transform field columns with proper labels and consistent widths
     const fieldColumns = Array.isArray(fieldColumnsParam) && typeof fieldColumnsParam[0] === 'string' 
         ? fieldColumnsParam.map(field => {
             const labelMap = {
-                'allowances': 'Allowances',
-                'mf_shares': 'MF Shares',
-                'mf_loan': 'MF Loan',
-                'sss_loan': 'SSS Loan',
-                'sss_prem': 'SSS Premium',
-                'hmdf_loan': 'HMDF Loan',
-                'hmdf_prem': 'HMDF Premium',
-                'philhealth': 'PhilHealth'
+                'allowances': 'ALLOWANCES',
+                'mf_shares': 'MF SHARES',
+                'mf_loan': 'MF LOAN',
+                'sss_loan': 'SSS LOAN',
+                'sss_prem': 'SSS PREMIUM',
+                'hmdf_loan': 'HMDF LOAN',
+                'hmdf_prem': 'HMDF PREMIUM',
+                'philhealth': 'PHILHEALTH'
             };
             
             return {
                 id: field,
-                label: labelMap[field] || field.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()),
-                width: '130px' // Consistent width for all columns
+                label: labelMap[field] || field.replace('_', ' ').toUpperCase(),
+                width: '130px'
             };
         })
         : fieldColumnsParam;
-
-    // Fixed column width configuration
-    const columnWidths = {
-        checkbox: '60px',
-        actions: '120px',
-        employee: '280px',
-        benefit: '130px',
-        status: '120px'
-    };
 
     const [editingCell, setEditingCell] = useState(null);
     const [selectedItems, setSelectedItems] = useState([]);
@@ -300,16 +284,8 @@ const BenefitsTable = ({
         onConfirm: () => {}
     });
     const [creatingBenefit, setCreatingBenefit] = useState(null);
-    
-    const tableRef = useRef(null);
-    
-    const rowVirtualizer = useVirtualizer({
-        count: employees.length,
-        getScrollElement: () => tableRef.current,
-        estimateSize: () => 64, // Fixed row height
-        overscan: 5,
-    });
 
+    // Reset selection when employees change
     useEffect(() => {
         setSelectedItems([]);
         setSelectAll(false);
@@ -545,7 +521,7 @@ const BenefitsTable = ({
                 };
                 
                 fieldColumns.forEach(column => {
-                    record[column.label.toUpperCase()] = benefit ? parseFloat(benefit[column.id] || 0).toFixed(2) : '0.00';
+                    record[column.label] = benefit ? parseFloat(benefit[column.id] || 0).toFixed(2) : '0.00';
                 });
                 
                 return record;
@@ -629,16 +605,11 @@ const BenefitsTable = ({
                 disabled={loading}
             />
             
-            <div 
-                ref={tableRef} 
-                className="relative w-full border border-gray-200 rounded-lg" 
-                style={{ height: 'calc(100vh - 350px)', overflow: 'auto' }}
-            >
-                {/* Fixed table layout with consistent column widths */}
-                <table className="min-w-full divide-y divide-gray-200" style={{ tableLayout: 'fixed' }}>
+            <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
                     <thead className="bg-gray-50 sticky top-0 z-10">
                         <tr>
-                            <th scope="col" className="px-4 py-3 text-center" style={{ width: columnWidths.checkbox }}>
+                            <th className="w-12 px-3 py-3 text-center">
                                 <div 
                                     className="flex items-center justify-center cursor-pointer" 
                                     onClick={(e) => toggleSelectAll(e)}
@@ -651,191 +622,192 @@ const BenefitsTable = ({
                                     />
                                 </div>
                             </th>
-                            <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ width: columnWidths.actions }}>
-                                Actions
+                            <th className="w-24 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                ACTIONS
                             </th>
-                            <th scope="col" className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ width: columnWidths.employee }}>
-                                Employee
+                            <th className="w-64 px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                EMPLOYEE
                             </th>
                             {fieldColumns.map((column) => (
                                 <th 
                                     key={column.id} 
-                                    scope="col" 
-                                    className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider"
-                                    style={{ width: columnWidths.benefit }}
+                                    className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider"
+                                    style={{ width: column.width }}
                                 >
                                     {column.label}
                                 </th>
                             ))}
-                            <th scope="col" className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" style={{ width: columnWidths.status }}>
-                                Status
+                            <th className="w-24 px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                STATUS
                             </th>
                         </tr>
                     </thead>
 
-                    <tbody 
-                        className="bg-white divide-y divide-gray-200"
-                        style={{ position: 'relative', height: `${rowVirtualizer.getTotalSize()}px` }}
-                    >
-                        {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-                            const employee = employees[virtualRow.index];
-                            const benefit = getEmployeeBenefit(employee);
-                            const isPosted = isBenefitPosted(benefit);
-                            const isDefault = isBenefitDefault(benefit);
-                            const isSelected = benefit ? selectedItems.includes(benefit.id) : false;
+                    <tbody className="bg-white divide-y divide-gray-200">
+                        {loading ? (
+                            <tr>
+                                <td colSpan={fieldColumns.length + 4} className="px-3 py-4 text-center text-gray-500">
+                                    <div className="flex items-center justify-center space-x-2">
+                                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-500"></div>
+                                        <span>Loading...</span>
+                                    </div>
+                                </td>
+                            </tr>
+                        ) : (
+                            employees.map((employee, rowIndex) => {
+                                const benefit = getEmployeeBenefit(employee);
+                                const isPosted = isBenefitPosted(benefit);
+                                const isDefault = isBenefitDefault(benefit);
+                                const isSelected = benefit ? selectedItems.includes(benefit.id) : false;
 
-                            return (
-                                <tr 
-                                    key={virtualRow.index}
-                                    data-index={virtualRow.index}
-                                    className={`absolute top-0 left-0 w-full hover:bg-gray-50 ${
-                                        isPosted ? 'bg-gray-50' : ''
-                                    } ${isSelected ? 'bg-blue-50' : ''}`}
-                                    style={{
-                                        height: `${virtualRow.size}px`,
-                                        transform: `translateY(${virtualRow.start}px)`,
-                                    }}
-                                >
-                                    <td className="px-4 py-3 whitespace-nowrap text-center" style={{ width: columnWidths.checkbox }}>
-                                        {benefit && !isPosted ? (
-                                            <div 
-                                                className="flex items-center justify-center cursor-pointer" 
-                                                onClick={(e) => toggleItemSelection(benefit.id, e)}
-                                            >
-                                                <Checkbox
-                                                    checked={isSelected}
-                                                    onCheckedChange={(checked) => {}}
-                                                    className="h-4 w-4"
-                                                />
-                                            </div>
-                                        ) : (
-                                            <div className="h-4 w-4" />
-                                        )}
-                                    </td>
-                                    
-                                    <td className="px-4 py-3 whitespace-nowrap" style={{ width: columnWidths.actions }}>
-                                        <div className="flex space-x-1">
-                                            {benefit ? (
-                                                <>
-                                                    {!isPosted && (
+                                return (
+                                    <tr 
+                                        key={employee.id}
+                                        className={`hover:bg-gray-50 ${
+                                            isPosted ? 'bg-gray-50' : ''
+                                        } ${isSelected ? 'bg-blue-50' : ''}`}
+                                    >
+                                        <td className="w-12 px-3 py-3 text-center">
+                                            {benefit && !isPosted ? (
+                                                <div 
+                                                    className="flex items-center justify-center cursor-pointer" 
+                                                    onClick={(e) => toggleItemSelection(benefit.id, e)}
+                                                >
+                                                    <Checkbox
+                                                        checked={isSelected}
+                                                        onCheckedChange={(checked) => {}}
+                                                        className="h-4 w-4"
+                                                    />
+                                                </div>
+                                            ) : (
+                                                <div className="h-4 w-4" />
+                                            )}
+                                        </td>
+                                        
+                                        <td className="w-24 px-3 py-3">
+                                            <div className="flex space-x-1">
+                                                {benefit ? (
+                                                    <>
+                                                        {!isPosted && (
+                                                            <Button
+                                                                variant="outline"
+                                                                size="sm"
+                                                                className="p-1 h-8 w-8"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    setConfirmation({
+                                                                        isOpen: true,
+                                                                        title: 'Post Benefit',
+                                                                        message: 'Are you sure you want to post this benefit? This action cannot be undone.',
+                                                                        onConfirm: () => {
+                                                                            onPostBenefit(benefit.id);
+                                                                            setConfirmation({ ...confirmation, isOpen: false });
+                                                                        }
+                                                                    });
+                                                                }}
+                                                                title="Post Benefit"
+                                                            >
+                                                                <Save className="h-3 w-3 text-green-600" />
+                                                            </Button>
+                                                        )}
+                                                        
                                                         <Button
                                                             variant="outline"
                                                             size="sm"
-                                                            className="p-1 h-8 w-8"
+                                                            className={`p-1 h-8 w-8 ${isDefault ? 'bg-yellow-50' : ''}`}
                                                             onClick={(e) => {
                                                                 e.stopPropagation();
                                                                 setConfirmation({
                                                                     isOpen: true,
-                                                                    title: 'Post Benefit',
-                                                                    message: 'Are you sure you want to post this benefit? This action cannot be undone.',
+                                                                    title: 'Set as Default',
+                                                                    message: 'Are you sure you want to set this benefit as the default? This will override the existing default value.',
                                                                     onConfirm: () => {
-                                                                        onPostBenefit(benefit.id);
+                                                                        onSetDefault(benefit.id);
                                                                         setConfirmation({ ...confirmation, isOpen: false });
                                                                     }
                                                                 });
                                                             }}
-                                                            title="Post Benefit"
+                                                            title={isDefault ? "Default Values" : "Set as Default"}
                                                         >
-                                                            <Save className="h-4 w-4 text-green-600" />
+                                                            <Star className={`h-3 w-3 ${isDefault ? 'text-yellow-500' : 'text-gray-400'}`} />
                                                         </Button>
-                                                    )}
-                                                    
+                                                    </>
+                                                ) : (
                                                     <Button
                                                         variant="outline"
                                                         size="sm"
-                                                        className={`p-1 h-8 w-8 ${isDefault ? 'bg-yellow-50' : ''}`}
+                                                        className="p-1 h-8 w-8"
                                                         onClick={(e) => {
                                                             e.stopPropagation();
-                                                            setConfirmation({
-                                                                isOpen: true,
-                                                                title: 'Set as Default',
-                                                                message: 'Are you sure you want to set this benefit as the default? This will override the existing default value.',
-                                                                onConfirm: () => {
-                                                                    onSetDefault(benefit.id);
-                                                                    setConfirmation({ ...confirmation, isOpen: false });
-                                                                }
-                                                            });
+                                                            onCreateBenefit(employee.id);
                                                         }}
-                                                        title={isDefault ? "Default Values" : "Set as Default"}
+                                                        title="Create Benefit"
                                                     >
-                                                        <Star className={`h-4 w-4 ${isDefault ? 'text-yellow-500' : 'text-gray-400'}`} />
+                                                        <Plus className="h-3 w-3 text-blue-600" />
                                                     </Button>
-                                                </>
-                                            ) : (
-                                                <Button
-                                                    variant="outline"
-                                                    size="sm"
-                                                    className="p-1 h-8 w-8"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        onCreateBenefit(employee.id);
-                                                    }}
-                                                    title="Create Benefit"
-                                                >
-                                                    <Plus className="h-4 w-4 text-blue-600" />
-                                                </Button>
-                                            )}
-                                        </div>
-                                    </td>
-                                    
-                                    <td className="px-4 py-3 whitespace-nowrap" style={{ width: columnWidths.employee }}>
-                                        <div className="flex flex-col">
-                                            <div className="text-sm font-medium text-gray-900 truncate">
-                                                {formatEmployeeName(employee)}
+                                                )}
                                             </div>
-                                            <div className="text-sm text-gray-500 truncate">
-                                                {employee.Department || 'N/A'}
-                                            </div>
-                                        </div>
-                                    </td>
-                                    
-                                    {fieldColumns.map((column, colIndex) => (
-                                        <td 
-                                            key={column.id} 
-                                            className="px-0 py-0 whitespace-nowrap relative"
-                                            style={{ width: columnWidths.benefit }}
-                                        >
-                                            <EditableCell 
-                                                value={benefit ? benefit[column.id] || 0 : 0}
-                                                isEditing={
-                                                    editingCell?.employeeId === employee.id && 
-                                                    editingCell?.benefitId === (benefit?.id || 'pending') && 
-                                                    editingCell?.field === column.id
-                                                }
-                                                isDisabled={isPosted}
-                                                onSave={(value, additionalData) => benefit && handleCellSave(benefit.id, column.id, value, additionalData)}
-                                                onKeyDown={handleKeyNavigation}
-                                                rowIndex={virtualRow.index}
-                                                colIndex={colIndex}
-                                                field={column.id}
-                                                onClick={() => !isPosted && benefit && handleEditCell(employee.id, benefit.id, column.id, virtualRow.index, colIndex)}
-                                                onCreateAndEdit={() => !isPosted && handleCreateAndEditCell(employee.id, column.id, virtualRow.index, colIndex)}
-                                                benefitExists={!!benefit}
-                                            />
                                         </td>
-                                    ))}
-                                    
-                                    <td className="px-4 py-3 whitespace-nowrap text-center" style={{ width: columnWidths.status }}>
-                                        {benefit ? (
-                                            isPosted ? (
-                                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                                                    <Lock className="w-3 h-3 mr-1" />
-                                                    Posted
-                                                </span>
+                                        
+                                        <td className="w-64 px-3 py-3">
+                                            <div className="flex flex-col">
+                                                <div className="text-sm font-medium text-gray-900 truncate">
+                                                    {formatEmployeeName(employee)}
+                                                </div>
+                                                <div className="text-sm text-gray-500 truncate">
+                                                    {employee.Department || 'N/A'}
+                                                </div>
+                                            </div>
+                                        </td>
+                                        
+                                        {fieldColumns.map((column, colIndex) => (
+                                            <td 
+                                                key={column.id} 
+                                                className="relative border-l border-gray-100"
+                                                style={{ width: column.width }}
+                                            >
+                                                <EditableCell 
+                                                    value={benefit ? benefit[column.id] || 0 : 0}
+                                                    isEditing={
+                                                        editingCell?.employeeId === employee.id && 
+                                                        editingCell?.benefitId === (benefit?.id || 'pending') && 
+                                                        editingCell?.field === column.id
+                                                    }
+                                                    isDisabled={isPosted}
+                                                    onSave={(value, additionalData) => benefit && handleCellSave(benefit.id, column.id, value, additionalData)}
+                                                    onKeyDown={handleKeyNavigation}
+                                                    rowIndex={rowIndex}
+                                                    colIndex={colIndex}
+                                                    field={column.id}
+                                                    onClick={() => !isPosted && benefit && handleEditCell(employee.id, benefit.id, column.id, rowIndex, colIndex)}
+                                                    onCreateAndEdit={() => !isPosted && handleCreateAndEditCell(employee.id, column.id, rowIndex, colIndex)}
+                                                    benefitExists={!!benefit}
+                                                />
+                                            </td>
+                                        ))}
+                                        
+                                        <td className="w-24 px-3 py-3 text-center">
+                                            {benefit ? (
+                                                isPosted ? (
+                                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                                        <Lock className="w-3 h-3 mr-1" />
+                                                        Posted
+                                                    </span>
+                                                ) : (
+                                                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                                                        Pending
+                                                    </span>
+                                                )
                                             ) : (
-                                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
-                                                    Pending
+                                                <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                                                    No Data
                                                 </span>
-                                            )
-                                        ) : (
-                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                                                No Data
-                                            </span>
-                                        )}
-                                    </td>
-                                </tr>
-                            );
-                        })}
+                                            )}
+                                        </td>
+                                    </tr>
+                                );
+                            })
+                        )}
                     </tbody>
                 </table>
             </div>
