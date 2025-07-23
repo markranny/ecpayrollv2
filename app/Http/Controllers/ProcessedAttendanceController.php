@@ -6,39 +6,39 @@ use App\Models\Employee;
 use App\Models\Department;
 use App\Models\ProcessedAttendance;
 use App\Models\PayrollSummary;
+use App\Models\Offset;
+use App\Models\CancelRestDay;
+use App\Models\Retro;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Inertia\Inertia;
-
 class ProcessedAttendanceController extends Controller
 {
-    /**
- * Auto-recalculate attendance metrics for displayed records
- */
-// Add this helper function before your autoRecalculateMetrics function
-private function applyTimeOutRounding($timeString)
-{
-    try {
-        $time = \Carbon\Carbon::parse($timeString);
-        
-        // For time out - round down to the nearest hour
-        // This treats 5:16 PM as 5:00 PM, 5:31 PM as 5:00 PM, 5:46 PM as 5:00 PM
-        if ($time->minute > 0 || $time->second > 0) {
-            $time->minute = 0;
-            $time->second = 0;
-        }
-        
-        return $time;
-        
-    } catch (\Exception $e) {
-        Log::error("Error in time out rounding: " . $e->getMessage());
-        return \Carbon\Carbon::parse($timeString); // Return original if rounding fails
-    }
-}
 
+private function applyTimeOutRounding($timeString)
+    {
+        try {
+            $time = \Carbon\Carbon::parse($timeString);
+            
+            // For time out - round down to the nearest hour
+            // This treats 5:16 PM as 5:00 PM, 5:31 PM as 5:00 PM, 5:46 PM as 5:00 PM
+            if ($time->minute > 0 || $time->second > 0) {
+                $time->minute = 0;
+                $time->second = 0;
+            }
+            
+            return $time;
+            
+        } catch (\Exception $e) {
+            Log::error("Error in time out rounding: " . $e->getMessage());
+            return \Carbon\Carbon::parse($timeString); // Return original if rounding fails
+        }
+    }
+
+    // FIXED: Late calculation logic - always calculate from expected time, regardless of hours worked
 private function autoRecalculateMetrics($attendances)
 {
     try {
@@ -64,47 +64,108 @@ private function autoRecalculateMetrics($attendances)
             $isHalfday = false;
             
             if ($attendance->time_in) {
-                // Calculate late minutes - Need to determine correct shift schedule
+                // Calculate late minutes - FIXED: Always calculate from expected time
                 try {
                     $attendanceDate = \Carbon\Carbon::parse($attendance->attendance_date);
                     $actualTimeIn = \Carbon\Carbon::parse($attendance->time_in);
                     
-                    // Determine expected time based on actual time_in to identify shift type
+                    // FIXED: Determine expected time based on time_out to better identify shift type
+                    // Look ahead to see the time_out to determine correct shift
+                    $timeOut = null;
+                    if ($attendance->is_nightshift && $attendance->next_day_timeout) {
+                        $timeOut = \Carbon\Carbon::parse($attendance->next_day_timeout);
+                    } elseif ($attendance->time_out) {
+                        $timeOut = \Carbon\Carbon::parse($attendance->time_out);
+                    }
+                    
                     $timeInHour = $actualTimeIn->hour;
                     $expectedTimeIn = null;
                     
-                    if ($timeInHour >= 6 && $timeInHour <= 10) {
-                        // Morning shift: 8:00 AM
-                        $expectedTimeIn = $attendanceDate->copy()->setTime(8, 0, 0);
-                    } elseif ($timeInHour >= 13 && $timeInHour <= 16) {
-                        // Afternoon shift: 2:00 PM
-                        $expectedTimeIn = $attendanceDate->copy()->setTime(14, 0, 0);
-                    } elseif ($timeInHour >= 17 && $timeInHour <= 20) {
-                        // Evening shift: 6:00 PM
-                        $expectedTimeIn = $attendanceDate->copy()->setTime(18, 0, 0);
-                    } elseif ($timeInHour >= 21 || $timeInHour <= 5) {
-                        // Night shift: 10:00 PM
-                        $expectedTimeIn = $attendanceDate->copy()->setTime(22, 0, 0);
+                    // Use time_out to better determine shift type
+                    if ($timeOut) {
+                        $timeOutHour = $timeOut->hour;
+                        $timeOutMinute = $timeOut->minute;
+                        
+                        Log::info("Shift detection", [
+                            'attendance_id' => $attendance->id,
+                            'time_out_hour' => $timeOutHour,
+                            'time_out_minute' => $timeOutMinute,
+                            'time_out_full' => $timeOut->format('H:i:s')
+                        ]);
+                        
+                        // 8 AM - 5 PM shift: time_out around 5:00-5:30 PM (17:00-17:30)
+                        if ($timeOutHour == 17 && $timeOutMinute <= 30) {
+                            $expectedTimeIn = $attendanceDate->copy()->setTime(8, 0, 0); // 8:00 AM for 8-5 shift
+                            Log::info("Detected 8-5 shift", ['attendance_id' => $attendance->id]);
+                        }
+                        // 9 AM - 6 PM shift: time_out around 6:00-6:30 PM (18:00-18:30)
+                        else if ($timeOutHour == 18 && $timeOutMinute <= 30) {
+                            $expectedTimeIn = $attendanceDate->copy()->setTime(9, 0, 0); // 9:00 AM for 9-6 shift
+                            Log::info("Detected 9-6 shift", ['attendance_id' => $attendance->id]);
+                        }
+                        // Flexible 8-5 shift: time_out between 5:00-5:59 PM
+                        else if ($timeOutHour == 17) {
+                            $expectedTimeIn = $attendanceDate->copy()->setTime(8, 0, 0); // 8:00 AM for 8-5 shift
+                            Log::info("Detected flexible 8-5 shift", ['attendance_id' => $attendance->id]);
+                        }
+                        // Flexible 9-6 shift: time_out between 6:00-6:59 PM  
+                        else if ($timeOutHour == 18) {
+                            $expectedTimeIn = $attendanceDate->copy()->setTime(9, 0, 0); // 9:00 AM for 9-6 shift
+                            Log::info("Detected flexible 9-6 shift", ['attendance_id' => $attendance->id]);
+                        }
+                        // Evening shift: time_out around 2 AM next day
+                        else if ($timeOutHour >= 1 && $timeOutHour <= 3) {
+                            $expectedTimeIn = $attendanceDate->copy()->setTime(18, 0, 0); // 6:00 PM
+                            Log::info("Detected evening shift", ['attendance_id' => $attendance->id]);
+                        }
+                        // Night shift: time_out around 6-8 AM next day
+                        else if ($timeOutHour >= 6 && $timeOutHour <= 8) {
+                            $expectedTimeIn = $attendanceDate->copy()->setTime(22, 0, 0); // 10:00 PM
+                            Log::info("Detected night shift", ['attendance_id' => $attendance->id]);
+                        }
+                        else {
+                            Log::info("Using fallback shift detection", ['attendance_id' => $attendance->id]);
+                            // Fallback to time_in based detection
+                            if ($timeInHour >= 6 && $timeInHour <= 10) {
+                                $expectedTimeIn = $attendanceDate->copy()->setTime(8, 0, 0); // 8:00 AM
+                            } elseif ($timeInHour >= 13 && $timeInHour <= 16) {
+                                $expectedTimeIn = $attendanceDate->copy()->setTime(14, 0, 0); // 2:00 PM
+                            } elseif ($timeInHour >= 17 && $timeInHour <= 20) {
+                                $expectedTimeIn = $attendanceDate->copy()->setTime(18, 0, 0); // 6:00 PM
+                            } elseif ($timeInHour >= 21 || $timeInHour <= 5) {
+                                $expectedTimeIn = $attendanceDate->copy()->setTime(22, 0, 0); // 10:00 PM
+                            } else {
+                                $expectedTimeIn = $attendanceDate->copy()->setTime(8, 0, 0); // Default 8:00 AM
+                            }
+                        }
                     } else {
-                        // Default to morning shift if uncertain
-                        $expectedTimeIn = $attendanceDate->copy()->setTime(8, 0, 0);
+                        // No time_out available, use time_in based detection
+                        if ($timeInHour >= 6 && $timeInHour <= 10) {
+                            $expectedTimeIn = $attendanceDate->copy()->setTime(8, 0, 0); // 8:00 AM
+                        } elseif ($timeInHour >= 13 && $timeInHour <= 16) {
+                            $expectedTimeIn = $attendanceDate->copy()->setTime(14, 0, 0); // 2:00 PM
+                        } elseif ($timeInHour >= 17 && $timeInHour <= 20) {
+                            $expectedTimeIn = $attendanceDate->copy()->setTime(18, 0, 0); // 6:00 PM
+                        } elseif ($timeInHour >= 21 || $timeInHour <= 5) {
+                            $expectedTimeIn = $attendanceDate->copy()->setTime(22, 0, 0); // 10:00 PM
+                        } else {
+                            $expectedTimeIn = $attendanceDate->copy()->setTime(8, 0, 0); // Default 8:00 AM
+                        }
                     }
                     
-                    // Debug time parsing
-                    Log::info("Time parsing debug", [
-                        'attendance_id' => $attendance->id,
-                        'raw_attendance_date' => $attendance->attendance_date,
-                        'raw_time_in' => $attendance->time_in,
-                        'parsed_attendance_date' => $attendanceDate->format('Y-m-d H:i:s'),
-                        'parsed_expected_time_in' => $expectedTimeIn->format('Y-m-d H:i:s'),
-                        'parsed_actual_time_in' => $actualTimeIn->format('Y-m-d H:i:s')
-                    ]);
-                    
-                    // Calculate initial late minutes
-                    $initialLateMinutes = 0;
+                    // FIXED: Always calculate late minutes if time_in is after expected time
                     if ($actualTimeIn->gt($expectedTimeIn)) {
-                        $initialLateMinutes = abs($actualTimeIn->diffInMinutes($expectedTimeIn));
+                        $lateMinutes = abs($actualTimeIn->diffInMinutes($expectedTimeIn));
+                    } else {
+                        $lateMinutes = 0;
                     }
+                    
+                    Log::info("Late calculation", [
+                        'attendance_id' => $attendance->id,
+                        'expected_time_in' => $expectedTimeIn->format('H:i:s'),
+                        'actual_time_in' => $actualTimeIn->format('H:i:s'),
+                        'late_minutes' => $lateMinutes
+                    ]);
                     
                 } catch (\Exception $e) {
                     Log::error("Error parsing time_in for attendance {$attendance->id}: " . $e->getMessage());
@@ -119,14 +180,6 @@ private function autoRecalculateMetrics($attendances)
                     $timeOut = $attendance->time_out;
                 }
                 
-                Log::info("Time out determination", [
-                    'attendance_id' => $attendance->id,
-                    'is_nightshift' => $attendance->is_nightshift ?? false,
-                    'raw_time_out' => $attendance->time_out,
-                    'raw_next_day_timeout' => $attendance->next_day_timeout ?? null,
-                    'selected_time_out' => $timeOut
-                ]);
-                
                 // Check if this is a halfday scenario
                 $hasPartialData = ($attendance->time_in || $attendance->break_in || $attendance->break_out || $timeOut);
                 
@@ -137,40 +190,13 @@ private function autoRecalculateMetrics($attendances)
                         $timeOutParsed = \Carbon\Carbon::parse($timeOut);
                         $roundedTimeOut = $this->applyTimeOutRounding($timeOut);
                         
-                        Log::info("Time out rounding applied", [
-                            'attendance_id' => $attendance->id,
-                            'original_time_in' => $timeIn->format('H:i:s'),
-                            'original_time_out' => $timeOutParsed->format('H:i:s'),
-                            'rounded_time_out' => $roundedTimeOut->format('H:i:s')
-                        ]);
-                        
                         // Handle next day scenarios for night shifts
                         if ($attendance->is_nightshift && $roundedTimeOut->lt($timeIn)) {
                             $roundedTimeOut->addDay();
-                            Log::info("Added day to night shift rounded time out", [
-                                'attendance_id' => $attendance->id,
-                                'adjusted_rounded_time_out' => $roundedTimeOut->format('Y-m-d H:i:s')
-                            ]);
                         }
                         
                         // Calculate total worked minutes using original time in and rounded time out
                         $totalWorkedMinutes = abs($roundedTimeOut->diffInMinutes($timeIn));
-                        
-                        // Additional validation - if time_out is before time_in, something is wrong
-                        if ($roundedTimeOut->lt($timeIn)) {
-                            Log::warning("Rounded time out is before time in - possible data issue", [
-                                'attendance_id' => $attendance->id,
-                                'time_in' => $timeIn->format('Y-m-d H:i:s'),
-                                'rounded_time_out' => $roundedTimeOut->format('Y-m-d H:i:s')
-                            ]);
-                        }
-                        
-                        Log::info("Total worked time calculation with time out rounding", [
-                            'attendance_id' => $attendance->id,
-                            'time_in' => $timeIn->format('Y-m-d H:i:s'),
-                            'rounded_time_out' => $roundedTimeOut->format('Y-m-d H:i:s'),
-                            'total_worked_minutes' => $totalWorkedMinutes
-                        ]);
                         
                         // Continue with break calculation (using original break times)
                         $breakMinutes = 0;
@@ -195,30 +221,14 @@ private function autoRecalculateMetrics($attendances)
                                         $breakMinutes = 60;
                                     }
                                 } else {
-                                    Log::warning("Invalid break times, no break deduction applied", [
-                                        'attendance_id' => $attendance->id,
-                                        'break_out' => $breakOut->format('Y-m-d H:i:s'),
-                                        'break_in' => $breakIn->format('Y-m-d H:i:s'),
-                                        'work_period' => $timeIn->format('H:i') . ' - ' . $timeOutParsed->format('H:i')
-                                    ]);
                                     $breakMinutes = 0;
                                 }
-                                
-                                Log::info("Break time calculation", [
-                                    'attendance_id' => $attendance->id,
-                                    'break_out' => $breakOut->format('Y-m-d H:i:s'),
-                                    'break_in' => $breakIn->format('Y-m-d H:i:s'),
-                                    'break_minutes' => $breakMinutes
-                                ]);
                             } catch (\Exception $e) {
                                 Log::error("Error parsing break times for attendance {$attendance->id}: " . $e->getMessage());
                                 $breakMinutes = 0;
                             }
                         } else {
                             $breakMinutes = 0;
-                            Log::info("No break times recorded, no break deduction applied", [
-                                'attendance_id' => $attendance->id
-                            ]);
                         }
                         
                         // Calculate net worked time
@@ -226,14 +236,6 @@ private function autoRecalculateMetrics($attendances)
                         
                         // Calculate hours worked
                         $hoursWorked = round($netWorkedMinutes / 60, 2);
-                        
-                        Log::info("Work hours calculation with time out rounding", [
-                            'attendance_id' => $attendance->id,
-                            'total_worked_minutes' => $totalWorkedMinutes,
-                            'break_minutes' => $breakMinutes,
-                            'net_worked_minutes' => $netWorkedMinutes,
-                            'hours_worked' => $hoursWorked
-                        ]);
                         
                     } catch (\Exception $e) {
                         Log::error("Error calculating work hours for attendance {$attendance->id}: " . $e->getMessage());
@@ -246,41 +248,13 @@ private function autoRecalculateMetrics($attendances)
                 // Check if it's a halfday
                 if ($hoursWorked == 0 && $hasPartialData) {
                     $isHalfday = true;
-                    Log::info("Detected halfday scenario", [
-                        'attendance_id' => $attendance->id,
-                        'has_time_in' => !empty($attendance->time_in),
-                        'has_break_in' => !empty($attendance->break_in),
-                        'has_break_out' => !empty($attendance->break_out),
-                        'has_time_out' => !empty($timeOut),
-                        'hours_worked' => $hoursWorked
-                    ]);
                 }
                 
-                // Apply late calculation rules
-                if ($isHalfday) {
-                    // For halfday, no late calculation
-                    $lateMinutes = 0;
-                    Log::info("Halfday detected - setting late minutes to 0", [
-                        'attendance_id' => $attendance->id
-                    ]);
-                } elseif ($hoursWorked >= 9) {
-                    // If working 9+ hours, not considered late
-                    $lateMinutes = 0;
-                    Log::info("Working 9+ hours - not considered late", [
-                        'attendance_id' => $attendance->id,
-                        'hours_worked' => $hoursWorked,
-                        'initial_late_minutes' => $initialLateMinutes
-                    ]);
-                } else {
-                    // Apply normal late calculation for less than 9 hours
-                    $lateMinutes = $initialLateMinutes;
-                    Log::info("Normal late calculation applied", [
-                        'attendance_id' => $attendance->id,
-                        'hours_worked' => $hoursWorked,
-                        'late_minutes' => $lateMinutes
-                    ]);
-                }
+                // FIXED: Late calculation logic - removed the 9+ hours check
+                // Late minutes are always calculated from expected time if employee is late
+                // No special handling based on hours worked
                 
+                // Calculate undertime
                 if ($isHalfday) {
                     // For halfday, no undertime calculation
                     $undertimeMinutes = 0;
@@ -289,7 +263,6 @@ private function autoRecalculateMetrics($attendances)
                     ]);
                 } elseif ($hoursWorked == 0 || !$timeOut) {
                     // If no valid hours worked or no time_out, set undertime to 0
-                    // This prevents showing undertime when there's insufficient data
                     $undertimeMinutes = 0;
                     Log::info("No valid work hours calculated - setting undertime minutes to 0", [
                         'attendance_id' => $attendance->id,
@@ -333,7 +306,7 @@ private function autoRecalculateMetrics($attendances)
                 Log::info("Final calculations", [
                     'attendance_id' => $attendance->id,
                     'hours_worked' => $hoursWorked,
-                    'late_minutes' => $lateMinutes,
+                    'late_minutes' => $lateMinutes,  // FIXED: This will now show 12 minutes for your example
                     'undertime_minutes' => $undertimeMinutes,
                     'is_halfday' => $isHalfday
                 ]);
@@ -379,11 +352,6 @@ private function autoRecalculateMetrics($attendances)
                                 'hours_worked' => $hoursWorked,
                                 'updated_at' => now()
                             ]);
-                        
-                        Log::info("Database update result", [
-                            'attendance_id' => $attendance->id,
-                            'affected_rows' => $updateResult
-                        ]);
                         
                         // Update the current object for display
                         $attendance->late_minutes = $lateMinutes;
@@ -434,178 +402,266 @@ private function autoRecalculateMetrics($attendances)
      * Display the processed attendance records page
      */
     public function index(Request $request)
-{
-    // Get query parameters for filtering
-    $searchTerm = $request->input('search');
-    $dateFilter = $request->input('date');
-    $departmentFilter = $request->input('department');
-    $editsOnlyFilter = $request->boolean('edits_only');
-    $perPage = $request->input('per_page', 25);
-    
-    // Build query
-    $query = $this->buildAttendanceQuery($request);
-    
-    // Order by date descending and paginate
-    $attendances = $query->orderBy('processed_attendances.attendance_date', 'asc')
-                         ->paginate($perPage);
-    
-    // AUTO-RECALCULATE: Recalculate metrics for displayed records
-    $recalculatedCount = $this->autoRecalculateMetrics($attendances->items());
-    
-    // Return Inertia view with data
-    return Inertia::render('Timesheet/ProcessedAttendanceList', [
-        'attendances' => $attendances->items(),
-        'pagination' => [
-            'total' => $attendances->total(),
-            'per_page' => $attendances->perPage(),
-            'current_page' => $attendances->currentPage(),
-            'last_page' => $attendances->lastPage()
-        ],
-        'filters' => [
-            'search' => $searchTerm,
-            'date' => $dateFilter,
-            'department' => $departmentFilter,
-            'edits_only' => $editsOnlyFilter
-        ],
-        'auth' => [
-            'user' => auth()->user()
-        ],
-        'recalculated_count' => $recalculatedCount // Pass recalculation info to frontend
-    ]);
-}
-
-/**
- * Get attendance list with auto-recalculation
- */
-public function list(Request $request)
-{
-    try {
-        // Build query
-        $query = $this->buildAttendanceQuery($request);
+    {
+        // Get query parameters for filtering
+        $searchTerm = $request->input('search');
+        $dateFilter = $request->input('date');
+        $departmentFilter = $request->input('department');
+        $editsOnlyFilter = $request->boolean('edits_only');
         $perPage = $request->input('per_page', 25);
         
-        // Order by date descending and paginate
-        $attendances = $query->orderBy('processed_attendances.attendance_date', 'desc')
-                            ->paginate($perPage);
+        // Build query
+        $query = $this->buildAttendanceQuery($request);
         
-        // Process attendance data with accessors
-        $processedData = $attendances->items();
+        // Order by date descending and paginate
+        $attendances = $query->orderBy('processed_attendances.attendance_date', 'asc')
+                             ->paginate($perPage);
         
         // AUTO-RECALCULATE: Recalculate metrics for displayed records
-        $recalculatedCount = $this->autoRecalculateMetrics($processedData);
+        $recalculatedCount = $this->autoRecalculateMetrics($attendances->items());
         
-        // Format the datetime fields for each record - IMPROVED FORMATTING
-        foreach ($processedData as &$attendance) {
-    // FIXED: Format times consistently with seconds for better parsing
-    $attendance->time_in_formatted = $this->formatTimeForAPI($attendance->time_in);
-    $attendance->time_out_formatted = $this->formatTimeForAPI($attendance->time_out);
-    $attendance->break_in_formatted = $this->formatTimeForAPI($attendance->break_in);
-    $attendance->break_out_formatted = $this->formatTimeForAPI($attendance->break_out);
-    $attendance->next_day_timeout_formatted = $this->formatTimeForAPI($attendance->next_day_timeout);
-    
-    // Keep original timestamps for editing - FIXED: Use proper format check
-    $attendance->time_in_raw = $attendance->time_in ? 
-        ($attendance->time_in instanceof \Carbon\Carbon ? 
-            $attendance->time_in->format('Y-m-d H:i:s') : 
-            $attendance->time_in) : null;
-            
-    $attendance->time_out_raw = $attendance->time_out ? 
-        ($attendance->time_out instanceof \Carbon\Carbon ? 
-            $attendance->time_out->format('Y-m-d H:i:s') : 
-            $attendance->time_out) : null;
-            
-    $attendance->break_in_raw = $attendance->break_in ? 
-        ($attendance->break_in instanceof \Carbon\Carbon ? 
-            $attendance->break_in->format('Y-m-d H:i:s') : 
-            $attendance->break_in) : null;
-            
-    $attendance->break_out_raw = $attendance->break_out ? 
-        ($attendance->break_out instanceof \Carbon\Carbon ? 
-            $attendance->break_out->format('Y-m-d H:i:s') : 
-            $attendance->break_out) : null;
-            
-    $attendance->next_day_timeout_raw = $attendance->next_day_timeout ? 
-        ($attendance->next_day_timeout instanceof \Carbon\Carbon ? 
-            $attendance->next_day_timeout->format('Y-m-d H:i:s') : 
-            $attendance->next_day_timeout) : null;
-    
-    // Format date and get day of week - unchanged
-    if ($attendance->attendance_date) {
-        $attendance->attendance_date_formatted = $attendance->attendance_date->format('Y-m-d');
-        $attendance->day = $attendance->attendance_date->format('l');
-    } else {
-        $attendance->attendance_date_formatted = null;
-        $attendance->day = null;
-    }
-    
-    // Add employee info - unchanged
-    if ($attendance->employee) {
-        $attendance->employee_name = trim($attendance->employee->Fname . ' ' . $attendance->employee->Lname);
-        $attendance->idno = $attendance->employee->idno;
-        $attendance->department = $attendance->employee->Department;
-        $attendance->line = $attendance->employee->Line;
-    } else {
-        $attendance->employee_name = 'Unknown Employee';
-        $attendance->idno = 'N/A';
-        $attendance->department = 'N/A';
-        $attendance->line = 'N/A';
-    }
-}
-        
-        return response()->json([
-            'success' => true,
-            'data' => $processedData,
+        // Return Inertia view with data
+        return Inertia::render('Timesheet/ProcessedAttendanceList', [
+            'attendances' => $attendances->items(),
             'pagination' => [
                 'total' => $attendances->total(),
                 'per_page' => $attendances->perPage(),
                 'current_page' => $attendances->currentPage(),
                 'last_page' => $attendances->lastPage()
             ],
-            'recalculated_count' => $recalculatedCount // Include recalculation info
+            'filters' => [
+                'search' => $searchTerm,
+                'date' => $dateFilter,
+                'department' => $departmentFilter,
+                'edits_only' => $editsOnlyFilter
+            ],
+            'auth' => [
+                'user' => auth()->user()
+            ],
+            'recalculated_count' => $recalculatedCount // Pass recalculation info to frontend
         ]);
-    } catch (\Exception $e) {
-        Log::error('Error fetching attendance data: ' . $e->getMessage());
-        
-        return response()->json([
-            'success' => false,
-            'message' => 'Failed to fetch attendance data: ' . $e->getMessage()
-        ], 500);
     }
-}
 
-// Add this new method for consistent API time formatting:
-private function formatTimeForAPI($timeValue)
-{
-    if ($timeValue === null || $timeValue === '') {
-        return null;
+    /**
+     * Get attendance list with auto-recalculation
+     */
+    public function list(Request $request)
+    {
+        try {
+            // Build query
+            $query = $this->buildAttendanceQuery($request);
+            $perPage = $request->input('per_page', 25);
+            
+            // Order by date descending and paginate
+            $attendances = $query->orderBy('processed_attendances.attendance_date', 'desc')
+                                ->paginate($perPage);
+            
+            // Process attendance data with accessors
+            $processedData = $attendances->items();
+            
+            // AUTO-RECALCULATE: Recalculate metrics for displayed records
+            $recalculatedCount = $this->autoRecalculateMetrics($processedData);
+            
+            // Format the datetime fields for each record - IMPROVED FORMATTING
+            foreach ($processedData as &$attendance) {
+                // FIXED: Format times consistently with seconds for better parsing
+                $attendance->time_in_formatted = $this->formatTimeForAPI($attendance->time_in);
+                $attendance->time_out_formatted = $this->formatTimeForAPI($attendance->time_out);
+                $attendance->break_in_formatted = $this->formatTimeForAPI($attendance->break_in);
+                $attendance->break_out_formatted = $this->formatTimeForAPI($attendance->break_out);
+                $attendance->next_day_timeout_formatted = $this->formatTimeForAPI($attendance->next_day_timeout);
+                
+                // Keep original timestamps for editing - FIXED: Use proper format check
+                $attendance->time_in_raw = $attendance->time_in ? 
+                    ($attendance->time_in instanceof \Carbon\Carbon ? 
+                        $attendance->time_in->format('Y-m-d H:i:s') : 
+                        $attendance->time_in) : null;
+                        
+                $attendance->time_out_raw = $attendance->time_out ? 
+                    ($attendance->time_out instanceof \Carbon\Carbon ? 
+                        $attendance->time_out->format('Y-m-d H:i:s') : 
+                        $attendance->time_out) : null;
+                        
+                $attendance->break_in_raw = $attendance->break_in ? 
+                    ($attendance->break_in instanceof \Carbon\Carbon ? 
+                        $attendance->break_in->format('Y-m-d H:i:s') : 
+                        $attendance->break_in) : null;
+                        
+                $attendance->break_out_raw = $attendance->break_out ? 
+                    ($attendance->break_out instanceof \Carbon\Carbon ? 
+                        $attendance->break_out->format('Y-m-d H:i:s') : 
+                        $attendance->break_out) : null;
+                        
+                $attendance->next_day_timeout_raw = $attendance->next_day_timeout ? 
+                    ($attendance->next_day_timeout instanceof \Carbon\Carbon ? 
+                        $attendance->next_day_timeout->format('Y-m-d H:i:s') : 
+                        $attendance->next_day_timeout) : null;
+                
+                // Format date and get day of week - unchanged
+                if ($attendance->attendance_date) {
+                    $attendance->attendance_date_formatted = $attendance->attendance_date->format('Y-m-d');
+                    $attendance->day = $attendance->attendance_date->format('l');
+                } else {
+                    $attendance->attendance_date_formatted = null;
+                    $attendance->day = null;
+                }
+                
+                // Add employee info - unchanged
+                if ($attendance->employee) {
+                    $attendance->employee_name = trim($attendance->employee->Fname . ' ' . $attendance->employee->Lname);
+                    $attendance->idno = $attendance->employee->idno;
+                    $attendance->department = $attendance->employee->Department;
+                    $attendance->line = $attendance->employee->Line;
+                } else {
+                    $attendance->employee_name = 'Unknown Employee';
+                    $attendance->idno = 'N/A';
+                    $attendance->department = 'N/A';
+                    $attendance->line = 'N/A';
+                }
+
+                // NEW: Add offset, rest day, and retro data from related tables
+                $this->populateRelatedData($attendance);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'data' => $processedData,
+                'pagination' => [
+                    'total' => $attendances->total(),
+                    'per_page' => $attendances->perPage(),
+                    'current_page' => $attendances->currentPage(),
+                    'last_page' => $attendances->lastPage()
+                ],
+                'recalculated_count' => $recalculatedCount // Include recalculation info
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error fetching attendance data: ' . $e->getMessage());
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to fetch attendance data: ' . $e->getMessage()
+            ], 500);
+        }
     }
-    
-    try {
-        if ($timeValue instanceof \Carbon\Carbon) {
-            // Return time in H:i:s format for consistent parsing
-            return $timeValue->format('H:i:s');
+
+     private function populateRelatedData($attendance)
+    {
+        try {
+            $attendanceDate = $attendance->attendance_date;
+            $employeeId = $attendance->employee_id;
+
+            // Get offset data for this employee on this date (debit transactions)
+            $offsetData = Offset::where('employee_id', $employeeId)
+                ->whereDate('date', $attendanceDate)
+                ->where('transaction_type', 'debit')
+                ->where('status', 'approved')
+                ->sum('hours');
+            
+            // Update the offset field in the attendance record if different
+            if ($attendance->offset != $offsetData) {
+                $attendance->offset = $offsetData;
+                DB::table('processed_attendances')
+                    ->where('id', $attendance->id)
+                    ->update(['offset' => $offsetData]);
+            }
+
+            // Get rest day data (cancel rest day)
+            $restDayData = CancelRestDay::where('employee_id', $employeeId)
+                ->whereDate('rest_day_date', $attendanceDate)
+                ->where('status', 'approved')
+                ->exists();
+            
+            // Update the restday field in the attendance record if different
+            if ($attendance->restday != $restDayData) {
+                $attendance->restday = $restDayData;
+                DB::table('processed_attendances')
+                    ->where('id', $attendance->id)
+                    ->update(['restday' => $restDayData]);
+            }
+
+            // Get retro data for this employee on this date
+            $retroData = Retro::where('employee_id', $employeeId)
+                ->whereDate('retro_date', $attendanceDate)
+                ->where('status', 'approved')
+                ->sum(DB::raw('computed_amount'));
+            
+            // Update the retromultiplier field in the attendance record if different
+            // Note: Using retromultiplier field to store computed retro amount
+            if ($attendance->retromultiplier != $retroData) {
+                $attendance->retromultiplier = $retroData;
+                DB::table('processed_attendances')
+                    ->where('id', $attendance->id)
+                    ->update(['retromultiplier' => $retroData]);
+            }
+
+            Log::debug("Populated related data for attendance {$attendance->id}", [
+                'offset_hours' => $offsetData,
+                'is_rest_day' => $restDayData,
+                'retro_amount' => $retroData
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error("Error populating related data for attendance {$attendance->id}: " . $e->getMessage());
+        }
+    }
+private function formatTimeForAPI($timeValue)
+    {
+        if ($timeValue === null || $timeValue === '') {
+            return null;
         }
         
-        $carbonTime = \Carbon\Carbon::parse($timeValue);
-        // Return time in H:i:s format for consistent parsing
-        return $carbonTime->format('H:i:s');
-        
-    } catch (\Exception $e) {
-        Log::warning('API time formatting error: ' . $e->getMessage(), [
-            'time_value' => $timeValue
-        ]);
-        return null;
+        try {
+            if ($timeValue instanceof \Carbon\Carbon) {
+                // Return time in H:i:s format for consistent parsing
+                return $timeValue->format('H:i:s');
+            }
+            
+            $carbonTime = \Carbon\Carbon::parse($timeValue);
+            // Return time in H:i:s format for consistent parsing
+            return $carbonTime->format('H:i:s');
+            
+        } catch (\Exception $e) {
+            Log::warning('API time formatting error: ' . $e->getMessage(), [
+                'time_value' => $timeValue
+            ]);
+            return null;
+        }
     }
-}
 
-public function recalculateAll(Request $request)
+    public function recalculateAll(Request $request)
 {
     try {
+        // Enhanced validation
+        $validator = Validator::make($request->all(), [
+            'date' => 'nullable|date',
+            'department' => 'nullable|string|max:255'
+        ]);
+
+        if ($validator->fails()) {
+            Log::warning('Recalculation validation failed', [
+                'errors' => $validator->errors()->toArray(),
+                'request_data' => $request->all()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
         $dateFilter = $request->input('date');
         $departmentFilter = $request->input('department');
         
-        // Build query for recalculation
-        $query = ProcessedAttendance::whereNotNull('time_in');
+        Log::info('Starting manual recalculation', [
+            'date_filter' => $dateFilter,
+            'department_filter' => $departmentFilter,
+            'initiated_by' => auth()->id()
+        ]);
+        
+        // Build query for recalculation with enhanced filtering
+        $query = ProcessedAttendance::whereNotNull('time_in')
+            ->where('posting_status', '!=', 'posted'); // Only recalculate non-posted records
         
         if ($dateFilter) {
             $query->whereDate('attendance_date', $dateFilter);
@@ -617,122 +673,282 @@ public function recalculateAll(Request $request)
             });
         }
         
-        $attendances = $query->get();
+        $attendances = $query->with('employee')->get();
         $recalculatedCount = 0;
+        $errorCount = 0;
+        $errors = [];
         
-        foreach ($attendances as $attendance) {
-            try {
-                // Store original values
-                $originalLate = $attendance->late_minutes ?? 0;
-                $originalUnder = $attendance->undertime_minutes ?? 0;
-                $originalHours = $attendance->hours_worked ?? 0;
-                
-                // FIXED: Calculate late minutes (NO grace period - 8:00 AM sharp)
-                $lateMinutes = 0;
-                if ($attendance->time_in) {
-                    $attendanceDate = \Carbon\Carbon::parse($attendance->attendance_date);
-                    $expectedTimeIn = $attendanceDate->copy()->setTime(8, 0, 0); // 8:00 AM exactly
-                    $actualTimeIn = \Carbon\Carbon::parse($attendance->time_in);
+        Log::info("Found {$attendances->count()} attendance records for recalculation");
+        
+        // Use database transaction for better data integrity
+        DB::beginTransaction();
+        
+        try {
+            foreach ($attendances as $attendance) {
+                try {
+                    // Store original values for comparison
+                    $originalLate = $attendance->late_minutes ?? 0;
+                    $originalUnder = $attendance->undertime_minutes ?? 0;
+                    $originalHours = $attendance->hours_worked ?? 0;
+                    $originalRetro = $attendance->retromultiplier ?? 0;
                     
-                    if ($actualTimeIn->gt($expectedTimeIn)) {
-                        $lateMinutes = $actualTimeIn->diffInMinutes($expectedTimeIn);
-                    }
-                }
-                
-                // FIXED: Calculate undertime minutes
-                $undertimeMinutes = 0;
-                $timeOut = $attendance->is_nightshift && $attendance->next_day_timeout 
-                    ? $attendance->next_day_timeout 
-                    : $attendance->time_out;
-                
-                if ($attendance->time_in && $timeOut) {
-                    $timeIn = \Carbon\Carbon::parse($attendance->time_in);
-                    $timeOut = \Carbon\Carbon::parse($timeOut);
+                    // Initialize variables
+                    $lateMinutes = 0;
+                    $undertimeMinutes = 0;
+                    $hoursWorked = 0;
+                    $isHalfday = false;
                     
-                    // Handle next day scenarios for night shifts
-                    if ($attendance->is_nightshift && $timeOut->lt($timeIn)) {
-                        $timeOut->addDay();
-                    }
-                    
-                    // Calculate total worked minutes
-                    $totalWorkedMinutes = $timeOut->diffInMinutes($timeIn);
-                    
-                    // Subtract break time
-                    $breakMinutes = 60; // Default 1-hour break
-                    if ($attendance->break_out && $attendance->break_in) {
-                        $breakOut = \Carbon\Carbon::parse($attendance->break_out);
-                        $breakIn = \Carbon\Carbon::parse($attendance->break_in);
-                        if ($breakIn->gt($breakOut)) {
-                            $breakMinutes = $breakIn->diffInMinutes($breakOut);
+                    if ($attendance->time_in) {
+                        // Calculate late minutes using improved logic
+                        try {
+                            $attendanceDate = \Carbon\Carbon::parse($attendance->attendance_date);
+                            $actualTimeIn = \Carbon\Carbon::parse($attendance->time_in);
+                            
+                            // Determine expected time based on actual time_in to identify shift type
+                            $timeInHour = $actualTimeIn->hour;
+                            $expectedTimeIn = null;
+                            
+                            if ($timeInHour >= 6 && $timeInHour <= 10) {
+                                // Morning shift: 8:00 AM
+                                $expectedTimeIn = $attendanceDate->copy()->setTime(8, 0, 0);
+                            } elseif ($timeInHour >= 13 && $timeInHour <= 16) {
+                                // Afternoon shift: 2:00 PM
+                                $expectedTimeIn = $attendanceDate->copy()->setTime(14, 0, 0);
+                            } elseif ($timeInHour >= 17 && $timeInHour <= 20) {
+                                // Evening shift: 6:00 PM
+                                $expectedTimeIn = $attendanceDate->copy()->setTime(18, 0, 0);
+                            } elseif ($timeInHour >= 21 || $timeInHour <= 5) {
+                                // Night shift: 10:00 PM
+                                $expectedTimeIn = $attendanceDate->copy()->setTime(22, 0, 0);
+                            } else {
+                                // Default to morning shift if uncertain
+                                $expectedTimeIn = $attendanceDate->copy()->setTime(8, 0, 0);
+                            }
+                            
+                            // Calculate initial late minutes
+                            $initialLateMinutes = 0;
+                            if ($actualTimeIn->gt($expectedTimeIn)) {
+                                $initialLateMinutes = abs($actualTimeIn->diffInMinutes($expectedTimeIn));
+                            }
+                            
+                        } catch (\Exception $e) {
+                            Log::error("Error parsing time_in for attendance {$attendance->id}: " . $e->getMessage());
+                            continue; // Skip this record if time parsing fails
+                        }
+                        
+                        // Calculate working hours and determine if it's a halfday
+                        $timeOut = null;
+                        if ($attendance->is_nightshift && $attendance->next_day_timeout) {
+                            $timeOut = $attendance->next_day_timeout;
+                        } elseif ($attendance->time_out) {
+                            $timeOut = $attendance->time_out;
+                        }
+                        
+                        // Check if this is a halfday scenario
+                        $hasPartialData = ($attendance->time_in || $attendance->break_in || $attendance->break_out || $timeOut);
+                        
+                        if ($timeOut) {
+                            try {
+                                // Apply time rounding for time out only (round down to nearest hour)
+                                $timeIn = \Carbon\Carbon::parse($attendance->time_in);
+                                $timeOutParsed = \Carbon\Carbon::parse($timeOut);
+                                $roundedTimeOut = $this->applyTimeOutRounding($timeOut);
+                                
+                                // Handle next day scenarios for night shifts
+                                if ($attendance->is_nightshift && $roundedTimeOut->lt($timeIn)) {
+                                    $roundedTimeOut->addDay();
+                                }
+                                
+                                // Calculate total worked minutes using original time in and rounded time out
+                                $totalWorkedMinutes = abs($roundedTimeOut->diffInMinutes($timeIn));
+                                
+                                // Continue with break calculation (using original break times)
+                                $breakMinutes = 0;
+                                
+                                if ($attendance->break_out && $attendance->break_in) {
+                                    try {
+                                        $breakOut = \Carbon\Carbon::parse($attendance->break_out);
+                                        $breakIn = \Carbon\Carbon::parse($attendance->break_in);
+                                        
+                                        // Validate break times are within work period (using original times)
+                                        if ($breakOut->gte($timeIn) && $breakOut->lte($timeOutParsed) && 
+                                            $breakIn->gte($timeIn) && $breakIn->lte($timeOutParsed) &&
+                                            $breakIn->gt($breakOut)) {
+                                            $breakMinutes = abs($breakIn->diffInMinutes($breakOut));
+                                            
+                                            // Reasonable break time validation (max 4 hours)
+                                            if ($breakMinutes > 240) {
+                                                Log::warning("Break time too long, using default", [
+                                                    'attendance_id' => $attendance->id,
+                                                    'calculated_break_minutes' => $breakMinutes
+                                                ]);
+                                                $breakMinutes = 60;
+                                            }
+                                        } else {
+                                            $breakMinutes = 0;
+                                        }
+                                    } catch (\Exception $e) {
+                                        Log::error("Error parsing break times for attendance {$attendance->id}: " . $e->getMessage());
+                                        $breakMinutes = 0;
+                                    }
+                                } else {
+                                    $breakMinutes = 0;
+                                }
+                                
+                                // Calculate net worked time
+                                $netWorkedMinutes = max(0, $totalWorkedMinutes - $breakMinutes);
+                                
+                                // Calculate hours worked
+                                $hoursWorked = round($netWorkedMinutes / 60, 2);
+                                
+                            } catch (\Exception $e) {
+                                Log::error("Error calculating work hours for attendance {$attendance->id}: " . $e->getMessage());
+                                // Keep default values (0) if calculation fails
+                            }
+                        } else {
+                            Log::warning("No time_out found for attendance {$attendance->id}");
+                        }
+                        
+                        // Check if it's a halfday
+                        if ($hoursWorked == 0 && $hasPartialData) {
+                            $isHalfday = true;
+                        }
+                        
+                        // Apply late calculation rules
+                        if ($isHalfday) {
+                            // For halfday, no late calculation
+                            $lateMinutes = 0;
+                        } elseif ($hoursWorked >= 9) {
+                            // If working 9+ hours, not considered late
+                            $lateMinutes = 0;
+                        } else {
+                            // Apply normal late calculation for less than 9 hours
+                            $lateMinutes = $initialLateMinutes;
+                        }
+                        
+                        // Calculate undertime
+                        if ($isHalfday) {
+                            // For halfday, no undertime calculation
+                            $undertimeMinutes = 0;
+                        } elseif ($hoursWorked == 0 || !$timeOut) {
+                            // If no valid hours worked or no time_out, set undertime to 0
+                            $undertimeMinutes = 0;
+                        } else {
+                            // Calculate undertime based on 9-hour minimum requirement
+                            $minimumWorkHours = 9;
+                            $minimumWorkMinutes = $minimumWorkHours * 60; // 9 hours = 540 minutes
+                            $netWorkedMinutes = $hoursWorked * 60;
+                            
+                            if ($netWorkedMinutes < $minimumWorkMinutes) {
+                                $calculatedUndertime = round($minimumWorkMinutes - $netWorkedMinutes, 2);
+                                
+                                // If undertime is less than 60 minutes (1 hour), set to 0
+                                if ($calculatedUndertime < 60) {
+                                    $undertimeMinutes = 0;
+                                } else {
+                                    $undertimeMinutes = $calculatedUndertime;
+                                }
+                            } else {
+                                $undertimeMinutes = 0;
+                            }
                         }
                     }
                     
-                    $netWorkedMinutes = max(0, $totalWorkedMinutes - $breakMinutes);
-                    $standardWorkMinutes = 8 * 60; // 8 hours = 480 minutes
+                    // FIXED: Calculate retro value properly
+                    $retroValue = $this->calculateRetroMultiplierValue($attendance->employee_id, $attendance->attendance_date);
                     
-                    if ($netWorkedMinutes < $standardWorkMinutes) {
-                        $undertimeMinutes = $standardWorkMinutes - $netWorkedMinutes;
-                    }
-                }
-                
-                // FIXED: Calculate hours worked
-                $hoursWorked = 0;
-                if ($attendance->time_in && $timeOut) {
-                    $timeIn = \Carbon\Carbon::parse($attendance->time_in);
-                    $timeOut = \Carbon\Carbon::parse($timeOut);
+                    // Check if values need updating (more precise comparison)
+                    $needsUpdate = false;
                     
-                    // Handle next day scenarios for night shifts
-                    if ($attendance->is_nightshift && $timeOut->lt($timeIn)) {
-                        $timeOut->addDay();
+                    if (abs($attendance->late_minutes - $lateMinutes) > 0.01) {
+                        $needsUpdate = true;
                     }
                     
-                    $totalWorkedMinutes = $timeOut->diffInMinutes($timeIn);
+                    if (abs($attendance->undertime_minutes - $undertimeMinutes) > 0.01) {
+                        $needsUpdate = true;
+                    }
                     
-                    // Subtract break time
-                    $breakMinutes = 60;
-                    if ($attendance->break_out && $attendance->break_in) {
-                        $breakOut = \Carbon\Carbon::parse($attendance->break_out);
-                        $breakIn = \Carbon\Carbon::parse($attendance->break_in);
-                        if ($breakIn->gt($breakOut)) {
-                            $breakMinutes = $breakIn->diffInMinutes($breakOut);
+                    if (abs($attendance->hours_worked - $hoursWorked) > 0.01) {
+                        $needsUpdate = true;
+                    }
+                    
+                    if (abs($attendance->retromultiplier - $retroValue) > 0.01) {
+                        $needsUpdate = true;
+                    }
+                    
+                    if ($needsUpdate) {
+                        try {
+                            // Update without triggering model events to avoid recursion
+                            $updateResult = DB::table('processed_attendances')
+                                ->where('id', $attendance->id)
+                                ->update([
+                                    'late_minutes' => $lateMinutes,
+                                    'undertime_minutes' => $undertimeMinutes,
+                                    'hours_worked' => $hoursWorked,
+                                    'retromultiplier' => $retroValue, // FIXED: Update retro value
+                                    'updated_at' => now()
+                                ]);
+                            
+                            $recalculatedCount++;
+                            
+                            Log::debug("Recalculated attendance metrics", [
+                                'id' => $attendance->id,
+                                'employee_id' => $attendance->employee_id,
+                                'late_minutes' => $lateMinutes,
+                                'undertime_minutes' => $undertimeMinutes,
+                                'hours_worked' => $hoursWorked,
+                                'retromultiplier' => $retroValue,
+                                'affected_rows' => $updateResult
+                            ]);
+                            
+                        } catch (\Exception $e) {
+                            $errorCount++;
+                            $error = "Error updating attendance {$attendance->id}: " . $e->getMessage();
+                            $errors[] = $error;
+                            Log::error($error);
                         }
                     }
                     
-                    $netWorkedMinutes = max(0, $totalWorkedMinutes - $breakMinutes);
-                    $hoursWorked = round($netWorkedMinutes / 60, 2);
+                } catch (\Exception $e) {
+                    $errorCount++;
+                    $error = "Error processing attendance {$attendance->id}: " . $e->getMessage();
+                    $errors[] = $error;
+                    Log::error($error, ['exception' => $e]);
                 }
-                
-                // Check if anything changed
-                if ($originalLate != $lateMinutes || 
-                    $originalUnder != $undertimeMinutes || 
-                    $originalHours != $hoursWorked) {
-                    
-                    // Update the record
-                    DB::table('processed_attendances')
-                        ->where('id', $attendance->id)
-                        ->update([
-                            'late_minutes' => $lateMinutes,
-                            'undertime_minutes' => $undertimeMinutes,
-                            'hours_worked' => $hoursWorked,
-                            'updated_at' => now()
-                        ]);
-                    
-                    $recalculatedCount++;
-                }
-                
-            } catch (\Exception $e) {
-                Log::error("Error recalculating attendance ID {$attendance->id}: " . $e->getMessage());
             }
+            
+            DB::commit();
+            
+            Log::info("Manual recalculation completed", [
+                'total_processed' => $attendances->count(),
+                'recalculated_count' => $recalculatedCount,
+                'error_count' => $errorCount
+            ]);
+            
+            $message = "Recalculated {$recalculatedCount} attendance records";
+            if ($errorCount > 0) {
+                $message .= ". {$errorCount} errors occurred.";
+            }
+            
+            return response()->json([
+                'success' => true,
+                'message' => $message,
+                'recalculated_count' => $recalculatedCount,
+                'error_count' => $errorCount,
+                'errors' => $errorCount > 0 ? array_slice($errors, 0, 5) : []
+            ]);
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            throw $e;
         }
         
-        return response()->json([
-            'success' => true,
-            'message' => "Recalculated {$recalculatedCount} attendance records",
-            'recalculated_count' => $recalculatedCount
-        ]);
-        
     } catch (\Exception $e) {
-        Log::error('Error in manual recalculation: ' . $e->getMessage());
+        Log::error('Error in manual recalculation process: ' . $e->getMessage(), [
+            'exception' => $e,
+            'trace' => $e->getTraceAsString(),
+            'request_data' => $request->all()
+        ]);
         
         return response()->json([
             'success' => false,
@@ -741,34 +957,79 @@ public function recalculateAll(Request $request)
     }
 }
 
-    private function safeFormatTime($timeValue)
-{
-    // Return null for empty values
-    if ($timeValue === null || $timeValue === '') {
-        return null;
+    private function updateRelatedDataFromTables($attendance)
+    {
+        try {
+            $attendanceDate = $attendance->attendance_date;
+            $employeeId = $attendance->employee_id;
+
+            // Update offset data
+            $offsetHours = Offset::where('employee_id', $employeeId)
+                ->whereDate('date', $attendanceDate)
+                ->where('transaction_type', 'debit')
+                ->where('status', 'approved')
+                ->sum('hours');
+
+            // Update rest day data
+            $isRestDay = CancelRestDay::where('employee_id', $employeeId)
+                ->whereDate('rest_day_date', $attendanceDate)
+                ->where('status', 'approved')
+                ->exists();
+
+            // Update retro data
+            $retroAmount = Retro::where('employee_id', $employeeId)
+                ->whereDate('retro_date', $attendanceDate)
+                ->where('status', 'approved')
+                ->sum(DB::raw('computed_amount'));
+
+            // Update the database
+            DB::table('processed_attendances')
+                ->where('id', $attendance->id)
+                ->update([
+                    'offset' => $offsetHours,
+                    'restday' => $isRestDay,
+                    'retromultiplier' => $retroAmount,
+                    'updated_at' => now()
+                ]);
+
+            Log::debug("Updated related data for attendance {$attendance->id}", [
+                'offset_hours' => $offsetHours,
+                'is_rest_day' => $isRestDay,
+                'retro_amount' => $retroAmount
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error("Error updating related data for attendance {$attendance->id}: " . $e->getMessage());
+        }
     }
-    
-    try {
-        // Check if it's already a Carbon instance
-        if ($timeValue instanceof \Carbon\Carbon) {
-            // Return in H:i:s format (24-hour) for consistent frontend processing
-            return $timeValue->format('H:i:s');
+
+    private function safeFormatTime($timeValue)
+    {
+        // Return null for empty values
+        if ($timeValue === null || $timeValue === '') {
+            return null;
         }
         
-        // Try to parse the value using Carbon
-        $carbonTime = \Carbon\Carbon::parse($timeValue);
-        
-        // Return in H:i:s format (24-hour) for consistent frontend processing
-        return $carbonTime->format('H:i:s');
-        
-    } catch (\Exception $e) {
-        Log::warning('Time formatting error: ' . $e->getMessage(), [
-            'time_value' => $timeValue
-        ]);
-        return null;
+        try {
+            // Check if it's already a Carbon instance
+            if ($timeValue instanceof \Carbon\Carbon) {
+                // Return in H:i:s format (24-hour) for consistent frontend processing
+                return $timeValue->format('H:i:s');
+            }
+            
+            // Try to parse the value using Carbon
+            $carbonTime = \Carbon\Carbon::parse($timeValue);
+            
+            // Return in H:i:s format (24-hour) for consistent frontend processing
+            return $carbonTime->format('H:i:s');
+            
+        } catch (\Exception $e) {
+            Log::warning('Time formatting error: ' . $e->getMessage(), [
+                'time_value' => $timeValue
+            ]);
+            return null;
+        }
     }
-}
-
     
     
     private function buildAttendanceQuery(Request $request)
@@ -778,7 +1039,8 @@ public function recalculateAll(Request $request)
     $dateFilter = $request->input('date');
     $departmentFilter = $request->input('department');
     $editsOnlyFilter = $request->boolean('edits_only');
-    $nightShiftFilter = $request->boolean('night_shift_only'); // NEW: Night shift filter
+    $nightShiftFilter = $request->boolean('night_shift_only');
+    $problemsOnlyFilter = $request->boolean('problems_only'); // ADD THIS LINE
     
     // Start building the query - UPDATED to show only non-posted records by default
     $query = ProcessedAttendance::with('employee')
@@ -812,34 +1074,55 @@ public function recalculateAll(Request $request)
         $query->where('is_nightshift', true);
     }
     
+    // NEW: Problems only filter - this is complex, so we'll handle it in post-processing
+    // We can't easily filter in SQL for problems, so we'll mark this for frontend filtering
+    if ($problemsOnlyFilter) {
+        // Add a flag to indicate we need to filter for problems in the frontend
+        $query->addSelect('*');
+    }
+    
     return $query;
 }
 
-/**
- * Update processed attendance record (UPDATED to include trip)
- */
-public function update(Request $request, $id)
+
+    /**
+     * Update processed attendance record (UPDATED to include trip)
+     */
+    public function update(Request $request, $id)
 {
     try {
         // Log incoming request data
         Log::info('Attendance update request for ID: ' . $id, [
-            'request_data' => $request->all()
+            'request_data' => $request->all(),
+            'is_ajax' => $request->ajax(),
+            'expects_json' => $request->expectsJson(),
+            'content_type' => $request->header('Content-Type'),
+            'accept' => $request->header('Accept')
         ]);
 
         $validator = Validator::make($request->all(), [
-            'time_in' => 'nullable|date',
-            'time_out' => 'nullable|date',
-            'break_in' => 'nullable|date',
-            'break_out' => 'nullable|date',
-            'next_day_timeout' => 'nullable|date',
+            'time_in' => 'nullable|date_format:H:i',
+            'time_out' => 'nullable|date_format:H:i', 
+            'break_in' => 'nullable|date_format:H:i',
+            'break_out' => 'nullable|date_format:H:i',
+            'next_day_timeout' => 'nullable|date_format:H:i',
             'is_nightshift' => 'boolean',
-            'trip' => 'nullable|numeric|min:0|max:999.99', // NEW: Trip validation
+            'trip' => 'nullable|numeric|min:0|max:999.99',
         ]);
 
         if ($validator->fails()) {
             Log::warning('Validation failed for attendance update ID: ' . $id, [
                 'errors' => $validator->errors()->toArray()
             ]);
+            
+            // Return JSON response for AJAX requests
+            if ($request->expectsJson() || $request->ajax()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
             
             return back()->withErrors($validator)->withInput();
         }
@@ -873,7 +1156,7 @@ public function update(Request $request, $id)
             'break_out' => $request->break_out ?: null,
             'next_day_timeout' => $isNightshift ? ($request->next_day_timeout ?: null) : null,
             'is_nightshift' => $isNightshift,
-            'trip' => $request->trip ? (float)$request->trip : 0, // NEW: Trip field
+            'trip' => $request->trip ? (float)$request->trip : 0,
             'source' => 'manual_edit', // Mark as manually edited
         ];
         
@@ -901,6 +1184,20 @@ public function update(Request $request, $id)
             'hours_worked' => $attendance->hours_worked
         ]);
         
+        // Update related data from other tables
+        $this->updateRelatedDataFromTables($attendance);
+        
+        // **CRITICAL FIX**: Check if this is an AJAX/JSON request
+        if ($request->expectsJson() || $request->ajax()) {
+            // Return JSON response for AJAX requests
+            return response()->json([
+                'success' => true,
+                'message' => 'Attendance record updated successfully',
+                'data' => $attendance->fresh() // Return fresh data from database
+            ]);
+        }
+        
+        // For non-AJAX requests, return Inertia response
         // Build query for the list page
         $query = $this->buildAttendanceQuery($request);
         $perPage = $request->input('per_page', 25);
@@ -914,7 +1211,7 @@ public function update(Request $request, $id)
         $dateFilter = $request->input('date');
         $departmentFilter = $request->input('department');
         $editsOnlyFilter = $request->boolean('edits_only');
-        $nightShiftFilter = $request->boolean('night_shift_only'); // NEW
+        $nightShiftFilter = $request->boolean('night_shift_only');
         
         // Return Inertia view with data and success message
         return Inertia::render('Timesheet/ProcessedAttendanceList', [
@@ -930,7 +1227,7 @@ public function update(Request $request, $id)
                 'date' => $dateFilter,
                 'department' => $departmentFilter,
                 'edits_only' => $editsOnlyFilter,
-                'night_shift_only' => $nightShiftFilter, // NEW
+                'night_shift_only' => $nightShiftFilter,
             ],
             'auth' => [
                 'user' => auth()->user()
@@ -948,6 +1245,14 @@ public function update(Request $request, $id)
             'line' => $e->getLine(),
             'trace' => $e->getTraceAsString()
         ]);
+        
+        // Return JSON error for AJAX requests
+        if ($request->expectsJson() || $request->ajax()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update attendance: ' . $e->getMessage()
+            ], 500);
+        }
         
         return back()->withErrors(['error' => 'Failed to update attendance: ' . $e->getMessage()]);
     }
@@ -1332,7 +1637,7 @@ public function update(Request $request, $id)
                         
                         // 10. Sync Retro Multiplier Data
                         $retroMultiplierValue = $this->calculateRetroMultiplierValue($employeeId, $attendanceDate);
-                        if ($attendance->retromultiplier != $retroMultiplierValue) {
+                        if (abs($attendance->retromultiplier - $retroMultiplierValue) > 0.01) {
                             $attendance->retromultiplier = $retroMultiplierValue;
                             $updated = true;
                             Log::debug("Updated retromultiplier: {$retroMultiplierValue}");
@@ -1492,7 +1797,7 @@ public function update(Request $request, $id)
                 
                 // 8. Sync Retro Multiplier Data
                 $retroMultiplierValue = $this->calculateRetroMultiplierValue($employeeId, $attendanceDate);
-                if ($attendance->retromultiplier != $retroMultiplierValue) {
+                if (abs($attendance->retromultiplier - $retroMultiplierValue) > 0.01) {
                     $attendance->retromultiplier = $retroMultiplierValue;
                     $updated = true;
                     Log::debug("Updated retromultiplier: {$retroMultiplierValue}");
@@ -1883,27 +2188,55 @@ public function update(Request $request, $id)
      * Calculate Retro Multiplier value for employee on specific date
      */
     private function calculateRetroMultiplierValue($employeeId, $attendanceDate)
-    {
-        try {
-            if (!class_exists('App\Models\Retro')) {
-                return 0.0;
-            }
-            
-            $retro = \App\Models\Retro::where('employee_id', $employeeId)
-                ->whereDate('retro_date', $attendanceDate)
-                ->where('status', 'approved')
-                ->first();
-                
-            if ($retro) {
-                return $retro->multiplier_rate * $retro->hours_days;
-            }
-            
-            return 0.0;
-        } catch (\Exception $e) {
-            Log::error("Error calculating Retro Multiplier value: " . $e->getMessage());
+{
+    try {
+        if (!class_exists('App\Models\Retro')) {
+            Log::debug('Retro model not found');
             return 0.0;
         }
+        
+        // Get all approved retro records for this employee on this date
+        $retroRecords = \App\Models\Retro::where('employee_id', $employeeId)
+            ->whereDate('retro_date', $attendanceDate)
+            ->where('status', 'approved')
+            ->get();
+            
+        if ($retroRecords->isEmpty()) {
+            Log::debug("No retro records found for employee {$employeeId} on {$attendanceDate}");
+            return 0.0;
+        }
+        
+        $totalRetroAmount = 0.0;
+        
+        foreach ($retroRecords as $retro) {
+            // Calculate based on your retro table structure
+            // Option 1: If you have a computed_amount field
+            if (isset($retro->computed_amount)) {
+                $totalRetroAmount += (float) $retro->computed_amount;
+            }
+            // Option 2: If you need to calculate from multiplier_rate and hours_days
+            elseif (isset($retro->multiplier_rate) && isset($retro->hours_days)) {
+                $totalRetroAmount += (float) ($retro->multiplier_rate * $retro->hours_days);
+            }
+            // Option 3: If you have a direct amount field
+            elseif (isset($retro->amount)) {
+                $totalRetroAmount += (float) $retro->amount;
+            }
+        }
+        
+        Log::debug("Calculated retro amount for employee {$employeeId} on {$attendanceDate}: {$totalRetroAmount}");
+        
+        return $totalRetroAmount;
+        
+    } catch (\Exception $e) {
+        Log::error("Error calculating Retro Multiplier value: " . $e->getMessage(), [
+            'employee_id' => $employeeId,
+            'attendance_date' => $attendanceDate,
+            'trace' => $e->getTraceAsString()
+        ]);
+        return 0.0;
     }
+}
     
     /**
      * Calculate overtime hours for employee on specific date (updated)
@@ -3106,7 +3439,7 @@ public function exportPayrollSummaries(Request $request)
         $periodType = $request->input('period_type');
         $department = $request->input('department');
         $status = $request->input('status');
-        $search = $request->input('search'); // Add search parameter
+        $search = $request->input('search');
         
         // Build the query (same as getPayrollSummaries but without pagination)
         $query = PayrollSummary::query()
@@ -3137,22 +3470,32 @@ public function exportPayrollSummaries(Request $request)
             });
         }
         
-        $summaries = $query->orderBy('employee_name', 'asc')->get();
+        $summaries = $query->orderBy('cost_center', 'asc')
+                          ->orderBy('employee_name', 'asc')
+                          ->get();
         
-        // Create CSV content
+        // Create CSV content array
         $csvData = [];
         
-        // Add header row
+        // Add company header
+        $csvData[] = ['ELJIN CORP - BWSUPERBAKESHOP | DAILY TIME RECORDS', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
+        $csvData[] = ['', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
+        
+        // Add period information
+        $periodLabel = $this->getFullPeriodLabel($year, $month, $periodType);
+        $csvData[] = ['Period', $periodLabel, '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
+        $csvData[] = ['Year', $year, '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
+        $csvData[] = ['Month', $this->getMonthName($month), '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
+        $csvData[] = ['Period Type', $periodType, '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
+        $csvData[] = ['', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''];
+        
+        // Add header row (without the "Period", "Year", "Month", "Period Type" columns from your original code)
         $csvData[] = [
+            'COST CENTER',
             'Employee ID',
             'Employee Name',
             'Department',
             'Line',
-            'Cost Center',
-            'Period',
-            'Year',
-            'Month',
-            'Period Type',
             'Days Worked',
             'OT Hours',
             'Off Days',
@@ -3166,60 +3509,167 @@ public function exportPayrollSummaries(Request $request)
             'OT Regular Holiday Hours',
             'OT Special Holiday Hours',
             'Offset Hours',
-            'Trip Count',
-            'Has CT',
-            'Has CS',
-            'Has OB',
-            'Status',
-            'Posted By',
-            'Posted At',
-            'Notes'
+            'Trip Count'
         ];
         
-        // Add data rows
-        foreach ($summaries as $summary) {
-            $csvData[] = [
-                $summary->employee_no,
-                $summary->employee_name,
-                $summary->department,
-                $summary->line,
-                $summary->cost_center,
-                $this->getFullPeriodLabel($summary->year, $summary->month, $summary->period_type),
-                $summary->year,
-                $summary->month,
-                $summary->period_type,
-                number_format($summary->days_worked, 1),
-                number_format($summary->ot_hours, 2),
-                number_format($summary->off_days, 1),
-                number_format($summary->late_under_minutes, 2),
-                number_format($summary->late_under_minutes / 60, 2),
-                number_format($summary->nsd_hours, 2),
-                number_format($summary->slvl_days, 1),
-                number_format($summary->retro, 2),
-                number_format($summary->travel_order_hours, 2),
-                number_format($summary->holiday_hours, 2),
-                number_format($summary->ot_reg_holiday_hours, 2),
-                number_format($summary->ot_special_holiday_hours, 2),
-                number_format($summary->offset_hours, 2),
-                number_format($summary->trip_count, 1),
-                $summary->has_ct ? 'Yes' : 'No',
-                $summary->has_cs ? 'Yes' : 'No',
-                $summary->has_ob ? 'Yes' : 'No',
-                ucfirst($summary->status),
-                $summary->postedBy ? $summary->postedBy->name : '',
-                $summary->posted_at ? $summary->posted_at->format('Y-m-d H:i:s') : '',
-                $summary->notes ?: ''
+        // Group data by cost center
+        $groupedData = $summaries->groupBy('cost_center');
+        
+        // Initialize grand totals
+        $grandTotals = [
+            'days_worked' => 0,
+            'ot_hours' => 0,
+            'off_days' => 0,
+            'late_under_minutes' => 0,
+            'late_under_hours' => 0,
+            'nsd_hours' => 0,
+            'slvl_days' => 0,
+            'retro' => 0,
+            'travel_order_hours' => 0,
+            'holiday_hours' => 0,
+            'ot_reg_holiday_hours' => 0,
+            'ot_special_holiday_hours' => 0,
+            'offset_hours' => 0,
+            'trip_count' => 0
+        ];
+        
+        // Add data rows grouped by cost center
+        foreach ($groupedData as $costCenter => $costCenterSummaries) {
+            $isFirstRow = true;
+            
+            // Initialize subtotals for this cost center
+            $subTotals = [
+                'days_worked' => 0,
+                'ot_hours' => 0,
+                'off_days' => 0,
+                'late_under_minutes' => 0,
+                'late_under_hours' => 0,
+                'nsd_hours' => 0,
+                'slvl_days' => 0,
+                'retro' => 0,
+                'travel_order_hours' => 0,
+                'holiday_hours' => 0,
+                'ot_reg_holiday_hours' => 0,
+                'ot_special_holiday_hours' => 0,
+                'offset_hours' => 0,
+                'trip_count' => 0
             ];
+            
+            foreach ($costCenterSummaries as $summary) {
+                $csvData[] = [
+                    $isFirstRow ? ($costCenter ?: '') : '', // Show cost center only on first row
+                    $summary->employee_no,
+                    $summary->employee_name,
+                    $summary->department,
+                    $summary->line,
+                    $this->formatNumber($summary->days_worked, 0),
+                    $this->formatNumber($summary->ot_hours, 0),
+                    $this->formatNumber($summary->off_days, 0),
+                    $this->formatNumber($summary->late_under_minutes, 0),
+                    $this->formatNumber($summary->late_under_minutes / 60, 0),
+                    $this->formatNumber($summary->nsd_hours, 2),
+                    $this->formatNumber($summary->slvl_days, 0),
+                    $this->formatNumber($summary->retro, 0),
+                    $this->formatNumber($summary->travel_order_hours, 0),
+                    $this->formatNumber($summary->holiday_hours, 0),
+                    $this->formatNumber($summary->ot_reg_holiday_hours, 0),
+                    $this->formatNumber($summary->ot_special_holiday_hours, 0),
+                    $this->formatNumber($summary->offset_hours, 0),
+                    $this->formatNumber($summary->trip_count, 0)
+                ];
+                
+                // Add to subtotals
+                $subTotals['days_worked'] += $summary->days_worked;
+                $subTotals['ot_hours'] += $summary->ot_hours;
+                $subTotals['off_days'] += $summary->off_days;
+                $subTotals['late_under_minutes'] += $summary->late_under_minutes;
+                $subTotals['late_under_hours'] += $summary->late_under_minutes / 60;
+                $subTotals['nsd_hours'] += $summary->nsd_hours;
+                $subTotals['slvl_days'] += $summary->slvl_days;
+                $subTotals['retro'] += $summary->retro;
+                $subTotals['travel_order_hours'] += $summary->travel_order_hours;
+                $subTotals['holiday_hours'] += $summary->holiday_hours;
+                $subTotals['ot_reg_holiday_hours'] += $summary->ot_reg_holiday_hours;
+                $subTotals['ot_special_holiday_hours'] += $summary->ot_special_holiday_hours;
+                $subTotals['offset_hours'] += $summary->offset_hours;
+                $subTotals['trip_count'] += $summary->trip_count;
+                
+                $isFirstRow = false;
+            }
+            
+            // Add subtotal row for this cost center (only if there are multiple cost centers)
+            if ($groupedData->count() > 1) {
+                $csvData[] = [
+                    'TOTAL',
+                    '',
+                    '',
+                    '',
+                    '',
+                    $this->formatNumber($subTotals['days_worked'], 0),
+                    $this->formatNumber($subTotals['ot_hours'], 0),
+                    $this->formatNumber($subTotals['off_days'], 0),
+                    $this->formatNumber($subTotals['late_under_minutes'], 0),
+                    $this->formatNumber($subTotals['late_under_hours'], 0),
+                    $this->formatNumber($subTotals['nsd_hours'], 2),
+                    $this->formatNumber($subTotals['slvl_days'], 0),
+                    $this->formatNumber($subTotals['retro'], 0),
+                    $this->formatNumber($subTotals['travel_order_hours'], 0),
+                    $this->formatNumber($subTotals['holiday_hours'], 0),
+                    $this->formatNumber($subTotals['ot_reg_holiday_hours'], 0),
+                    $this->formatNumber($subTotals['ot_special_holiday_hours'], 0),
+                    $this->formatNumber($subTotals['offset_hours'], 0),
+                    $this->formatNumber($subTotals['trip_count'], 0)
+                ];
+            }
+            
+            // Add to grand totals
+            foreach ($subTotals as $key => $value) {
+                $grandTotals[$key] += $value;
+            }
         }
+        
+        // Add grand total row
+        $csvData[] = [
+            'GRAND TOTAL',
+            '',
+            '',
+            '',
+            '',
+            $this->formatNumber($grandTotals['days_worked'], 0),
+            $this->formatNumber($grandTotals['ot_hours'], 0),
+            $this->formatNumber($grandTotals['off_days'], 0),
+            $this->formatNumber($grandTotals['late_under_minutes'], 0),
+            $this->formatNumber($grandTotals['late_under_hours'], 0),
+            $this->formatNumber($grandTotals['nsd_hours'], 2),
+            $this->formatNumber($grandTotals['slvl_days'], 0),
+            $this->formatNumber($grandTotals['retro'], 0),
+            $this->formatNumber($grandTotals['travel_order_hours'], 0),
+            $this->formatNumber($grandTotals['holiday_hours'], 0),
+            $this->formatNumber($grandTotals['ot_reg_holiday_hours'], 0),
+            $this->formatNumber($grandTotals['ot_special_holiday_hours'], 0),
+            $this->formatNumber($grandTotals['offset_hours'], 0),
+            $this->formatNumber($grandTotals['trip_count'], 0)
+        ];
         
         // Generate CSV content
         $csvContent = '';
         foreach ($csvData as $row) {
-            $csvContent .= '"' . implode('","', $row) . '"' . "\n";
+            // Handle empty values properly - don't quote empty strings
+            $processedRow = array_map(function($cell) {
+                return $cell === '' ? '' : $cell;
+            }, $row);
+            
+            $csvContent .= implode(',', array_map(function($cell) {
+                // Only quote cells that contain commas, quotes, or newlines
+                if ($cell === '' || (!str_contains($cell, ',') && !str_contains($cell, '"') && !str_contains($cell, "\n"))) {
+                    return $cell;
+                }
+                return '"' . str_replace('"', '""', $cell) . '"';
+            }, $processedRow)) . "\r\n";
         }
         
         // Generate filename
-        $filename = 'payroll_summaries_' . $year . '_' . str_pad($month, 2, '0', STR_PAD_LEFT);
+        $filename = 'payroll_summaries_' . $year . '_' . $month;
         if ($periodType) {
             $filename .= '_' . $periodType;
         }
@@ -3229,10 +3679,10 @@ public function exportPayrollSummaries(Request $request)
         if ($search) {
             $filename .= '_search_' . str_replace(' ', '_', strtolower($search));
         }
-        $filename .= '_' . now()->format('Y-m-d') . '.csv';
+        $filename .= '_' . now()->format('Ymd') . '.csv';
         
         return response($csvContent)
-            ->header('Content-Type', 'text/csv')
+            ->header('Content-Type', 'text/csv; charset=utf-8')
             ->header('Content-Disposition', 'attachment; filename="' . $filename . '"')
             ->header('Cache-Control', 'no-cache, no-store, must-revalidate')
             ->header('Pragma', 'no-cache')
@@ -3249,5 +3699,307 @@ public function exportPayrollSummaries(Request $request)
             'message' => 'Failed to export payroll summaries: ' . $e->getMessage()
         ], 500);
     }
+}
+
+/**
+ * Helper method to format numbers consistently
+ */
+private function formatNumber($value, $decimals = 0)
+{
+    if ($value == 0) {
+        return $decimals > 0 ? '0' : '0';
+    }
+    return number_format($value, $decimals, '.', '');
+}
+
+/**
+ * Helper method to get month name
+ */
+private function getMonthName($month)
+{
+    $months = [
+        1 => 'January', 2 => 'February', 3 => 'March', 4 => 'April',
+        5 => 'May', 6 => 'June', 7 => 'July', 8 => 'August',
+        9 => 'September', 10 => 'October', 11 => 'November', 12 => 'December'
+    ];
+    
+    return $months[$month] ?? 'Unknown';
+}
+
+public function detectDtrProblems(Request $request)
+{
+    try {
+        $validator = Validator::make($request->all(), [
+            'date' => 'nullable|date',
+            'department' => 'nullable|string',
+            'employee_ids' => 'nullable|array',
+            'employee_ids.*' => 'integer|exists:employees,id'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        // Build query for attendance records - FIXED: Ensure employee relationship is loaded
+        $query = $this->buildAttendanceQuery($request);
+        
+        // IMPORTANT: Eager load employee relationship with specific fields we need
+        $attendances = $query->with(['employee:id,idno,Fname,Lname,Department,Line'])
+                            ->get();
+
+        $problemRecords = [];
+        $problemSummary = [
+            'total_records' => $attendances->count(),
+            'problem_records' => 0,
+            'problems' => [
+                'missing_time_in' => 0,
+                'missing_time_out' => 0,
+                'missing_break_times' => 0,
+                'excessive_hours' => 0,
+                'negative_hours' => 0,
+                'late_no_timeout' => 0,
+                'invalid_break_sequence' => 0,
+                'night_shift_issues' => 0,
+                'weekend_attendance' => 0,
+                'duplicate_entries' => 0
+            ]
+        ];
+
+        // Group by employee and date to detect duplicates
+        $groupedRecords = $attendances->groupBy(function($item) {
+            return $item->employee_id . '_' . $item->attendance_date->format('Y-m-d');
+        });
+
+        foreach ($groupedRecords as $key => $records) {
+            foreach ($records as $attendance) {
+                $problems = $this->detectRecordProblems($attendance, $records->count() > 1);
+                
+                if (!empty($problems)) {
+                    // FIXED: Properly extract employee information
+                    $employee = $attendance->employee;
+                    $employeeName = 'Unknown';
+                    $employeeNo = 'N/A';
+                    $department = 'N/A';
+                    
+                    if ($employee) {
+                        $employeeName = trim(($employee->Fname ?? '') . ' ' . ($employee->Lname ?? ''));
+                        $employeeNo = $employee->idno ?? 'N/A';
+                        $department = $employee->Department ?? 'N/A';
+                    }
+                    
+                    $problemRecords[] = [
+                        'id' => $attendance->id,
+                        'employee_id' => $attendance->employee_id,
+                        'employee_name' => $employeeName,
+                        'employee_no' => $employeeNo,
+                        'department' => $department,
+                        'attendance_date' => $attendance->attendance_date->format('Y-m-d'),
+                        'problems' => $problems,
+                        'severity' => $this->calculateProblemSeverity($problems),
+                        'time_in' => $attendance->time_in ? $attendance->time_in->format('H:i') : null,
+                        'time_out' => $attendance->time_out ? $attendance->time_out->format('H:i') : null,
+                        'hours_worked' => $attendance->hours_worked,
+                        'is_nightshift' => $attendance->is_nightshift
+                    ];
+                    
+                    $problemSummary['problem_records']++;
+                    
+                    // Count specific problems
+                    foreach ($problems as $problem) {
+                        $problemType = $problem['type'];
+                        if (isset($problemSummary['problems'][$problemType])) {
+                            $problemSummary['problems'][$problemType]++;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sort by severity (high to low)
+        usort($problemRecords, function($a, $b) {
+            $severityOrder = ['high' => 3, 'medium' => 2, 'low' => 1];
+            return ($severityOrder[$b['severity']] ?? 0) - ($severityOrder[$a['severity']] ?? 0);
+        });
+
+        Log::info("DTR problem detection completed", [
+            'total_records' => $problemSummary['total_records'],
+            'problem_records' => $problemSummary['problem_records'],
+            'problems_breakdown' => $problemSummary['problems']
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $problemRecords,
+            'summary' => $problemSummary,
+            'message' => "Found {$problemSummary['problem_records']} records with DTR problems out of {$problemSummary['total_records']} total records"
+        ]);
+
+    } catch (\Exception $e) {
+        Log::error('Error detecting DTR problems: ' . $e->getMessage(), [
+            'trace' => $e->getTraceAsString()
+        ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to detect DTR problems: ' . $e->getMessage()
+        ], 500);
+    }
+}
+
+
+/**
+ * Detect specific problems for a single attendance record
+ */
+private function detectRecordProblems($attendance, $isDuplicate = false)
+{
+    $problems = [];
+
+    // Check for duplicate entries
+    if ($isDuplicate) {
+        $problems[] = [
+            'type' => 'duplicate_entries',
+            'message' => 'Multiple attendance records found for the same date',
+            'severity' => 'high'
+        ];
+    }
+
+    // UPDATED LOGIC: If both time_in and time_out are missing, consider it as good (no problem)
+    // This typically indicates a day off, sick leave, or absence
+    $hasTimeIn = !empty($attendance->time_in);
+    $hasTimeOut = !empty($attendance->time_out) || ($attendance->is_nightshift && !empty($attendance->next_day_timeout));
+    
+    // Only flag as problem if one is missing but not both
+    if (!$hasTimeIn && $hasTimeOut) {
+        $problems[] = [
+            'type' => 'missing_time_in',
+            'message' => 'Time In is missing but Time Out is present',
+            'severity' => 'high'
+        ];
+    }
+
+    if ($hasTimeIn && !$hasTimeOut) {
+        $problems[] = [
+            'type' => 'missing_time_out',
+            'message' => 'Time Out is missing but Time In is present',
+            'severity' => 'high'
+        ];
+    }
+
+    // Only check other validations if there's at least some time data
+    // Skip additional checks if both time_in and time_out are missing (day off scenario)
+    if (!$hasTimeIn && !$hasTimeOut) {
+        // This is considered a good record (day off, absence, etc.)
+        return $problems; // Return early with only duplicate check if applicable
+    }
+
+    // Check for missing break times (if one is present, both should be)
+    if (($attendance->break_in && !$attendance->break_out) || (!$attendance->break_in && $attendance->break_out)) {
+        $problems[] = [
+            'type' => 'missing_break_times',
+            'message' => 'Incomplete break time (missing break in or break out)',
+            'severity' => 'medium'
+        ];
+    }
+
+    // Check for invalid break sequence
+    if ($attendance->break_in && $attendance->break_out) {
+        try {
+            $breakIn = \Carbon\Carbon::parse($attendance->break_in);
+            $breakOut = \Carbon\Carbon::parse($attendance->break_out);
+            
+            if ($breakIn->lte($breakOut)) {
+                $problems[] = [
+                    'type' => 'invalid_break_sequence',
+                    'message' => 'Break In time should be after Break Out time',
+                    'severity' => 'medium'
+                ];
+            }
+        } catch (\Exception $e) {
+            $problems[] = [
+                'type' => 'invalid_break_sequence',
+                'message' => 'Invalid break time format',
+                'severity' => 'medium'
+            ];
+        }
+    }
+
+    // Check for excessive hours (more than 16 hours)
+    if ($attendance->hours_worked && $attendance->hours_worked > 16) {
+        $problems[] = [
+            'type' => 'excessive_hours',
+            'message' => "Excessive work hours: {$attendance->hours_worked} hours",
+            'severity' => 'high'
+        ];
+    }
+
+    // Check for negative hours
+    if ($attendance->hours_worked && $attendance->hours_worked < 0) {
+        $problems[] = [
+            'type' => 'negative_hours',
+            'message' => "Negative work hours: {$attendance->hours_worked} hours",
+            'severity' => 'high'
+        ];
+    }
+
+    // Check for late with no time out (suspicious) - only if time_in exists
+    if ($hasTimeIn && $attendance->late_minutes > 0 && !$hasTimeOut) {
+        $problems[] = [
+            'type' => 'late_no_timeout',
+            'message' => 'Employee is late but has no time out',
+            'severity' => 'medium'
+        ];
+    }
+
+    // Check for night shift issues
+    if ($attendance->is_nightshift && $hasTimeIn) {
+        if (!$attendance->next_day_timeout) {
+            $problems[] = [
+                'type' => 'night_shift_issues',
+                'message' => 'Night shift record missing next day timeout',
+                'severity' => 'medium'
+            ];
+        }
+    }
+
+    // Check for weekend attendance (might be unusual) - only if there's actual attendance
+    if ($attendance->attendance_date && ($hasTimeIn || $hasTimeOut)) {
+        $dayOfWeek = $attendance->attendance_date->dayOfWeek;
+        if ($dayOfWeek == 0 || $dayOfWeek == 6) { // Sunday = 0, Saturday = 6
+            if (!$attendance->restday && !$attendance->overtime) {
+                $problems[] = [
+                    'type' => 'weekend_attendance',
+                    'message' => 'Attendance on weekend without overtime or rest day marker',
+                    'severity' => 'low'
+                ];
+            }
+        }
+    }
+
+    return $problems;
+}
+
+/**
+ * Calculate overall problem severity for a record
+ */
+private function calculateProblemSeverity($problems)
+{
+    $hasHigh = false;
+    $hasMedium = false;
+    
+    foreach ($problems as $problem) {
+        if ($problem['severity'] === 'high') {
+            $hasHigh = true;
+        } elseif ($problem['severity'] === 'medium') {
+            $hasMedium = true;
+        }
+    }
+    
+    if ($hasHigh) return 'high';
+    if ($hasMedium) return 'medium';
+    return 'low';
 }
 }

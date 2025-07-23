@@ -329,6 +329,9 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
         ->name('payroll-summaries.export');
     Route::delete('/payroll-summaries/{id}', [ProcessedAttendanceController::class, 'deletePayrollSummary'])
         ->name('payroll-summaries.destroy');
+
+    Route::post('/attendance/detect-dtr-problems', [ProcessedAttendanceController::class, 'detectDtrProblems'])
+    ->name('attendance.detect-dtr-problems');
     
     // IMPORTANT: Add this route for attendance details
     Route::get('/payroll-summaries/{id}/attendance-details', [ProcessedAttendanceController::class, 'getPayrollSummaryAttendanceDetails'])

@@ -21,6 +21,8 @@ const ProcessedAttendanceList = () => {
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
+
+  const [problemsOnlyFilter, setProblemsOnlyFilter] = useState(false);
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(pagination.current_page || 1);
@@ -37,6 +39,12 @@ const ProcessedAttendanceList = () => {
   const [departments, setDepartments] = useState([]);
   const [holdTimer, setHoldTimer] = useState(null);
   const [isHolding, setIsHolding] = useState(false);
+
+  //Detect DTR Problem
+  const [detectingProblems, setDetectingProblems] = useState(false);
+  const [showProblemsModal, setShowProblemsModal] = useState(false);
+  const [problemRecords, setProblemRecords] = useState([]);
+  const [problemSummary, setProblemSummary] = useState(null);
   
   // Modal state
   const [selectedAttendance, setSelectedAttendance] = useState(null);
@@ -83,43 +91,145 @@ const ProcessedAttendanceList = () => {
   const [postPreview, setPostPreview] = useState(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
 
+const detectRecordProblems = useCallback((attendance) => {
+    const problems = [];
+    
+    // Only check for problems if there's at least some time data present
+    const hasAnyTimeData = attendance.time_in || attendance.time_out || 
+                          attendance.break_in || attendance.break_out || 
+                          attendance.next_day_timeout;
+    
+    // If there's no time data at all, consider it a valid "no work" record (good)
+    if (!hasAnyTimeData) {
+      return problems; // Return empty array - no problems
+    }
+    
+    // Check for missing time in ONLY if there's other time data
+    if (!attendance.time_in && hasAnyTimeData) {
+      problems.push({
+        type: 'missing_time_in',
+        message: 'Missing Time In',
+        severity: 'high',
+        icon: 'clock'
+      });
+    }
+
+    // Check for missing time out ONLY if there's time in or other time data
+    if (attendance.time_in && !attendance.time_out && !(attendance.is_nightshift && attendance.next_day_timeout)) {
+      problems.push({
+        type: 'missing_time_out',
+        message: 'Missing Time Out',
+        severity: 'high',
+        icon: 'clock'
+      });
+    }
+
+    // Check for missing break times (only if there's work time)
+    if (hasAnyTimeData && ((attendance.break_in && !attendance.break_out) || (!attendance.break_in && attendance.break_out))) {
+      problems.push({
+        type: 'missing_break_times',
+        message: 'Incomplete Break Times',
+        severity: 'medium',
+        icon: 'coffee'
+      });
+    }
+
+    // Check for excessive hours (more than 16 hours)
+    if (attendance.hours_worked && attendance.hours_worked > 16) {
+      problems.push({
+        type: 'excessive_hours',
+        message: `Excessive Hours: ${attendance.hours_worked}h`,
+        severity: 'high',
+        icon: 'alert-triangle'
+      });
+    }
+
+    // Check for negative hours
+    if (attendance.hours_worked && attendance.hours_worked < 0) {
+      problems.push({
+        type: 'negative_hours',
+        message: `Negative Hours: ${attendance.hours_worked}h`,
+        severity: 'high',
+        icon: 'alert-triangle'
+      });
+    }
+
+    // Check for night shift issues (only if it's marked as night shift)
+    if (attendance.is_nightshift && attendance.time_in && !attendance.next_day_timeout) {
+      problems.push({
+        type: 'night_shift_issues',
+        message: 'Night Shift Missing Next Day Timeout',
+        severity: 'medium',
+        icon: 'moon'
+      });
+    }
+
+    // Check for weekend attendance without proper markers (only if there's work time)
+    if (hasAnyTimeData && attendance.attendance_date) {
+      try {
+        const date = new Date(attendance.attendance_date);
+        const dayOfWeek = date.getDay();
+        if ((dayOfWeek === 0 || dayOfWeek === 6) && !attendance.restday && !attendance.overtime) {
+          problems.push({
+            type: 'weekend_attendance',
+            message: 'Weekend Work Without OT/Rest Day Marker',
+            severity: 'low',
+            icon: 'calendar'
+          });
+        }
+      } catch (e) {
+        // Ignore date parsing errors
+      }
+    }
+
+    return problems;
+  }, []);
+
   // Better double-click prevention using useRef instead of state
   const editClickTimeoutRef = useRef(null);
   const isEditingRef = useRef(false);
 
   // Process attendance data for display
-  const processAttendanceData = (data) => {
-    return data.map(attendance => ({
-      ...attendance,
-      // Ensure all necessary fields are present
-      employee_name: attendance.employee_name || 'Unknown Employee',
-      idno: attendance.idno || 'N/A',
-      department: attendance.department || 'N/A',
-      line: attendance.line || 'N/A',
-      hours_worked: attendance.hours_worked || 0,
-      late_minutes: attendance.late_minutes || 0,
-      undertime_minutes: attendance.undertime_minutes || 0,
-      overtime: attendance.overtime || 0,
-      travel_order: attendance.travel_order || 0,
-      slvl: attendance.slvl || 0,
-      trip: attendance.trip || 0,
-      ct: attendance.ct || false,
-      cs: attendance.cs || false,
-      holiday: attendance.holiday || 0,
-      ot_reg_holiday: attendance.ot_reg_holiday || 0,
-      ot_special_holiday: attendance.ot_special_holiday || 0,
-      retromultiplier: attendance.retromultiplier || 1,
-      restday: attendance.restday || false,
-      offset: attendance.offset || 0,
-      ob: attendance.ob || false,
-      is_nightshift: attendance.is_nightshift || false,
-      source: attendance.source || 'unknown',
-      posting_status: attendance.posting_status || 'not_posted'
-    }));
-  };
+  const processAttendanceData = useCallback((data) => {
+    return data.map(attendance => {
+      const processedAttendance = {
+        ...attendance,
+        // Ensure all necessary fields are present
+        employee_name: attendance.employee_name || 'Unknown Employee',
+        idno: attendance.idno || 'N/A',
+        department: attendance.department || 'N/A',
+        line: attendance.line || 'N/A',
+        hours_worked: attendance.hours_worked || 0,
+        late_minutes: attendance.late_minutes || 0,
+        undertime_minutes: attendance.undertime_minutes || 0,
+        overtime: attendance.overtime || 0,
+        travel_order: attendance.travel_order || 0,
+        slvl: attendance.slvl || 0,
+        trip: attendance.trip || 0,
+        ct: attendance.ct || false,
+        cs: attendance.cs || false,
+        holiday: attendance.holiday || 0,
+        ot_reg_holiday: attendance.ot_reg_holiday || 0,
+        ot_special_holiday: attendance.ot_special_holiday || 0,
+        retromultiplier: attendance.retromultiplier || 0,
+        restday: attendance.restday || false,
+        offset: attendance.offset || 0,
+        ob: attendance.ob || false,
+        is_nightshift: attendance.is_nightshift || false,
+        source: attendance.source || 'unknown',
+        posting_status: attendance.posting_status || 'not_posted'
+      };
+
+      // Add problems detection
+      processedAttendance.problems = detectRecordProblems(processedAttendance);
+      processedAttendance.hasProblems = processedAttendance.problems.length > 0;
+
+      return processedAttendance;
+    });
+  }, [detectRecordProblems]);
 
   // Load attendance data with recalculation
-  const loadAttendanceData = async (showRecalcMessage = false) => {
+  const loadAttendanceData = useCallback(async (showRecalcMessage = false) => {
     setLoading(true);
     setError('');
     
@@ -134,6 +244,7 @@ const ProcessedAttendanceList = () => {
       if (editsOnlyFilter) params.append('edits_only', 'true');
       if (nightShiftFilter) params.append('night_shift_only', 'true');
       if (postingStatusFilter) params.append('posting_status', postingStatusFilter);
+      if (problemsOnlyFilter) params.append('problems_only', 'true');
       
       const response = await fetch('/attendance/list?' + params.toString(), {
         headers: {
@@ -145,7 +256,16 @@ const ProcessedAttendanceList = () => {
       const data = await response.json();
       
       if (data.success) {
-        const processedData = processAttendanceData(data.data);
+        let processedData = processAttendanceData(data.data);
+        
+        // Apply problems filter on frontend since it's complex to do in SQL
+        if (problemsOnlyFilter) {
+          processedData = processedData.filter(attendance => {
+            const problems = detectRecordProblems(attendance);
+            return problems && problems.length > 0;
+          });
+        }
+        
         setAttendances(processedData);
         setTotalPages(data.pagination.last_page);
         setCurrentPage(data.pagination.current_page);
@@ -165,7 +285,7 @@ const ProcessedAttendanceList = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentPage, perPage, searchTerm, dateFilter, departmentFilter, editsOnlyFilter, nightShiftFilter, postingStatusFilter, problemsOnlyFilter, processAttendanceData, detectRecordProblems]);
 
   // Load preview for posting
   const loadPostPreview = async () => {
@@ -343,9 +463,9 @@ const ProcessedAttendanceList = () => {
 
   // Apply filters and reload data
   const applyFilters = async () => {
-    setCurrentPage(1);
-    await loadAttendanceData(true);
-  };
+  setCurrentPage(1);
+  await loadAttendanceData(true);
+};
 
   // Enhanced reset filters with auto-recalculation
   const resetFilters = async () => {
@@ -361,6 +481,86 @@ const ProcessedAttendanceList = () => {
       await loadAttendanceData(true);
     }, 0);
   };
+
+
+const renderProblemIndicator = useCallback((attendance) => {
+    const problems = detectRecordProblems(attendance);
+    
+    if (problems.length === 0) {
+      return (
+        <div className="flex items-center justify-center">
+          <CheckCircle className="h-4 w-4 text-green-500" title="No problems detected" />
+        </div>
+      );
+    }
+
+    const highSeverityProblems = problems.filter(p => p.severity === 'high');
+    const mediumSeverityProblems = problems.filter(p => p.severity === 'medium');
+    const lowSeverityProblems = problems.filter(p => p.severity === 'low');
+
+    const getSeverityColor = () => {
+      if (highSeverityProblems.length > 0) return 'text-red-500 bg-red-50 border-red-200';
+      if (mediumSeverityProblems.length > 0) return 'text-orange-500 bg-orange-50 border-orange-200';
+      return 'text-yellow-500 bg-yellow-50 border-yellow-200';
+    };
+
+    const getSeverityLabel = () => {
+      if (highSeverityProblems.length > 0) return 'HIGH';
+      if (mediumSeverityProblems.length > 0) return 'MED';
+      return 'LOW';
+    };
+
+    return (
+      <div className="flex flex-col items-center space-y-1">
+        <div className={`flex items-center justify-center w-8 h-8 rounded-full border-2 ${getSeverityColor()}`}>
+          <AlertTriangle className="h-4 w-4" />
+        </div>
+        <span className={`text-xs font-medium px-1 py-0.5 rounded ${getSeverityColor()}`}>
+          {getSeverityLabel()}
+        </span>
+        <span className="text-xs text-gray-500">
+          {problems.length} issue{problems.length > 1 ? 's' : ''}
+        </span>
+      </div>
+    );
+  }, [detectRecordProblems]);
+
+
+const renderProblemsTooltip = useCallback((attendance) => {
+    const problems = detectRecordProblems(attendance);
+    
+    if (problems.length === 0) return null;
+
+    return (
+      <div className="absolute z-50 w-80 p-3 bg-white border border-gray-200 rounded-lg shadow-lg top-full left-0 mt-1">
+        <div className="space-y-2">
+          <h4 className="font-medium text-gray-900 flex items-center">
+            <AlertTriangle className="h-4 w-4 mr-1 text-red-500" />
+            DTR Problems Detected
+          </h4>
+          {problems.map((problem, index) => (
+            <div key={index} className={`flex items-start space-x-2 p-2 rounded text-sm ${
+              problem.severity === 'high' ? 'bg-red-50 text-red-800' :
+              problem.severity === 'medium' ? 'bg-orange-50 text-orange-800' :
+              'bg-yellow-50 text-yellow-800'
+            }`}>
+              <div className={`w-2 h-2 rounded-full mt-1.5 ${
+                problem.severity === 'high' ? 'bg-red-500' :
+                problem.severity === 'medium' ? 'bg-orange-500' :
+                'bg-yellow-500'
+              }`}></div>
+              <span>{problem.message}</span>
+            </div>
+          ))}
+          <div className="pt-2 border-t border-gray-200">
+            <p className="text-xs text-gray-600">
+              💡 Double-click this row to edit and fix these issues
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }, [detectRecordProblems]);
 
   // Handle download template functionality
   const handleDownloadTemplate = async () => {
@@ -436,6 +636,103 @@ const ProcessedAttendanceList = () => {
       setExporting(false);
     }
   };
+
+  // Add this function with your other handlers
+const handleDetectDtrProblems = async () => {
+  if (detectingProblems) return;
+  
+  setDetectingProblems(true);
+  setError('');
+  
+  try {
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
+    
+    if (!csrfToken) {
+      setError('Session expired. Please refresh the page and try again.');
+      setDetectingProblems(false);
+      return;
+    }
+    
+    // Use current filters for problem detection
+    const requestData = {
+      date: dateFilter || null,
+      department: departmentFilter || null,
+      employee_ids: selectedIds.length > 0 ? selectedIds : null
+    };
+    
+    console.log('Detecting DTR problems with filters:', requestData);
+    
+    const response = await fetch('/attendance/detect-dtr-problems', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': csrfToken,
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(requestData)
+    });
+    
+    if (!response.ok) {
+      let errorMessage = `DTR problem detection failed with status: ${response.status}`;
+      
+      try {
+        const errorData = await response.json();
+        console.error('DTR detection error response:', errorData);
+        
+        if (response.status === 422) {
+          if (errorData.errors) {
+            const errorMessages = Object.values(errorData.errors).flat();
+            errorMessage = 'Validation failed: ' + errorMessages.join(', ');
+          } else {
+            errorMessage = 'Validation failed: ' + (errorData.message || 'Invalid data provided');
+          }
+        } else if (response.status >= 500) {
+          errorMessage = 'Server error during DTR problem detection. Please check the server logs.';
+        } else {
+          errorMessage = errorData.message || errorMessage;
+        }
+      } catch (parseError) {
+        console.error('Error parsing DTR detection response:', parseError);
+        errorMessage = `DTR problem detection failed with status ${response.status}. Please check the server logs.`;
+      }
+      
+      setError(errorMessage);
+      setDetectingProblems(false);
+      return;
+    }
+    
+    const data = await response.json();
+    console.log('DTR problem detection response:', data);
+    
+    if (data.success) {
+      setProblemRecords(data.data);
+      setProblemSummary(data.summary);
+      setShowProblemsModal(true);
+      
+      if (data.summary.problem_records === 0) {
+        setSuccess('Great! No DTR problems detected in the current view.');
+      } else {
+        setSuccess(`DTR analysis complete: Found ${data.summary.problem_records} records with problems`);
+      }
+    } else {
+      setError('DTR problem detection failed: ' + (data.message || 'Unknown error occurred'));
+    }
+    
+  } catch (err) {
+    console.error('DTR problem detection error:', err);
+    
+    if (err.name === 'TypeError' && err.message.includes('Failed to fetch')) {
+      setError('Network error. Please check your internet connection and try again.');
+    } else if (err.message.includes('JSON')) {
+      setError('Invalid response from server. Please try again.');
+    } else {
+      setError('Failed to detect DTR problems: ' + (err.message || 'Unknown error occurred'));
+    }
+  } finally {
+    setDetectingProblems(false);
+  }
+};
 
   // Handle export functionality
   const handleExport = async () => {
@@ -676,57 +973,103 @@ const ProcessedAttendanceList = () => {
   };
 
   // Handle auto-recalculation
-  const handleAutoRecalculate = async (showMessage = false) => {
-    if (recalculating) return;
+  // Handle auto-recalculation - FIXED VERSION
+const handleAutoRecalculate = async (showMessage = false) => {
+  if (recalculating) return;
+  
+  setRecalculating(true);
+  setError('');
+  
+  try {
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
     
-    setRecalculating(true);
-    setError('');
-    
-    try {
-      const params = new URLSearchParams();
-      
-      if (dateFilter) params.append('date', dateFilter);
-      if (departmentFilter) params.append('department', departmentFilter);
-      
-      const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content');
-      
-      const response = await fetch('/attendance/recalculate-all', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': csrfToken,
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          date: dateFilter,
-          department: departmentFilter
-        })
-      });
-      
-      if (!response.ok) {
-        throw new Error(`Recalculation failed with status: ${response.status}`);
-      }
-      
-      const data = await response.json();
-      
-      if (data.success) {
-        if (showMessage && data.recalculated_count > 0) {
-          setSuccess(`Recalculated ${data.recalculated_count} attendance records`);
-        }
-        
-        await loadAttendanceData(false);
-      } else {
-        setError('Recalculation failed: ' + (data.message || 'Unknown error'));
-      }
-      
-    } catch (err) {
-      console.error('Recalculation error:', err);
-      setError('Failed to recalculate attendance data: ' + (err.message || 'Unknown error'));
-    } finally {
+    if (!csrfToken) {
+      setError('Session expired. Please refresh the page and try again.');
       setRecalculating(false);
+      return;
     }
-  };
+    
+    // Prepare request payload - FIXED: Ensure proper data types
+    const requestData = {
+      date: dateFilter || null,
+      department: departmentFilter || null
+    };
+    
+    console.log('Sending recalculation request:', requestData);
+    
+    const response = await fetch('/attendance/recalculate-all', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': csrfToken,
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify(requestData)
+    });
+    
+    // Enhanced error handling
+    if (!response.ok) {
+      let errorMessage = `Recalculation failed with status: ${response.status}`;
+      
+      try {
+        const errorData = await response.json();
+        console.error('Recalculation error response:', errorData);
+        
+        if (response.status === 422) {
+          // Validation errors
+          if (errorData.errors) {
+            const errorMessages = Object.values(errorData.errors).flat();
+            errorMessage = 'Validation failed: ' + errorMessages.join(', ');
+          } else {
+            errorMessage = 'Validation failed: ' + (errorData.message || 'Invalid data provided');
+          }
+        } else if (response.status >= 500) {
+          errorMessage = 'Server error during recalculation. Please check the server logs.';
+        } else {
+          errorMessage = errorData.message || errorMessage;
+        }
+      } catch (parseError) {
+        console.error('Error parsing recalculation response:', parseError);
+        errorMessage = `Recalculation failed with status ${response.status}. Please check the server logs.`;
+      }
+      
+      setError(errorMessage);
+      setRecalculating(false);
+      return;
+    }
+    
+    const data = await response.json();
+    console.log('Recalculation response:', data);
+    
+    if (data.success) {
+      if (showMessage && data.recalculated_count > 0) {
+        setSuccess(`Recalculated ${data.recalculated_count} attendance records`);
+      } else if (showMessage) {
+        setSuccess('Recalculation completed - all records are up to date');
+      }
+      
+      // Reload data after successful recalculation
+      await loadAttendanceData(false);
+    } else {
+      setError('Recalculation failed: ' + (data.message || 'Unknown error occurred'));
+    }
+    
+  } catch (err) {
+    console.error('Recalculation error:', err);
+    
+    // Handle different types of errors
+    if (err.name === 'TypeError' && err.message.includes('Failed to fetch')) {
+      setError('Network error. Please check your internet connection and try again.');
+    } else if (err.message.includes('JSON')) {
+      setError('Invalid response from server. Please try again.');
+    } else {
+      setError('Failed to recalculate attendance data: ' + (err.message || 'Unknown error occurred'));
+    }
+  } finally {
+    setRecalculating(false);
+  }
+};
 
   // Handle sync functionality
   const handleSync = async () => {
@@ -835,6 +1178,8 @@ const ProcessedAttendanceList = () => {
         trip: updatedAttendance.trip
       };
       
+      console.log('Sending payload:', timeUpdatePayload); // Debug log
+      
       const response = await fetch(`/attendance/${updatedAttendance.id}`, {
         method: 'PUT',
         headers: {
@@ -846,6 +1191,10 @@ const ProcessedAttendanceList = () => {
         body: JSON.stringify(timeUpdatePayload)
       });
       
+      console.log('Response status:', response.status); // Debug log
+      console.log('Response headers:', Object.fromEntries(response.headers.entries())); // Debug log
+      
+      // Handle specific status codes
       if (response.status === 401) {
         setError('Session expired. Please refresh the page and login again.');
         return;
@@ -856,18 +1205,75 @@ const ProcessedAttendanceList = () => {
         return;
       }
       
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      if (response.status === 422) {
+        // Validation errors
+        try {
+          const errorData = await response.json();
+          const errorMessage = errorData.message || 'Validation failed';
+          setError(errorMessage);
+          return;
+        } catch (parseError) {
+          setError('Validation failed. Please check your input and try again.');
+          return;
+        }
       }
       
+      // Check content type before parsing
       const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        setSuccess('Update completed successfully!');
-        window.location.reload();
+      console.log('Content-Type:', contentType); // Debug log
+      
+      if (!response.ok) {
+        // Try to get error message from response
+        let errorMessage = `HTTP error! status: ${response.status}`;
+        
+        if (contentType && contentType.includes('application/json')) {
+          try {
+            const errorData = await response.json();
+            errorMessage = errorData.message || errorMessage;
+          } catch (parseError) {
+            console.warn('Could not parse error response as JSON:', parseError);
+          }
+        } else {
+          // Non-JSON error response, try to get text
+          try {
+            const errorText = await response.text();
+            console.log('Error response text:', errorText.substring(0, 500)); // Log first 500 chars
+            errorMessage = 'Server error occurred. Please try again.';
+          } catch (textError) {
+            console.warn('Could not get error response text:', textError);
+          }
+        }
+        
+        setError(errorMessage);
         return;
       }
       
-      const data = await response.json();
+      // Handle successful response
+      if (!contentType || !contentType.includes('application/json')) {
+        console.warn('Success response is not JSON:', contentType);
+        setSuccess('Update completed successfully!');
+        // Optional: reload to refresh data
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+        return;
+      }
+      
+      // Parse JSON response
+      let data;
+      try {
+        const responseText = await response.text();
+        console.log('Response text:', responseText); // Debug log
+        data = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError);
+        console.error('Response text that failed to parse:', await response.text());
+        setSuccess('Update completed successfully!');
+        setTimeout(() => {
+          window.location.reload();
+        }, 1500);
+        return;
+      }
       
       if (data.success) {
         setSuccess('Attendance record updated successfully');
@@ -900,9 +1306,9 @@ const ProcessedAttendanceList = () => {
       
       if (err.name === 'TypeError' && err.message.includes('Failed to fetch')) {
         setError('Network error. Please check your internet connection and try again.');
-      } else if (err.message.includes('non-JSON response')) {
-        setSuccess('Update completed successfully!');
-        window.location.reload();
+      } else if (err.name === 'SyntaxError' && err.message.includes('JSON')) {
+        console.error('JSON parsing failed - likely receiving HTML instead of JSON');
+        setSuccess('Update may have completed. Please refresh the page to see changes.');
       } else if (err.message.includes('HTTP error')) {
         setError(`Server error (${err.message}). Please try again or contact support.`);
       } else {
@@ -1328,13 +1734,20 @@ const ProcessedAttendanceList = () => {
   }, [holdTimer]);
 
   // Auto-recalculate on component mount and when filters change
-  useEffect(() => {
-    const shouldAutoRecalculate = true;
+useEffect(() => {
+  // Only auto-recalculate when there's actual data and specific conditions
+  const shouldAutoRecalculate = attendances.length > 0 && 
+    (dateFilter || departmentFilter || editsOnlyFilter || nightShiftFilter);
+  
+  if (shouldAutoRecalculate) {
+    // Add a delay to prevent too many rapid requests
+    const timeoutId = setTimeout(() => {
+      handleAutoRecalculate(false); // Don't show message for auto-recalc
+    }, 1000);
     
-    if (shouldAutoRecalculate && attendances.length > 0) {
-      handleAutoRecalculate();
-    }
-  }, [searchTerm, dateFilter, departmentFilter, editsOnlyFilter, nightShiftFilter]);
+    return () => clearTimeout(timeoutId);
+  }
+}, [dateFilter, departmentFilter, editsOnlyFilter, nightShiftFilter]);
 
   // Initialize component data
   useEffect(() => {
@@ -1362,8 +1775,8 @@ const ProcessedAttendanceList = () => {
 
   // Apply filters immediately for other filter types
   useEffect(() => {
-    applyFilters();
-  }, [dateFilter, departmentFilter, editsOnlyFilter, nightShiftFilter, postingStatusFilter]);
+  applyFilters();
+}, [dateFilter, departmentFilter, editsOnlyFilter, nightShiftFilter, postingStatusFilter, problemsOnlyFilter]);
 
   return (
     <AuthenticatedLayout user={auth.user}>
@@ -1416,8 +1829,31 @@ const ProcessedAttendanceList = () => {
                 </Button>
 
                 <Button
+                  onClick={handleDetectDtrProblems}
+                  disabled={detectingProblems || loading}
+                  variant="outline"
+                  size="sm"
+                  className="bg-red-600 hover:bg-red-700 text-white border-red-600 text-xs sm:text-sm"
+                  title="Detect DTR problems in current view"
+                >
+                  {detectingProblems ? (
+                    <>
+                      <RefreshCw className="h-3 w-3 sm:h-4 sm:w-4 mr-1 animate-spin" />
+                      <span className="hidden sm:inline">Detecting...</span>
+                      <span className="sm:hidden">Det...</span>
+                    </>
+                  ) : (
+                    <>
+                      <AlertTriangle className="h-3 w-3 sm:h-4 sm:w-4 mr-1" />
+                      <span className="hidden sm:inline">Detect DTR Problems</span>
+                      <span className="sm:hidden">DTR Check</span>
+                    </>
+                  )}
+                </Button>
+
+                <Button
                   onClick={() => handleAutoRecalculate(true)}
-                  disabled={recalculating}
+                  disabled={recalculating || loading} // FIXED: Also disable when loading
                   variant="outline"
                   size="sm"
                   className="bg-purple-600 hover:bg-purple-700 text-white border-purple-600 text-xs sm:text-sm"
@@ -1667,13 +2103,13 @@ const ProcessedAttendanceList = () => {
                     <label className="flex items-center space-x-2 cursor-pointer">
                       <input
                         type="checkbox"
-                        className="form-checkbox h-5 w-5 text-purple-600 rounded focus:ring-purple-500"
-                        checked={nightShiftFilter}
-                        onChange={(e) => setNightShiftFilter(e.target.checked)}
+                        className="form-checkbox h-5 w-5 text-red-600 rounded focus:ring-red-500"
+                        checked={problemsOnlyFilter}
+                        onChange={(e) => setProblemsOnlyFilter(e.target.checked)}
                       />
                       <div className="flex items-center space-x-1">
-                        <Moon className="h-4 w-4 text-purple-600" />
-                        <span className="text-gray-700">Night Shift Only</span>
+                        <AlertTriangle className="h-4 w-4 text-red-600" />
+                        <span className="text-gray-700">Problems Only</span>
                       </div>
                     </label>
                   </div>
@@ -1690,7 +2126,7 @@ const ProcessedAttendanceList = () => {
             </Card>
 
             {/* Summary Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
+            <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mb-4">
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center">
@@ -1698,6 +2134,23 @@ const ProcessedAttendanceList = () => {
                     <div className="ml-4">
                       <p className="text-sm font-medium text-gray-600">Total Records</p>
                       <p className="text-2xl font-bold text-gray-900">{attendances.length}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardContent className="p-4">
+                  <div className="flex items-center">
+                    <AlertTriangle className="h-8 w-8 text-red-500" />
+                    <div className="ml-4">
+                      <p className="text-sm font-medium text-gray-600">Problem Records</p>
+                      <p className="text-2xl font-bold text-gray-900">
+                        {attendances.filter(att => {
+                          const problems = detectRecordProblems(att);
+                          return problems && problems.length > 0;
+                        }).length}
+                      </p>
                     </div>
                   </div>
                 </CardContent>
@@ -1796,6 +2249,9 @@ const ProcessedAttendanceList = () => {
                           <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CT</th>
                           <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CS</th>
                           <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Holiday</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Offset</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rest Day</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Retro</th>
                           <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                             <div className="flex items-center space-x-1">
                               <Car className="h-4 w-4" />
@@ -1807,22 +2263,33 @@ const ProcessedAttendanceList = () => {
                           <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT Spl</th>
                           <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
                           <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                          <th className="px-2 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            <div className="flex items-center space-x-1">
+                              <AlertTriangle className="h-4 w-4 text-red-500" />
+                              <span>DTR Status</span>
+                            </div>
+                          </th>
                           <th className="px-2 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                         </tr>
                       </thead>
                         <tbody className="bg-white divide-y divide-gray-200 overflow-y-auto">
                           {attendances.map((attendance) => (
                             <tr 
-                              key={attendance.id} 
-                              className={`hover:bg-blue-50 cursor-pointer transition-colors select-none ${
-                                attendance.source === 'manual_edit' ? 'bg-red-50' : ''
-                              } ${isHolding ? 'bg-blue-100' : ''}`}
-                              onMouseDown={(e) => handleMouseDown(e, attendance)}
-                              onMouseUp={handleMouseUp}
-                              onMouseLeave={handleMouseLeave}
-                              onDoubleClick={(e) => handleRowDoubleClick(e, attendance)}
-                              title="Hold for 1 second to view details, double-click to edit attendance times"
-                            >
+                                key={attendance.id} 
+                                className={`hover:bg-blue-50 cursor-pointer transition-colors select-none ${
+                                  attendance.source === 'manual_edit' ? 'bg-red-50' : ''
+                                } ${isHolding ? 'bg-blue-100' : ''} ${
+                                  (() => {
+                                    const problems = detectRecordProblems(attendance);
+                                    return problems && problems.length > 0 ? 'border-l-4 border-red-400' : '';
+                                  })()
+                                }`}
+                                onMouseDown={(e) => handleMouseDown(e, attendance)}
+                                onMouseUp={handleMouseUp}
+                                onMouseLeave={handleMouseLeave}
+                                onDoubleClick={(e) => handleRowDoubleClick(e, attendance)}
+                                title="Hold for 1 second to view details, double-click to edit attendance times"
+                              >
                               <td 
                                 className="px-2 py-4 whitespace-nowrap"
                                 onClick={(e) => e.stopPropagation()}
@@ -1897,6 +2364,40 @@ const ProcessedAttendanceList = () => {
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
                                 <div className="flex items-center space-x-1">
+                                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                    parseFloat(attendance.offset || 0) > 0 
+                                      ? 'bg-blue-100 text-blue-800' 
+                                      : 'bg-gray-100 text-gray-500'
+                                  }`}>
+                                    {formatNumeric(attendance.offset)} hrs
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {attendance.restday ? (
+                                  <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                                    <Calendar className="h-3 w-3 mr-1" />
+                                    Rest Day
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+                                    Regular
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                <div className="flex items-center space-x-1">
+                                  <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                    parseFloat(attendance.retromultiplier || 0) > 0 
+                                      ? 'bg-purple-100 text-purple-800' 
+                                      : 'bg-gray-100 text-gray-500'
+                                  }`}>
+                                    ₱{formatNumeric(attendance.retromultiplier, 2)}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap text-sm text-gray-500">
+                                <div className="flex items-center space-x-1">
                                   <Car className="h-3 w-3 text-blue-500" />
                                   <span>{formatNumeric(attendance.trip, 1)}</span>
                                 </div>
@@ -1912,6 +2413,13 @@ const ProcessedAttendanceList = () => {
                               </td>
                               <td className="px-2 py-4 whitespace-nowrap">
                                 {renderPostingStatus(attendance)}
+                              </td>
+                              <td className="px-2 py-4 whitespace-nowrap relative group">
+                                {renderProblemIndicator(attendance)}
+                                {/* Tooltip that appears on hover */}
+                                <div className="invisible group-hover:visible absolute z-50">
+                                  {renderProblemsTooltip(attendance)}
+                                </div>
                               </td>
                               <td 
                                 className="px-2 py-4 whitespace-nowrap text-right text-sm font-medium"
@@ -2049,6 +2557,182 @@ const ProcessedAttendanceList = () => {
           </div>
         </div>
       </div>
+
+      {/* DTR Problems Modal */}
+          {showProblemsModal && problemSummary && (
+            <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+              <div className="relative bg-white rounded-lg shadow-lg max-w-6xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                <div className="flex justify-between items-center p-6 border-b">
+                  <h2 className="text-xl font-semibold text-gray-800">DTR Problems Detection</h2>
+                  <button
+                    onClick={() => {
+                      setShowProblemsModal(false);
+                      setProblemRecords([]);
+                      setProblemSummary(null);
+                    }}
+                    className="text-gray-500 hover:text-gray-700"
+                    aria-label="Close"
+                  >
+                    <X className="h-5 w-5" />
+                  </button>
+                </div>
+
+                <div className="p-6">
+                  {/* Summary Section */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                      <div className="flex items-center">
+                        <FileText className="h-8 w-8 text-blue-500" />
+                        <div className="ml-3">
+                          <p className="text-sm font-medium text-gray-600">Total Records</p>
+                          <p className="text-2xl font-bold text-gray-900">{problemSummary.total_records}</p>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                      <div className="flex items-center">
+                        <AlertTriangle className="h-8 w-8 text-red-500" />
+                        <div className="ml-3">
+                          <p className="text-sm font-medium text-gray-600">Problem Records</p>
+                          <p className="text-2xl font-bold text-gray-900">{problemSummary.problem_records}</p>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                      <div className="flex items-center">
+                        <CheckCircle className="h-8 w-8 text-green-500" />
+                        <div className="ml-3">
+                          <p className="text-sm font-medium text-gray-600">Clean Records</p>
+                          <p className="text-2xl font-bold text-gray-900">
+                            {problemSummary.total_records - problemSummary.problem_records}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                      <div className="flex items-center">
+                        <Calculator className="h-8 w-8 text-purple-500" />
+                        <div className="ml-3">
+                          <p className="text-sm font-medium text-gray-600">Success Rate</p>
+                          <p className="text-2xl font-bold text-gray-900">
+                            {problemSummary.total_records > 0 
+                              ? Math.round(((problemSummary.total_records - problemSummary.problem_records) / problemSummary.total_records) * 100)
+                              : 0}%
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Problem Types Breakdown */}
+                  <div className="mb-6">
+                    <h3 className="text-lg font-medium text-gray-900 mb-3">Problem Types Breakdown</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+                      {Object.entries(problemSummary.problems).map(([type, count]) => (
+                        count > 0 && (
+                          <div key={type} className="bg-gray-50 border rounded-lg p-3">
+                            <p className="text-xs font-medium text-gray-600 capitalize">
+                              {type.replace(/_/g, ' ')}
+                            </p>
+                            <p className="text-lg font-bold text-red-600">{count}</p>
+                          </div>
+                        )
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Problem Records Table */}
+                  {problemRecords.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <h3 className="text-lg font-medium text-gray-900 mb-3">Records with Problems</h3>
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Employee</th>
+                            <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                            <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Severity</th>
+                            <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Problems</th>
+                            <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Time In/Out</th>
+                            <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Hours</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {problemRecords.map((record) => (
+                            <tr key={record.id} className="hover:bg-gray-50">
+                              <td className="px-3 py-4 whitespace-nowrap">
+                                <div>
+                                  <div className="text-sm font-medium text-gray-900">{record.employee_name}</div>
+                                  <div className="text-xs text-gray-500">{record.employee_no}</div>
+                                </div>
+                              </td>
+                              <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {record.attendance_date}
+                              </td>
+                              <td className="px-3 py-4 whitespace-nowrap">
+                                <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+                                  record.severity === 'high' ? 'bg-red-100 text-red-800' :
+                                  record.severity === 'medium' ? 'bg-yellow-100 text-yellow-800' :
+                                  'bg-gray-100 text-gray-800'
+                                }`}>
+                                  {record.severity.toUpperCase()}
+                                </span>
+                              </td>
+                              <td className="px-3 py-4">
+                                <div className="space-y-1">
+                                  {record.problems.map((problem, index) => (
+                                    <div key={index} className="text-xs">
+                                      <span className={`inline-flex items-center px-2 py-1 rounded text-xs ${
+                                        problem.severity === 'high' ? 'bg-red-50 text-red-700' :
+                                        problem.severity === 'medium' ? 'bg-yellow-50 text-yellow-700' :
+                                        'bg-gray-50 text-gray-700'
+                                      }`}>
+                                        {problem.message}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                              <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
+                                <div>
+                                  <div>In: {record.time_in || '-'}</div>
+                                  <div>Out: {record.time_out || '-'}</div>
+                                </div>
+                              </td>
+                              <td className="px-3 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {record.hours_worked || '-'}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="text-center py-8">
+                      <CheckCircle className="h-12 w-12 mx-auto text-green-500 mb-4" />
+                      <h3 className="text-lg font-medium text-gray-900 mb-2">No Problems Found!</h3>
+                      <p className="text-gray-500">All DTR records in the current view are clean and valid.</p>
+                    </div>
+                  )}
+
+                  <div className="flex justify-end mt-6">
+                    <Button
+                      onClick={() => {
+                        setShowProblemsModal(false);
+                        setProblemRecords([]);
+                        setProblemSummary(null);
+                      }}
+                      className="bg-blue-600 hover:bg-blue-700 text-white"
+                    >
+                      Close
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
       
       {/* Edit Modal */}
       {showEditModal && selectedAttendance && (

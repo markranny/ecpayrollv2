@@ -2,16 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { Head } from '@inertiajs/react';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
 import Sidebar from '@/Components/Sidebar';
-import { Search, Calendar, Filter, Download, Trash2, RefreshCw, Users, Calculator, FileText, AlertTriangle, CheckCircle, Clock, Target, Eye, X, User, Building, Car } from 'lucide-react';
+import { Search, Calendar, Filter, Download, Trash2, RefreshCw, Users, Calculator, FileText, AlertTriangle, CheckCircle, Clock, Target, Eye, X, User, Building, Car, BarChart3, TrendingUp } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
-// PayrollSummaryDetailModal Component
+// PayrollSummaryDetailModal Component with Report Functionality
 const PayrollSummaryDetailModal = ({ isOpen, summary, onClose }) => {
   const [attendanceDetails, setAttendanceDetails] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showReport, setShowReport] = useState(false);
+  const [reportData, setReportData] = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
 
   // Load attendance details when modal opens
   useEffect(() => {
@@ -50,6 +53,269 @@ const PayrollSummaryDetailModal = ({ isOpen, summary, onClose }) => {
       setLoading(false);
     }
   };
+
+  // Generate Cost Center Report
+  const generateCostCenterReport = async () => {
+    setReportLoading(true);
+    setError('');
+
+    try {
+      // Get all payroll summaries for the same period and department/cost center
+      const params = new URLSearchParams({
+        year: summary.year,
+        month: summary.month,
+        period_type: summary.period_type,
+        department: summary.department || '',
+        per_page: 1000 // Get all records for report
+      });
+
+      const response = await fetch(`/payroll-summaries?${params.toString()}`, {
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to load report data: ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Group by cost center
+        const groupedData = data.data.reduce((acc, item) => {
+          const costCenter = item.cost_center || 'No Cost Center';
+          if (!acc[costCenter]) {
+            acc[costCenter] = {
+              employees: [],
+              totals: {
+                employees_count: 0,
+                days_worked: 0,
+                ot_hours: 0,
+                off_days: 0,
+                late_under_minutes: 0,
+                nsd_hours: 0,
+                slvl_days: 0,
+                offset_hours: 0,
+                retro: 0,
+                trip_count: 0
+              }
+            };
+          }
+
+          acc[costCenter].employees.push(item);
+          acc[costCenter].totals.employees_count++;
+          acc[costCenter].totals.days_worked += parseFloat(item.days_worked || 0);
+          acc[costCenter].totals.ot_hours += parseFloat(item.ot_hours || 0);
+          acc[costCenter].totals.off_days += parseFloat(item.off_days || 0);
+          acc[costCenter].totals.late_under_minutes += parseFloat(item.late_under_minutes || 0);
+          acc[costCenter].totals.nsd_hours += parseFloat(item.nsd_hours || 0);
+          acc[costCenter].totals.slvl_days += parseFloat(item.slvl_days || 0);
+          acc[costCenter].totals.offset_hours += parseFloat(item.offset_hours || 0);
+          acc[costCenter].totals.retro += parseFloat(item.retro || 0);
+          acc[costCenter].totals.trip_count += parseFloat(item.trip_count || 0);
+
+          return acc;
+        }, {});
+
+        // Calculate grand totals
+        const grandTotals = Object.values(groupedData).reduce((acc, group) => {
+          acc.employees_count += group.totals.employees_count;
+          acc.days_worked += group.totals.days_worked;
+          acc.ot_hours += group.totals.ot_hours;
+          acc.off_days += group.totals.off_days;
+          acc.late_under_minutes += group.totals.late_under_minutes;
+          acc.nsd_hours += group.totals.nsd_hours;
+          acc.slvl_days += group.totals.slvl_days;
+          acc.offset_hours += group.totals.offset_hours;
+          acc.retro += group.totals.retro;
+          acc.trip_count += group.totals.trip_count;
+          return acc;
+        }, {
+          employees_count: 0,
+          days_worked: 0,
+          ot_hours: 0,
+          off_days: 0,
+          late_under_minutes: 0,
+          nsd_hours: 0,
+          slvl_days: 0,
+          offset_hours: 0,
+          retro: 0,
+          trip_count: 0
+        });
+
+        setReportData({
+          groupedData,
+          grandTotals,
+          period: `${summary.year}-${String(summary.month).padStart(2, '0')} ${summary.period_type}`,
+          department: summary.department,
+          generated_at: new Date().toISOString()
+        });
+        setShowReport(true);
+      } else {
+        setError('Failed to generate report');
+      }
+    } catch (err) {
+      console.error('Error generating report:', err);
+      setError('Error generating report: ' + (err.message || 'Unknown error'));
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
+  // Export Report to CSV
+  // Export Report to CSV - FIXED VERSION
+const exportReport = () => {
+  if (!reportData) return;
+
+  const csvRows = [];
+  
+  // Column Headers matching your sample CSV exactly
+  csvRows.push([
+    'COST CENTER',
+    'Employee ID',
+    'Employee Name',
+    'Department',
+    'Line',
+    'Period',
+    'Year',
+    'Month',
+    'Period Type',
+    'Days Worked',
+    'OT Hours',
+    'Off Days',
+    'Late/Under Minutes',
+    'Late/Under Hours',
+    'NSD Hours',
+    'SLVL Days',
+    'Retro',
+    'Travel Order Hours',
+    'Holiday Hours',
+    'OT Regular Holiday Hours',
+    'OT Special Holiday Hours',
+    'Offset Hours',
+    'Trip Count'
+  ]);
+
+  // Employee data rows (flat table format)
+  Object.keys(reportData.groupedData).sort().forEach(costCenter => {
+    const group = reportData.groupedData[costCenter];
+    
+    // Add each employee as a row
+    group.employees.forEach(emp => {
+      csvRows.push([
+        costCenter,
+        emp.employee_no,
+        emp.employee_name,
+        emp.department || '',
+        emp.line || '',
+        reportData.period,
+        summary?.year || new Date().getFullYear(),
+        summary?.month || new Date().getMonth() + 1,
+        summary?.period_type || '',
+        parseFloat(emp.days_worked || 0),
+        parseFloat(emp.ot_hours || 0),
+        parseFloat(emp.off_days || 0),
+        parseFloat(emp.late_under_minutes || 0),
+        parseFloat(formatMinutesToHours(emp.late_under_minutes || 0)),
+        parseFloat(emp.nsd_hours || 0),
+        parseFloat(emp.slvl_days || 0),
+        parseFloat(emp.retro || 0),
+        parseFloat(emp.travel_order_hours || 0),
+        parseFloat(emp.holiday_hours || 0),
+        parseFloat(emp.ot_reg_holiday_hours || 0),
+        parseFloat(emp.ot_special_holiday_hours || 0),
+        parseFloat(emp.offset_hours || 0),
+        parseFloat(emp.trip_count || 0)
+      ]);
+    });
+  });
+
+  // Add subtotal rows for each cost center
+  Object.keys(reportData.groupedData).sort().forEach(costCenter => {
+    const group = reportData.groupedData[costCenter];
+    csvRows.push([
+      `SUBTOTAL - ${costCenter}`,
+      '',
+      `(${group.totals.employees_count} employees)`,
+      '',
+      '',
+      reportData.period,
+      summary?.year || new Date().getFullYear(),
+      summary?.month || new Date().getMonth() + 1,
+      summary?.period_type || '',
+      parseFloat(group.totals.days_worked || 0),
+      parseFloat(group.totals.ot_hours || 0),
+      parseFloat(group.totals.off_days || 0),
+      parseFloat(group.totals.late_under_minutes || 0),
+      parseFloat(formatMinutesToHours(group.totals.late_under_minutes || 0)),
+      parseFloat(group.totals.nsd_hours || 0),
+      parseFloat(group.totals.slvl_days || 0),
+      parseFloat(group.totals.retro || 0),
+      parseFloat(group.totals.travel_order_hours || 0),
+      parseFloat(group.totals.holiday_hours || 0),
+      parseFloat(group.totals.ot_reg_holiday_hours || 0),
+      parseFloat(group.totals.ot_special_holiday_hours || 0),
+      parseFloat(group.totals.offset_hours || 0),
+      parseFloat(group.totals.trip_count || 0)
+    ]);
+  });
+
+  // Grand total row
+  csvRows.push([
+    'GRAND TOTAL',
+    '',
+    `(${reportData.grandTotals.employees_count} employees)`,
+    '',
+    '',
+    reportData.period,
+    summary?.year || new Date().getFullYear(),
+    summary?.month || new Date().getMonth() + 1,
+    summary?.period_type || '',
+    parseFloat(reportData.grandTotals.days_worked || 0),
+    parseFloat(reportData.grandTotals.ot_hours || 0),
+    parseFloat(reportData.grandTotals.off_days || 0),
+    parseFloat(reportData.grandTotals.late_under_minutes || 0),
+    parseFloat(formatMinutesToHours(reportData.grandTotals.late_under_minutes || 0)),
+    parseFloat(reportData.grandTotals.nsd_hours || 0),
+    parseFloat(reportData.grandTotals.slvl_days || 0),
+    parseFloat(reportData.grandTotals.retro || 0),
+    parseFloat(reportData.grandTotals.travel_order_hours || 0),
+    parseFloat(reportData.grandTotals.holiday_hours || 0),
+    parseFloat(reportData.grandTotals.ot_reg_holiday_hours || 0),
+    parseFloat(reportData.grandTotals.ot_special_holiday_hours || 0),
+    parseFloat(reportData.grandTotals.offset_hours || 0),
+    parseFloat(reportData.grandTotals.trip_count || 0)
+  ]);
+
+  // Convert to CSV with proper escaping
+  const csvContent = csvRows.map(row => 
+    row.map(cell => {
+      const cellStr = String(cell || '');
+      // Escape commas, quotes, and newlines
+      if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
+        return `"${cellStr.replace(/"/g, '""')}"`;
+      }
+      return cellStr;
+    }).join(',')
+  ).join('\n');
+
+  // Add BOM for proper Excel encoding
+  const BOM = '\uFEFF';
+  const finalContent = BOM + csvContent;
+
+  // Download
+  const blob = new Blob([finalContent], { type: 'text/csv;charset=utf-8' });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `cost_center_report_${reportData.period.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  window.URL.revokeObjectURL(url);
+};
 
   // Format date for display
   const formatDate = (dateString) => {
@@ -128,7 +394,7 @@ const PayrollSummaryDetailModal = ({ isOpen, summary, onClose }) => {
     return isNaN(num) ? '0.00' : num.toFixed(decimals);
   };
 
-  // FIXED: Format minutes to hours for display (corrected calculation)
+  // Format minutes to hours for display
   const formatMinutesToHours = (minutes) => {
     if (!minutes || minutes === 0) return '0.00';
     const num = parseFloat(minutes);
@@ -183,7 +449,9 @@ const PayrollSummaryDetailModal = ({ isOpen, summary, onClose }) => {
       <div className="relative bg-white rounded-lg shadow-lg max-w-7xl w-full mx-4 max-h-[95vh] overflow-y-auto">
         <div className="flex justify-between items-center p-6 border-b sticky top-0 bg-white z-10">
           <div className="flex items-center space-x-3">
-            <h2 className="text-xl font-semibold text-gray-800">Payroll Summary Details</h2>
+            <h2 className="text-xl font-semibold text-gray-800">
+              {showReport ? 'Cost Center Report' : 'Payroll Summary Details'}
+            </h2>
             <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
               summary?.status === 'posted' 
                 ? 'bg-green-100 text-green-800'
@@ -194,342 +462,540 @@ const PayrollSummaryDetailModal = ({ isOpen, summary, onClose }) => {
               {summary?.status?.charAt(0).toUpperCase() + summary?.status?.slice(1)}
             </span>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-700"
-            aria-label="Close"
-          >
-            <X className="h-5 w-5" />
-          </button>
+          <div className="flex items-center space-x-2">
+            {!showReport && (
+              <Button
+                onClick={generateCostCenterReport}
+                disabled={reportLoading}
+                size="sm"
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                {reportLoading ? (
+                  <>
+                    <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                    Generating...
+                  </>
+                ) : (
+                  <>
+                    <BarChart3 className="h-4 w-4 mr-1" />
+                    REPORT
+                  </>
+                )}
+              </Button>
+            )}
+            
+            {showReport && (
+              <>
+                <Button
+                  onClick={exportReport}
+                  size="sm"
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                >
+                  <Download className="h-4 w-4 mr-1" />
+                  Export CSV
+                </Button>
+                <Button
+                  onClick={() => setShowReport(false)}
+                  size="sm"
+                  variant="outline"
+                >
+                  <Eye className="h-4 w-4 mr-1" />
+                  Back to Details
+                </Button>
+              </>
+            )}
+            
+            <button
+              onClick={onClose}
+              className="text-gray-500 hover:text-gray-700"
+              aria-label="Close"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
         </div>
 
         <div className="p-6 space-y-6">
-          {/* Summary Information */}
-          <div className="bg-blue-50 rounded-lg p-4">
-            <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
-              <User className="h-5 w-5 mr-2" />
-              Summary Information
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="text-sm font-medium text-gray-500">Employee</label>
-                <p className="text-gray-900 font-medium">{summary?.employee_name}</p>
-                <p className="text-sm text-gray-500">{summary?.employee_no}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-500">Department</label>
-                <p className="text-gray-900">{summary?.department}</p>
-                <p className="text-sm text-gray-500">{summary?.line}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-gray-500">Period</label>
-                <p className="text-gray-900">{summary?.full_period}</p>
-                <p className="text-sm text-gray-500">Cost Center: {summary?.cost_center || 'N/A'}</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Summary Metrics */}
-          <div className="bg-green-50 rounded-lg p-4">
-            <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
-              <Calculator className="h-5 w-5 mr-2" />
-              Summary Metrics
-            </h3>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <div className="text-center">
-                <div className="text-2xl font-bold text-green-600">{formatNumeric(summary?.days_worked, 1)}</div>
-                <div className="text-sm text-green-800">Days Worked</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-blue-600">{formatNumeric(summary?.ot_hours)}</div>
-                <div className="text-sm text-blue-800">OT Hours</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-orange-600">{formatMinutesToHours(summary?.late_under_minutes)}</div>
-                <div className="text-sm text-orange-800">Late/Under (Hrs)</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-purple-600">{formatNumeric(summary?.nsd_hours)}</div>
-                <div className="text-sm text-purple-800">NSD Hours</div>
-              </div>
-              <div className="text-center">
-                <div className="text-2xl font-bold text-red-600">{formatNumeric(summary?.slvl_days, 1)}</div>
-                <div className="text-sm text-red-800">SLVL Days</div>
-              </div>
-            </div>
-          </div>
-
-          {/* Attendance Details - Styled like second image */}
-          <div className="bg-white border rounded-lg">
-            <div className="p-4 border-b">
-              <h3 className="text-lg font-medium text-gray-900 flex items-center">
-                <FileText className="h-5 w-5 mr-2" />
-                Detailed Attendance Records ({attendanceDetails.length} records)
-              </h3>
-            </div>
-
-            {loading ? (
-              <div className="flex justify-center items-center h-64">
-                <RefreshCw className="h-8 w-8 animate-spin text-blue-500" />
-                <span className="ml-2 text-lg">Loading attendance details...</span>
-              </div>
-            ) : error ? (
-              <div className="p-4">
-                <Alert variant="destructive">
-                  <AlertTriangle className="h-4 w-4 mr-2" />
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              </div>
-            ) : attendanceDetails.length === 0 ? (
-              <div className="text-center py-12">
-                <FileText className="h-12 w-12 mx-auto text-gray-400 mb-4" />
-                <h3 className="text-lg font-medium text-gray-600 mb-2">No attendance records found</h3>
-                <p className="text-gray-500">The attendance records may have been deleted or not properly linked.</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full">
-                  {/* Header */}
-                  <thead className="bg-gray-50 border-b">
-                    <tr>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time In</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break Out</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break In</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time Out</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Late/Under</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Night Shift</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hours</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Travel</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SLVL</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CT</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CS</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Holiday</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider flex items-center">
-                        <Car className="h-3 w-3 mr-1" />
-                        Trip
-                      </th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT Reg</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT Spl</th>
-                    </tr>
-                  </thead>
-                  
-                  {/* Body */}
-                  <tbody className="bg-white">
-                    {attendanceDetails.map((attendance, index) => (
-                      <tr key={attendance.id} className="border-b hover:bg-gray-50">
-                        
-                        {/* Date */}
-                        <td className="px-3 py-3">
-                          <div className="text-sm text-gray-900">
-                            {formatDate(attendance.attendance_date)}
-                          </div>
-                          <div className="text-xs text-gray-500">
-                            {attendance.day || ''}
-                          </div>
-                        </td>
-                        
-                        {/* Time In */}
-                        <td className="px-3 py-3 text-sm text-gray-900 font-medium">
-                          {formatTime(attendance.time_in)}
-                        </td>
-
-                        {/* Break Out */}
-                        <td className="px-3 py-3 text-sm text-gray-600">
-                          {formatTime(attendance.break_out)}
-                        </td>
-
-                        {/* Break In */}
-                        <td className="px-3 py-3 text-sm text-gray-600">
-                          {formatTime(attendance.break_in)}
-                        </td>
-
-                        {/* Time Out */}
-                        <td className="px-3 py-3 text-sm text-gray-900 font-medium">
-                          {attendance.is_nightshift && attendance.next_day_timeout 
-                            ? formatTime(attendance.next_day_timeout)
-                            : formatTime(attendance.time_out)
-                          }
-                        </td>
-                        
-                        {/* FIXED: Late/Under - now properly calculated and displayed */}
-                        <td className="px-3 py-3">
-                          {(attendance.late_minutes > 0 || attendance.undertime_minutes > 0) ? (
-                            <div className="space-y-1">
-                              {attendance.late_minutes > 0 && (
-                                <div className="flex items-center text-red-600 text-xs">
-                                  <span className="w-2 h-2 bg-red-500 rounded-full mr-1"></span>
-                                  {Math.round(attendance.late_minutes)}m late
-                                </div>
-                              )}
-                              {attendance.undertime_minutes > 0 && (
-                                <div className="flex items-center text-orange-600 text-xs">
-                                  <span className="w-2 h-2 bg-orange-500 rounded-full mr-1"></span>
-                                  {Math.round(attendance.undertime_minutes)}m under
-                                </div>
-                              )}
-                            </div>
-                          ) : (
-                            <div className="flex items-center text-green-600 text-xs">
-                              <CheckCircle className="h-3 w-3 mr-1" />
-                              On Time
-                            </div>
-                          )}
-                        </td>
-                        
-                        {/* Night Shift */}
-                        <td className="px-3 py-3">
-                          {attendance.is_nightshift ? (
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-purple-100 text-purple-800">
-                              ☽ Night
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-yellow-100 text-yellow-800">
-                              ☀ Day
-                            </span>
-                          )}
-                        </td>
-                        
-                        {/* Hours */}
-                        <td className="px-3 py-3 text-sm text-gray-900 font-medium">
-                          {formatNumeric(attendance.hours_worked)}
-                        </td>
-                        
-                        {/* OT */}
-                        <td className="px-3 py-3 text-sm text-gray-600">
-                          {formatNumeric(attendance.overtime)}
-                        </td>
-                        
-                        {/* Travel */}
-                        <td className="px-3 py-3 text-sm text-gray-600">
-                          {formatNumeric(attendance.travel_order)}
-                        </td>
-                        
-                        {/* SLVL */}
-                        <td className="px-3 py-3 text-sm text-gray-600">
-                          {formatNumeric(attendance.slvl, 1)}
-                        </td>
-                        
-                        {/* CT */}
-                        <td className="px-3 py-3 text-sm text-center">
-                          {attendance.ct ? '✓' : '-'}
-                        </td>
-                        
-                        {/* CS */}
-                        <td className="px-3 py-3 text-sm text-center">
-                          {attendance.cs ? '✓' : '-'}
-                        </td>
-                        
-                        {/* Holiday */}
-                        <td className="px-3 py-3 text-sm text-gray-600">
-                          {formatNumeric(attendance.holiday)}
-                        </td>
-                        
-                        {/* Trip */}
-                        <td className="px-3 py-3">
-                          <div className="flex items-center text-sm text-blue-600">
-                            <Car className="h-3 w-3 mr-1" />
-                            {formatNumeric(attendance.trip, 1)}
-                          </div>
-                        </td>
-                        
-                        {/* OT REG - ADDED */}
-                        <td className="px-3 py-3 text-sm text-gray-600">
-                          {formatNumeric(attendance.ot_reg_holiday)}
-                        </td>
-                        
-                        {/* OT SPL - ADDED */}
-                        <td className="px-3 py-3 text-sm text-gray-600">
-                          {formatNumeric(attendance.ot_special_holiday)}
-                        </td>
-                        
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-
-          {/* Additional Summary Information */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-gray-50 rounded-lg p-4">
-              <h4 className="font-medium text-gray-900 mb-2">Additional Metrics</h4>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Off Days:</span>
-                  <span className="font-medium">{formatNumeric(summary?.off_days, 1)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Travel Order Hours:</span>
-                  <span className="font-medium">{formatNumeric(summary?.travel_order_hours)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Holiday Hours:</span>
-                  <span className="font-medium">{formatNumeric(summary?.holiday_hours)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">OT Reg Holiday:</span>
-                  <span className="font-medium">{formatNumeric(summary?.ot_reg_holiday_hours)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">OT Special Holiday:</span>
-                  <span className="font-medium">{formatNumeric(summary?.ot_special_holiday_hours)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Offset Hours:</span>
-                  <span className="font-medium">{formatNumeric(summary?.offset_hours)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Trip Count:</span>
-                  <span className="font-medium">{formatNumeric(summary?.trip_count, 1)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Retro:</span>
-                  <span className="font-medium">{formatNumeric(summary?.retro)}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-gray-50 rounded-lg p-4">
-              <h4 className="font-medium text-gray-900 mb-2">Flags</h4>
-              <div className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Has CT (Compensatory Time):</span>
-                  <span>{summary?.has_ct ? '✓ Yes' : '✗ No'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Has CS (Compressed Schedule):</span>
-                  <span>{summary?.has_cs ? '✓ Yes' : '✗ No'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Has OB (Official Business):</span>
-                  <span>{summary?.has_ob ? '✓ Yes' : '✗ No'}</span>
-                </div>
-                {summary?.posted_at && (
-                  <div className="mt-4 pt-2 border-t border-gray-200">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Posted At:</span>
-                      <span className="font-medium">{formatDate(summary.posted_at)}</span>
-                    </div>
-                    {summary?.posted_by && (
-                      <div className="flex justify-between">
-                        <span className="text-gray-600">Posted By:</span>
-                        <span className="font-medium">{summary.posted_by.name}</span>
+          {showReport ? (
+            // Report View
+            <div className="space-y-6">
+              {reportData && (
+                <>
+                  {/* Report Header */}
+                  <div className="bg-blue-50 rounded-lg p-4">
+                    <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
+                      <TrendingUp className="h-5 w-5 mr-2" />
+                      Cost Center Summary Report
+                    </h3>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                      <div>
+                        <label className="font-medium text-gray-500">Period</label>
+                        <p className="text-gray-900">{reportData.period}</p>
                       </div>
-                    )}
+                      <div>
+                        <label className="font-medium text-gray-500">Department</label>
+                        <p className="text-gray-900">{reportData.department || 'All Departments'}</p>
+                      </div>
+                      <div>
+                        <label className="font-medium text-gray-500">Generated</label>
+                        <p className="text-gray-900">{formatDate(reportData.generated_at)}</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Grand Totals Summary */}
+                  <div className="bg-green-50 rounded-lg p-4">
+                    <h3 className="text-lg font-medium text-gray-900 mb-3">Grand Totals</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-blue-600">{reportData.grandTotals.employees_count}</div>
+                        <div className="text-sm text-blue-800">Total Employees</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-green-600">{formatNumeric(reportData.grandTotals.days_worked, 1)}</div>
+                        <div className="text-sm text-green-800">Days Worked</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-orange-600">{formatNumeric(reportData.grandTotals.ot_hours)}</div>
+                        <div className="text-sm text-orange-800">OT Hours</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-purple-600">{formatMinutesToHours(reportData.grandTotals.late_under_minutes)}</div>
+                        <div className="text-sm text-purple-800">Late/Under (Hrs)</div>
+                      </div>
+                      <div className="text-center">
+                        <div className="text-2xl font-bold text-red-600">{formatNumeric(reportData.grandTotals.slvl_days, 1)}</div>
+                        <div className="text-sm text-red-800">SLVL Days</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Cost Centers Breakdown */}
+                  <div className="space-y-4">
+                    {Object.entries(reportData.groupedData).map(([costCenter, group]) => (
+                      <div key={costCenter} className="bg-white border rounded-lg overflow-hidden">
+                        <div className="bg-gray-50 px-4 py-3 border-b">
+                          <h4 className="text-lg font-medium text-gray-900 flex items-center">
+                            <Building className="h-5 w-5 mr-2" />
+                            {costCenter} ({group.totals.employees_count} employees)
+                          </h4>
+                        </div>
+                        
+                        {/* Cost Center Totals */}
+                        <div className="bg-blue-50 p-3">
+                          <div className="grid grid-cols-3 md:grid-cols-8 gap-2 text-sm">
+                            <div className="text-center">
+                              <div className="font-bold text-blue-600">{formatNumeric(group.totals.days_worked, 1)}</div>
+                              <div className="text-blue-800">Days</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="font-bold text-orange-600">{formatNumeric(group.totals.ot_hours)}</div>
+                              <div className="text-orange-800">OT</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="font-bold text-gray-600">{formatNumeric(group.totals.off_days, 1)}</div>
+                              <div className="text-gray-800">Off</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="font-bold text-red-600">{formatMinutesToHours(group.totals.late_under_minutes)}</div>
+                              <div className="text-red-800">Late/Under</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="font-bold text-purple-600">{formatNumeric(group.totals.nsd_hours)}</div>
+                              <div className="text-purple-800">NSD</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="font-bold text-indigo-600">{formatNumeric(group.totals.slvl_days, 1)}</div>
+                              <div className="text-indigo-800">SLVL</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="font-bold text-green-600">{formatNumeric(group.totals.offset_hours)}</div>
+                              <div className="text-green-800">Offset</div>
+                            </div>
+                            <div className="text-center">
+                              <div className="font-bold text-yellow-600">{formatNumeric(group.totals.trip_count, 1)}</div>
+                              <div className="text-yellow-800">Trip</div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Employee Details */}
+                        <div className="overflow-x-auto">
+                          <table className="min-w-full">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Employee</th>
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Days</th>
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">OT</th>
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Off</th>
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Late/Under</th>
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">NSD</th>
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">SLVL</th>
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Offset</th>
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Retro</th>
+                                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Trip</th>
+                              </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-200">
+                              {group.employees.map((employee) => (
+                                <tr key={employee.id} className="hover:bg-gray-50">
+                                  <td className="px-3 py-2">
+                                    <div>
+                                      <div className="text-sm font-medium text-gray-900">{employee.employee_name}</div>
+                                      <div className="text-xs text-gray-500">{employee.employee_no}</div>
+                                    </div>
+                                  </td>
+                                  <td className="px-3 py-2 text-center text-sm text-gray-900">{formatNumeric(employee.days_worked, 1)}</td>
+                                  <td className="px-3 py-2 text-center text-sm text-gray-900">{formatNumeric(employee.ot_hours)}</td>
+                                  <td className="px-3 py-2 text-center text-sm text-gray-900">{formatNumeric(employee.off_days, 1)}</td>
+                                  <td className="px-3 py-2 text-center text-sm text-gray-900">{formatMinutesToHours(employee.late_under_minutes)}</td>
+                                  <td className="px-3 py-2 text-center text-sm text-gray-900">{formatNumeric(employee.nsd_hours)}</td>
+                                  <td className="px-3 py-2 text-center text-sm text-gray-900">{formatNumeric(employee.slvl_days, 1)}</td>
+                                  <td className="px-3 py-2 text-center text-sm text-gray-900">{formatNumeric(employee.offset_hours)}</td>
+                                  <td className="px-3 py-2 text-center text-sm text-gray-900">{formatNumeric(employee.retro)}</td>
+                                  <td className="px-3 py-2 text-center text-sm text-gray-900">{formatNumeric(employee.trip_count, 1)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          ) : (
+            // Original Detail View
+            <>
+              {/* Summary Information */}
+              <div className="bg-blue-50 rounded-lg p-4">
+                <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
+                  <User className="h-5 w-5 mr-2" />
+                  Summary Information
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-gray-500">Employee</label>
+                    <p className="text-gray-900 font-medium">{summary?.employee_name}</p>
+                    <p className="text-sm text-gray-500">{summary?.employee_no}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-500">Department</label>
+                    <p className="text-gray-900">{summary?.department}</p>
+                    <p className="text-sm text-gray-500">{summary?.line}</p>
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-gray-500">Period</label>
+                    <p className="text-gray-900">{summary?.full_period}</p>
+                    <p className="text-sm text-gray-500">Cost Center: {summary?.cost_center || 'N/A'}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Summary Metrics */}
+              <div className="bg-green-50 rounded-lg p-4">
+                <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
+                  <Calculator className="h-5 w-5 mr-2" />
+                  Summary Metrics
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-green-600">{formatNumeric(summary?.days_worked, 1)}</div>
+                    <div className="text-sm text-green-800">Days Worked</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-blue-600">{formatNumeric(summary?.ot_hours)}</div>
+                    <div className="text-sm text-blue-800">OT Hours</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-orange-600">{formatMinutesToHours(summary?.late_under_minutes)}</div>
+                    <div className="text-sm text-orange-800">Late/Under (Hrs)</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-purple-600">{formatNumeric(summary?.nsd_hours)}</div>
+                    <div className="text-sm text-purple-800">NSD Hours</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-red-600">{formatNumeric(summary?.slvl_days, 1)}</div>
+                    <div className="text-sm text-red-800">SLVL Days</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Attendance Details - Styled like second image */}
+              <div className="bg-white border rounded-lg">
+                <div className="p-4 border-b">
+                  <h3 className="text-lg font-medium text-gray-900 flex items-center">
+                    <FileText className="h-5 w-5 mr-2" />
+                    Detailed Attendance Records ({attendanceDetails.length} records)
+                  </h3>
+                </div>
+
+                {loading ? (
+                  <div className="flex justify-center items-center h-64">
+                    <RefreshCw className="h-8 w-8 animate-spin text-blue-500" />
+                    <span className="ml-2 text-lg">Loading attendance details...</span>
+                  </div>
+                ) : error ? (
+                  <div className="p-4">
+                    <Alert variant="destructive">
+                      <AlertTriangle className="h-4 w-4 mr-2" />
+                      <AlertDescription>{error}</AlertDescription>
+                    </Alert>
+                  </div>
+                ) : attendanceDetails.length === 0 ? (
+                  <div className="text-center py-12">
+                    <FileText className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+                    <h3 className="text-lg font-medium text-gray-600 mb-2">No attendance records found</h3>
+                    <p className="text-gray-500">The attendance records may have been deleted or not properly linked.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full">
+                      {/* Header */}
+                      <thead className="bg-gray-50 border-b">
+                        <tr>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Date</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time In</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break Out</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Break In</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time Out</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Late/Under</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Night Shift</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hours</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Travel</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">SLVL</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CT</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">CS</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Holiday</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider flex items-center">
+                            <Car className="h-3 w-3 mr-1" />
+                            Trip
+                          </th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT Reg</th>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">OT Spl</th>
+                        </tr>
+                      </thead>
+                      
+                      {/* Body */}
+                      <tbody className="bg-white">
+                        {attendanceDetails.map((attendance, index) => (
+                          <tr key={attendance.id} className="border-b hover:bg-gray-50">
+                            
+                            {/* Date */}
+                            <td className="px-3 py-3">
+                              <div className="text-sm text-gray-900">
+                                {formatDate(attendance.attendance_date)}
+                              </div>
+                              <div className="text-xs text-gray-500">
+                                {attendance.day || ''}
+                              </div>
+                            </td>
+                            
+                            {/* Time In */}
+                            <td className="px-3 py-3 text-sm text-gray-900 font-medium">
+                              {formatTime(attendance.time_in)}
+                            </td>
+
+                            {/* Break Out */}
+                            <td className="px-3 py-3 text-sm text-gray-600">
+                              {formatTime(attendance.break_out)}
+                            </td>
+
+                            {/* Break In */}
+                            <td className="px-3 py-3 text-sm text-gray-600">
+                              {formatTime(attendance.break_in)}
+                            </td>
+
+                            {/* Time Out */}
+                            <td className="px-3 py-3 text-sm text-gray-900 font-medium">
+                              {attendance.is_nightshift && attendance.next_day_timeout 
+                                ? formatTime(attendance.next_day_timeout)
+                                : formatTime(attendance.time_out)
+                              }
+                            </td>
+                            
+                            {/* Late/Under */}
+                            <td className="px-3 py-3">
+                              {(attendance.late_minutes > 0 || attendance.undertime_minutes > 0) ? (
+                                <div className="space-y-1">
+                                  {attendance.late_minutes > 0 && (
+                                    <div className="flex items-center text-red-600 text-xs">
+                                      <span className="w-2 h-2 bg-red-500 rounded-full mr-1"></span>
+                                      {Math.round(attendance.late_minutes)}m late
+                                    </div>
+                                  )}
+                                  {attendance.undertime_minutes > 0 && (
+                                    <div className="flex items-center text-orange-600 text-xs">
+                                      <span className="w-2 h-2 bg-orange-500 rounded-full mr-1"></span>
+                                      {Math.round(attendance.undertime_minutes)}m under
+                                    </div>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="flex items-center text-green-600 text-xs">
+                                  <CheckCircle className="h-3 w-3 mr-1" />
+                                  On Time
+                                </div>
+                              )}
+                            </td>
+                            
+                            {/* Night Shift */}
+                            <td className="px-3 py-3">
+                              {attendance.is_nightshift ? (
+                                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-purple-100 text-purple-800">
+                                  ☽ Night
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center px-2 py-1 rounded-full text-xs bg-yellow-100 text-yellow-800">
+                                  ☀ Day
+                                </span>
+                              )}
+                            </td>
+                            
+                            {/* Hours */}
+                            <td className="px-3 py-3 text-sm text-gray-900 font-medium">
+                              {formatNumeric(attendance.hours_worked)}
+                            </td>
+                            
+                            {/* OT */}
+                            <td className="px-3 py-3 text-sm text-gray-600">
+                              {formatNumeric(attendance.overtime)}
+                            </td>
+                            
+                            {/* Travel */}
+                            <td className="px-3 py-3 text-sm text-gray-600">
+                              {formatNumeric(attendance.travel_order)}
+                            </td>
+                            
+                            {/* SLVL */}
+                            <td className="px-3 py-3 text-sm text-gray-600">
+                              {formatNumeric(attendance.slvl, 1)}
+                            </td>
+                            
+                            {/* CT */}
+                            <td className="px-3 py-3 text-sm text-center">
+                              {attendance.ct ? '✓' : '-'}
+                            </td>
+                            
+                            {/* CS */}
+                            <td className="px-3 py-3 text-sm text-center">
+                              {attendance.cs ? '✓' : '-'}
+                            </td>
+                            
+                            {/* Holiday */}
+                            <td className="px-3 py-3 text-sm text-gray-600">
+                              {formatNumeric(attendance.holiday)}
+                            </td>
+                            
+                            {/* Trip */}
+                            <td className="px-3 py-3">
+                              <div className="flex items-center text-sm text-blue-600">
+                                <Car className="h-3 w-3 mr-1" />
+                                {formatNumeric(attendance.trip, 1)}
+                              </div>
+                            </td>
+                            
+                            {/* OT REG */}
+                            <td className="px-3 py-3 text-sm text-gray-600">
+                              {formatNumeric(attendance.ot_reg_holiday)}
+                            </td>
+                            
+                            {/* OT SPL */}
+                            <td className="px-3 py-3 text-sm text-gray-600">
+                              {formatNumeric(attendance.ot_special_holiday)}
+                            </td>
+                            
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 )}
               </div>
-            </div>
-          </div>
 
-          {summary?.notes && (
-            <div className="bg-blue-50 rounded-lg p-4">
-              <h4 className="font-medium text-gray-900 mb-2">Notes</h4>
-              <p className="text-gray-700">{summary.notes}</p>
-            </div>
+              {/* Additional Summary Information */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <h4 className="font-medium text-gray-900 mb-2">Additional Metrics</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Off Days:</span>
+                      <span className="font-medium">{formatNumeric(summary?.off_days, 1)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Travel Order Hours:</span>
+                      <span className="font-medium">{formatNumeric(summary?.travel_order_hours)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Holiday Hours:</span>
+                      <span className="font-medium">{formatNumeric(summary?.holiday_hours)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">OT Reg Holiday:</span>
+                      <span className="font-medium">{formatNumeric(summary?.ot_reg_holiday_hours)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">OT Special Holiday:</span>
+                      <span className="font-medium">{formatNumeric(summary?.ot_special_holiday_hours)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Offset Hours:</span>
+                      <span className="font-medium">{formatNumeric(summary?.offset_hours)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Trip Count:</span>
+                      <span className="font-medium">{formatNumeric(summary?.trip_count, 1)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Retro:</span>
+                      <span className="font-medium">{formatNumeric(summary?.retro)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-gray-50 rounded-lg p-4">
+                  <h4 className="font-medium text-gray-900 mb-2">Flags</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Has CT (Compensatory Time):</span>
+                      <span>{summary?.has_ct ? '✓ Yes' : '✗ No'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Has CS (Compressed Schedule):</span>
+                      <span>{summary?.has_cs ? '✓ Yes' : '✗ No'}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Has OB (Official Business):</span>
+                      <span>{summary?.has_ob ? '✓ Yes' : '✗ No'}</span>
+                    </div>
+                    {summary?.posted_at && (
+                      <div className="mt-4 pt-2 border-t border-gray-200">
+                        <div className="flex justify-between">
+                          <span className="text-gray-600">Posted At:</span>
+                          <span className="font-medium">{formatDate(summary.posted_at)}</span>
+                        </div>
+                        {summary?.posted_by && (
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Posted By:</span>
+                            <span className="font-medium">{summary.posted_by.name}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {summary?.notes && (
+                <div className="bg-blue-50 rounded-lg p-4">
+                  <h4 className="font-medium text-gray-900 mb-2">Notes</h4>
+                  <p className="text-gray-700">{summary.notes}</p>
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -546,6 +1012,7 @@ const PayrollSummaryDetailModal = ({ isOpen, summary, onClose }) => {
   );
 };
 
+// Main PayrollSummaries Component (unchanged from original)
 const PayrollSummaries = ({ auth }) => {
   const [summaries, setSummaries] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -559,7 +1026,7 @@ const PayrollSummaries = ({ auth }) => {
   const [periodType, setPeriodType] = useState('');
   const [department, setDepartment] = useState('');
   const [status, setStatus] = useState('');
-  const [searchTerm, setSearchTerm] = useState(''); // Added search state
+  const [searchTerm, setSearchTerm] = useState('');
   const [departments, setDepartments] = useState([]);
   
   // Pagination state
@@ -589,7 +1056,7 @@ const PayrollSummaries = ({ auth }) => {
       if (periodType) params.append('period_type', periodType);
       if (department) params.append('department', department);
       if (status) params.append('status', status);
-      if (searchTerm) params.append('search', searchTerm); // Added search parameter
+      if (searchTerm) params.append('search', searchTerm);
       
       const response = await fetch('/payroll-summaries?' + params.toString(), {
         headers: {
@@ -629,7 +1096,7 @@ const PayrollSummaries = ({ auth }) => {
       if (periodType) params.append('period_type', periodType);
       if (department) params.append('department', department);
       if (status) params.append('status', status);
-      if (searchTerm) params.append('search', searchTerm); // Added search to export
+      if (searchTerm) params.append('search', searchTerm);
       
       const response = await fetch('/payroll-summaries/export?' + params.toString(), {
         method: 'GET',
@@ -754,12 +1221,12 @@ const PayrollSummaries = ({ auth }) => {
 
   // Format minutes to hours for display
   const formatMinutesToHours = (minutes) => {
-  if (!minutes || minutes === 0) return '0.00';
-  const num = parseFloat(minutes);
-  if (isNaN(num)) return '0.00';
-  const hours = num / 60;  // Simple division by 60
-  return hours.toFixed(2);
-};
+    if (!minutes || minutes === 0) return '0.00';
+    const num = parseFloat(minutes);
+    if (isNaN(num)) return '0.00';
+    const hours = num / 60;
+    return hours.toFixed(2);
+  };
 
   // Clear messages after delay
   useEffect(() => {
@@ -797,9 +1264,6 @@ const PayrollSummaries = ({ auth }) => {
                 <h1 className="text-2xl font-bold text-gray-900 mb-1">
                   Daily Time Records
                 </h1>
-                {/* <p className="text-gray-600">
-                  View and manage posted payroll summaries generated from attendance data with accurate calculations.
-                </p> */}
                 <p className="text-sm text-blue-600 mt-1">
                   💡 Tip: Double-click any row to view detailed attendance records
                 </p>
@@ -1246,3 +1710,4 @@ const PayrollSummaries = ({ auth }) => {
 };
 
 export default PayrollSummaries;
+                

@@ -375,6 +375,10 @@ const AttendanceInfoModal = ({ isOpen, attendance, onClose, onEdit }) => {
                 <label className="text-sm font-medium text-gray-500">Official Business</label>
                 <div className="mt-1">{renderBooleanBadge(attendance.ob)}</div>
               </div>
+              <div>
+                <label className="text-sm font-medium text-gray-500">Trip</label>
+                <p className="text-gray-900">{formatNumeric(attendance.trip)}</p>
+              </div>
             </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
