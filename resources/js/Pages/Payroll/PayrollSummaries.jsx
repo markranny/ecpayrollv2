@@ -1,43 +1,437 @@
 import React, { useState, useEffect } from 'react';
+import { Head } from '@inertiajs/react';
+import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout';
+import Sidebar from '@/Components/Sidebar';
 import { 
-  Search, 
-  Calendar, 
-  Filter, 
-  Download, 
-  Trash2, 
-  RefreshCw, 
-  Users, 
-  Calculator, 
-  FileText, 
-  AlertTriangle, 
-  CheckCircle, 
-  Clock, 
-  Target, 
-  Eye, 
-  X, 
-  User, 
-  Building, 
-  Car, 
-  BarChart3, 
-  TrendingUp, 
-  DollarSign, 
-  PieChart, 
-  Award, 
-  Briefcase, 
-  MapPin, 
-  Phone, 
-  Mail, 
-  Edit, 
-  Save, 
-  XCircle, // Using XCircle instead of Cancel
-  Plus 
+  Search, Calendar, Filter, Download, Trash2, RefreshCw, Users, 
+  Calculator, FileText, AlertTriangle, CheckCircle, Clock, Target, 
+  Eye, X, User, Building, DollarSign, TrendingUp, Edit, Check, 
+  XCircle, Play, Pause, CreditCard, BarChart3, FileSpreadsheet,
+  PlusCircle, Settings, Award, AlertCircle
 } from 'lucide-react';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
-// Complete Payroll Summaries Component with Sample Data
-const CompletePayrollSummaries = () => {
+// Payroll Summary Detail Modal
+const PayrollSummaryDetailModal = ({ isOpen, summary, onClose, onUpdate }) => {
+  const [loading, setLoading] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [formData, setFormData] = useState({});
+
+  useEffect(() => {
+    if (isOpen && summary) {
+      setFormData({
+        days_worked: summary.days_worked || 0,
+        ot_hours: summary.ot_hours || 0,
+        late_under_minutes: summary.late_under_minutes || 0,
+        nsd_hours: summary.nsd_hours || 0,
+        slvl_days: summary.slvl_days || 0,
+        retro: summary.retro || 0,
+        travel_order_hours: summary.travel_order_hours || 0,
+        holiday_hours: summary.holiday_hours || 0,
+        trip_count: summary.trip_count || 0,
+        // Deduction fields
+        advance: summary.advance || 0,
+        charge_store: summary.charge_store || 0,
+        charge: summary.charge || 0,
+        meals: summary.meals || 0,
+        miscellaneous: summary.miscellaneous || 0,
+        other_deductions: summary.other_deductions || 0,
+        mf_loan: summary.mf_loan || 0,
+        sss_loan: summary.sss_loan || 0,
+        hmdf_loan: summary.hmdf_loan || 0,
+        hmdf_prem: summary.hmdf_prem || 0,
+        sss_prem: summary.sss_prem || 0,
+        philhealth: summary.philhealth || 0,
+        // Benefit fields
+        mf_shares: summary.mf_shares || 0,
+        allowances: summary.allowances || 0,
+        notes: summary.notes || ''
+      });
+    }
+  }, [isOpen, summary]);
+
+  const handleSave = async () => {
+    setLoading(true);
+    try {
+      const response = await fetch(`/comprehensive-payroll-summaries/${summary.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify(formData)
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        setEditing(false);
+        onUpdate();
+        alert('Payroll summary updated successfully');
+      } else {
+        alert(data.message || 'Failed to update payroll summary');
+      }
+    } catch (err) {
+      console.error('Error updating summary:', err);
+      alert('Failed to update payroll summary');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleInputChange = (field, value) => {
+    setFormData(prev => ({
+      ...prev,
+      [field]: parseFloat(value) || 0
+    }));
+  };
+
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('en-PH', {
+      style: 'currency',
+      currency: 'PHP',
+      minimumFractionDigits: 2
+    }).format(amount || 0);
+  };
+
+  const formatNumber = (num, decimals = 2) => {
+    return parseFloat(num || 0).toFixed(decimals);
+  };
+
+  const formatMinutesToHours = (minutes) => {
+    if (!minutes) return '0.00';
+    return (parseFloat(minutes) / 60).toFixed(2);
+  };
+
+  if (!isOpen) return null;
+
+  const totalDeductions = (summary?.total_deductions || 0) || (
+    parseFloat(summary?.advance || 0) + 
+    parseFloat(summary?.charge_store || 0) + 
+    parseFloat(summary?.charge || 0) + 
+    parseFloat(summary?.meals || 0) + 
+    parseFloat(summary?.miscellaneous || 0) + 
+    parseFloat(summary?.other_deductions || 0) + 
+    parseFloat(summary?.mf_loan || 0) + 
+    parseFloat(summary?.sss_loan || 0) + 
+    parseFloat(summary?.hmdf_loan || 0) + 
+    parseFloat(summary?.hmdf_prem || 0) + 
+    parseFloat(summary?.sss_prem || 0) + 
+    parseFloat(summary?.philhealth || 0)
+  );
+
+  const totalBenefits = (summary?.total_benefits || 0) || (
+    parseFloat(summary?.mf_shares || 0) + 
+    parseFloat(summary?.allowances || 0)
+  );
+
+  return (
+    <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+      <div className="relative bg-white rounded-lg shadow-lg max-w-6xl w-full mx-4 max-h-[95vh] overflow-y-auto">
+        <div className="flex justify-between items-center p-6 border-b sticky top-0 bg-white z-10">
+          <div className="flex items-center space-x-3">
+            <h2 className="text-xl font-semibold text-gray-800">
+              Payroll Summary Details
+            </h2>
+            <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
+              summary?.status === 'posted' 
+                ? 'bg-green-100 text-green-800'
+                : summary?.status === 'locked'
+                ? 'bg-red-100 text-red-800'
+                : 'bg-yellow-100 text-yellow-800'
+            }`}>
+              {summary?.status?.charAt(0).toUpperCase() + summary?.status?.slice(1)}
+            </span>
+          </div>
+          <div className="flex items-center space-x-2">
+            {summary?.status !== 'locked' && !editing && (
+              <Button
+                onClick={() => setEditing(true)}
+                size="sm"
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                <Edit className="h-4 w-4 mr-1" />
+                Edit
+              </Button>
+            )}
+            
+            {editing && (
+              <>
+                <Button
+                  onClick={handleSave}
+                  disabled={loading}
+                  size="sm"
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                >
+                  {loading ? (
+                    <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                  ) : (
+                    <Check className="h-4 w-4 mr-1" />
+                  )}
+                  Save
+                </Button>
+                <Button
+                  onClick={() => setEditing(false)}
+                  size="sm"
+                  variant="outline"
+                >
+                  <X className="h-4 w-4 mr-1" />
+                  Cancel
+                </Button>
+              </>
+            )}
+            
+            <button
+              onClick={onClose}
+              className="text-gray-500 hover:text-gray-700"
+              aria-label="Close"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {/* Employee Information */}
+          <div className="bg-blue-50 rounded-lg p-4">
+            <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
+              <User className="h-5 w-5 mr-2" />
+              Employee Information
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="text-sm font-medium text-gray-500">Employee</label>
+                <p className="text-gray-900 font-medium">{summary?.employee_name}</p>
+                <p className="text-sm text-gray-500">{summary?.employee_no}</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-500">Department</label>
+                <p className="text-gray-900">{summary?.department}</p>
+                <p className="text-sm text-gray-500">{summary?.line}</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-500">Period</label>
+                <p className="text-gray-900">{summary?.full_period}</p>
+                <p className="text-sm text-gray-500">Cost Center: {summary?.cost_center || 'N/A'}</p>
+              </div>
+            </div>
+          </div>
+
+          {/* Attendance Summary */}
+          <div className="bg-green-50 rounded-lg p-4">
+            <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
+              <Calculator className="h-5 w-5 mr-2" />
+              Attendance Summary
+            </h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="text-center">
+                <div className="text-3xl font-bold text-green-600">{formatNumber(summary?.days_worked, 1)}</div>
+                <div className="text-sm text-green-800">Days Worked</div>
+              </div>
+              <div className="text-center">
+                <div className="text-3xl font-bold text-blue-600">{formatNumber(summary?.ot_hours)}</div>
+                <div className="text-sm text-blue-800">OT Hours</div>
+              </div>
+              <div className="text-center">
+                <div className="text-3xl font-bold text-orange-600">{formatMinutesToHours(summary?.late_under_minutes)}</div>
+                <div className="text-sm text-orange-800">Late/Under (Hrs)</div>
+              </div>
+              <div className="text-center">
+                <div className="text-3xl font-bold text-purple-600">{formatNumber(summary?.nsd_hours)}</div>
+                <div className="text-sm text-purple-800">NSD Hours</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Financial Information */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Deductions */}
+            <div className="bg-red-50 rounded-lg p-4">
+              <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
+                <DollarSign className="h-5 w-5 mr-2 text-red-600" />
+                Deductions
+              </h3>
+              <div className="space-y-3">
+                {/* Main Deductions */}
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div className="flex justify-between">
+                    <span>Advance:</span>
+                    <span className="font-medium text-red-600">{formatCurrency(summary?.advance)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Store Charge:</span>
+                    <span className="font-medium text-red-600">{formatCurrency(summary?.charge_store)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Charge:</span>
+                    <span className="font-medium text-red-600">{formatCurrency(summary?.charge)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Meals:</span>
+                    <span className="font-medium text-red-600">{formatCurrency(summary?.meals)}</span>
+                  </div>
+                </div>
+
+                {/* Government Deductions */}
+                <div className="border-t pt-3">
+                  <h4 className="font-medium text-gray-800 mb-2">Government Deductions</h4>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="flex justify-between">
+                      <span>SSS Premium:</span>
+                      <span className="font-medium text-red-600">{formatCurrency(summary?.sss_prem)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>PhilHealth:</span>
+                      <span className="font-medium text-red-600">{formatCurrency(summary?.philhealth)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>HDMF Premium:</span>
+                      <span className="font-medium text-red-600">{formatCurrency(summary?.hmdf_prem)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Loans */}
+                <div className="border-t pt-3">
+                  <h4 className="font-medium text-gray-800 mb-2">Loans</h4>
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div className="flex justify-between">
+                      <span>MF Loan:</span>
+                      <span className="font-medium text-red-600">{formatCurrency(summary?.mf_loan)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>SSS Loan:</span>
+                      <span className="font-medium text-red-600">{formatCurrency(summary?.sss_loan)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>HDMF Loan:</span>
+                      <span className="font-medium text-red-600">{formatCurrency(summary?.hmdf_loan)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-red-200 pt-3">
+                  <div className="flex justify-between items-center text-lg font-bold">
+                    <span className="text-gray-800">Total Deductions:</span>
+                    <span className="text-red-600">{formatCurrency(totalDeductions)}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Benefits */}
+            <div className="bg-green-50 rounded-lg p-4">
+              <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
+                <Award className="h-5 w-5 mr-2 text-green-600" />
+                Benefits & Allowances
+              </h3>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600">MF Shares:</span>
+                  <span className="font-medium text-green-600">{formatCurrency(summary?.mf_shares)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600">Allowances:</span>
+                  <span className="font-medium text-green-600">{formatCurrency(summary?.allowances)}</span>
+                </div>
+                <div className="border-t border-green-200 pt-3">
+                  <div className="flex justify-between items-center text-lg font-bold">
+                    <span className="text-gray-800">Total Benefits:</span>
+                    <span className="text-green-600">{formatCurrency(totalBenefits)}</span>
+                  </div>
+                </div>
+
+                {/* Additional Details */}
+                <div className="mt-6 pt-6 border-t border-green-200">
+                  <h4 className="font-medium text-gray-900 mb-3">Additional Information</h4>
+                  <div className="space-y-2 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">SLVL Days:</span>
+                      <span className="font-medium">{formatNumber(summary?.slvl_days, 1)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Travel Order Hours:</span>
+                      <span className="font-medium">{formatNumber(summary?.travel_order_hours)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Holiday Hours:</span>
+                      <span className="font-medium">{formatNumber(summary?.holiday_hours)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Trip Count:</span>
+                      <span className="font-medium">{formatNumber(summary?.trip_count, 1)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Retro:</span>
+                      <span className="font-medium">{formatCurrency(summary?.retro)}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Status Flags */}
+          <div className="bg-gray-50 rounded-lg p-4">
+            <h3 className="text-lg font-medium text-gray-900 mb-4">Status Information</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="flex justify-between">
+                <span className="text-gray-600">Has CT:</span>
+                <span className={summary?.has_ct ? 'text-green-600' : 'text-gray-400'}>
+                  {summary?.has_ct ? '✓ Yes' : '✗ No'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Has CS:</span>
+                <span className={summary?.has_cs ? 'text-green-600' : 'text-gray-400'}>
+                  {summary?.has_cs ? '✓ Yes' : '✗ No'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-gray-600">Has OB:</span>
+                <span className={summary?.has_ob ? 'text-green-600' : 'text-gray-400'}>
+                  {summary?.has_ob ? '✓ Yes' : '✗ No'}
+                </span>
+              </div>
+            </div>
+            
+            {summary?.posted_at && (
+              <div className="mt-4 pt-4 border-t border-gray-200">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <span className="text-gray-600">Posted At: </span>
+                    <span className="font-medium">{new Date(summary.posted_at).toLocaleString()}</span>
+                  </div>
+                  {summary?.posted_by && (
+                    <div>
+                      <span className="text-gray-600">Posted By: </span>
+                      <span className="font-medium">{summary.posted_by.name}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="bg-gray-50 px-6 py-4 flex justify-end border-t">
+          <Button variant="outline" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Main PayrollSummaries Component
+const PayrollSummaries = ({ auth }) => {
   const [summaries, setSummaries] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   
@@ -48,10 +442,7 @@ const CompletePayrollSummaries = () => {
   const [department, setDepartment] = useState('');
   const [status, setStatus] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
-  const [departments] = useState([
-    'Production', 'Quality Control', 'Maintenance', 'Administration', 
-    'Sales', 'Finance', 'Human Resources', 'Security'
-  ]);
+  const [departments, setDepartments] = useState([]);
   
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1);
@@ -59,304 +450,55 @@ const CompletePayrollSummaries = () => {
   const [perPage, setPerPage] = useState(25);
   
   // Statistics
-  const [statistics, setStatistics] = useState({
-    total_summaries: 42,
-    total_days_worked: 378.5,
-    total_ot_hours: 156.75,
-    total_late_under_minutes: 2340,
-    total_nsd_hours: 89.25,
-    total_slvl_days: 12.5,
-    avg_days_worked: 9.0,
-    avg_ot_hours: 3.73
-  });
+  const [statistics, setStatistics] = useState(null);
 
   // Detail modal state
   const [selectedSummary, setSelectedSummary] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
 
-  // Sample payroll summaries data
-  const sampleSummaries = [
-    {
-      id: 1,
-      employee_id: 101,
-      employee_no: 'EMP001',
-      employee_name: 'Juan Carlos Dela Cruz',
-      cost_center: 'CC001',
-      department: 'Production',
-      line: 'Line A',
-      period_start: '2025-01-01',
-      period_end: '2025-01-15',
-      period_type: '1st_half',
-      year: 2025,
-      month: 1,
-      days_worked: 10.0,
-      ot_hours: 8.5,
-      off_days: 1.0,
-      late_under_minutes: 120,
-      nsd_hours: 4.5,
-      slvl_days: 0.0,
-      retro: 0.0,
-      travel_order_hours: 0.0,
-      holiday_hours: 8.0,
-      ot_reg_holiday_hours: 0.0,
-      ot_special_holiday_hours: 0.0,
-      offset_hours: 0.0,
-      trip_count: 0.0,
-      has_ct: false,
-      has_cs: false,
-      has_ob: false,
-      status: 'posted',
-      posted_at: '2025-01-16T08:30:00Z',
-      posted_by: { id: 1, name: 'HR Manager' },
-      // New deduction columns
-      advance: 2500.00,
-      charge_store: 150.00,
-      charge: 0.00,
-      meals: 800.00,
-      miscellaneous: 0.00,
-      other_deductions: 0.00,
-      // New benefit columns
-      mf_shares: 500.00,
-      mf_loan: 1200.00,
-      sss_loan: 0.00,
-      hmdf_loan: 0.00,
-      hmdf_prem: 125.00,
-      sss_prem: 580.00,
-      philhealth: 220.00,
-      allowances: 1500.00
-    },
-    {
-      id: 2,
-      employee_id: 102,
-      employee_no: 'EMP002',
-      employee_name: 'Maria Santos Rodriguez',
-      cost_center: 'CC002',
-      department: 'Quality Control',
-      line: 'QC Lab',
-      period_start: '2025-01-01',
-      period_end: '2025-01-15',
-      period_type: '1st_half',
-      year: 2025,
-      month: 1,
-      days_worked: 9.5,
-      ot_hours: 6.0,
-      off_days: 0.5,
-      late_under_minutes: 45,
-      nsd_hours: 0.0,
-      slvl_days: 0.5,
-      retro: 1250.00,
-      travel_order_hours: 8.0,
-      holiday_hours: 8.0,
-      ot_reg_holiday_hours: 4.0,
-      ot_special_holiday_hours: 0.0,
-      offset_hours: 2.0,
-      trip_count: 1.0,
-      has_ct: true,
-      has_cs: false,
-      has_ob: true,
-      status: 'posted',
-      posted_at: '2025-01-16T09:15:00Z',
-      posted_by: { id: 1, name: 'HR Manager' },
-      advance: 1000.00,
-      charge_store: 350.00,
-      charge: 200.00,
-      meals: 750.00,
-      miscellaneous: 100.00,
-      other_deductions: 0.00,
-      mf_shares: 500.00,
-      mf_loan: 800.00,
-      sss_loan: 2500.00,
-      hmdf_loan: 1500.00,
-      hmdf_prem: 125.00,
-      sss_prem: 580.00,
-      philhealth: 220.00,
-      allowances: 2000.00
-    },
-    {
-      id: 3,
-      employee_id: 103,
-      employee_no: 'EMP003',
-      employee_name: 'Robert Chen Lim',
-      cost_center: 'CC001',
-      department: 'Maintenance',
-      line: 'Facilities',
-      period_start: '2025-01-01',
-      period_end: '2025-01-15',
-      period_type: '1st_half',
-      year: 2025,
-      month: 1,
-      days_worked: 10.0,
-      ot_hours: 12.5,
-      off_days: 2.0,
-      late_under_minutes: 0,
-      nsd_hours: 8.0,
-      slvl_days: 0.0,
-      retro: 0.0,
-      travel_order_hours: 0.0,
-      holiday_hours: 8.0,
-      ot_reg_holiday_hours: 0.0,
-      ot_special_holiday_hours: 2.0,
-      offset_hours: 0.0,
-      trip_count: 0.0,
-      has_ct: false,
-      has_cs: true,
-      has_ob: false,
-      status: 'draft',
-      posted_at: null,
-      posted_by: null,
-      advance: 0.00,
-      charge_store: 200.00,
-      charge: 0.00,
-      meals: 900.00,
-      miscellaneous: 0.00,
-      other_deductions: 150.00,
-      mf_shares: 500.00,
-      mf_loan: 0.00,
-      sss_loan: 0.00,
-      hmdf_loan: 0.00,
-      hmdf_prem: 125.00,
-      sss_prem: 580.00,
-      philhealth: 220.00,
-      allowances: 1200.00
-    },
-    {
-      id: 4,
-      employee_id: 104,
-      employee_no: 'EMP004',
-      employee_name: 'Anna Mae Gonzales',
-      cost_center: 'CC003',
-      department: 'Administration',
-      line: 'Admin Support',
-      period_start: '2025-01-01',
-      period_end: '2025-01-15',
-      period_type: '1st_half',
-      year: 2025,
-      month: 1,
-      days_worked: 9.0,
-      ot_hours: 2.0,
-      off_days: 0.0,
-      late_under_minutes: 180,
-      nsd_hours: 0.0,
-      slvl_days: 1.0,
-      retro: 500.00,
-      travel_order_hours: 4.0,
-      holiday_hours: 8.0,
-      ot_reg_holiday_hours: 0.0,
-      ot_special_holiday_hours: 0.0,
-      offset_hours: 1.0,
-      trip_count: 2.0,
-      has_ct: false,
-      has_cs: false,
-      has_ob: true,
-      status: 'posted',
-      posted_at: '2025-01-16T10:45:00Z',
-      posted_by: { id: 2, name: 'Finance Manager' },
-      advance: 3000.00,
-      charge_store: 450.00,
-      charge: 100.00,
-      meals: 650.00,
-      miscellaneous: 200.00,
-      other_deductions: 0.00,
-      mf_shares: 500.00,
-      mf_loan: 1500.00,
-      sss_loan: 1000.00,
-      hmdf_loan: 500.00,
-      hmdf_prem: 125.00,
-      sss_prem: 580.00,
-      philhealth: 220.00,
-      allowances: 1800.00
-    },
-    {
-      id: 5,
-      employee_id: 105,
-      employee_no: 'EMP005',
-      employee_name: 'Michael John Torres',
-      cost_center: 'CC002',
-      department: 'Sales',
-      line: 'Field Sales',
-      period_start: '2025-01-01',
-      period_end: '2025-01-15',
-      period_type: '1st_half',
-      year: 2025,
-      month: 1,
-      days_worked: 8.5,
-      ot_hours: 4.0,
-      off_days: 0.0,
-      late_under_minutes: 60,
-      nsd_hours: 0.0,
-      slvl_days: 1.5,
-      retro: 2000.00,
-      travel_order_hours: 16.0,
-      holiday_hours: 8.0,
-      ot_reg_holiday_hours: 0.0,
-      ot_special_holiday_hours: 0.0,
-      offset_hours: 0.0,
-      trip_count: 8.0,
-      has_ct: false,
-      has_cs: false,
-      has_ob: true,
-      status: 'locked',
-      posted_at: '2025-01-16T11:20:00Z',
-      posted_by: { id: 1, name: 'HR Manager' },
-      advance: 1500.00,
-      charge_store: 100.00,
-      charge: 300.00,
-      meals: 1200.00,
-      miscellaneous: 0.00,
-      other_deductions: 250.00,
-      mf_shares: 500.00,
-      mf_loan: 2000.00,
-      sss_loan: 0.00,
-      hmdf_loan: 0.00,
-      hmdf_prem: 125.00,
-      sss_prem: 580.00,
-      philhealth: 220.00,
-      allowances: 3000.00
-    }
-  ];
-
-  // Load sample data
-  useEffect(() => {
-    setSummaries(sampleSummaries);
-    setTotalPages(1);
-  }, []);
-
-  // Format date
-  const formatDate = (dateString) => {
-    if (!dateString) return 'N/A';
+  // Load payroll summaries
+  const loadSummaries = async () => {
+    setLoading(true);
+    setError('');
+    
     try {
-      const date = new Date(dateString);
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric'
+      const params = new URLSearchParams();
+      params.append('year', year);
+      params.append('month', month);
+      params.append('page', currentPage);
+      params.append('per_page', perPage);
+      
+      if (periodType) params.append('period_type', periodType);
+      if (department) params.append('department', department);
+      if (status) params.append('status', status);
+      if (searchTerm) params.append('search', searchTerm);
+      
+      const response = await fetch('/api/comprehensive-payroll-summaries/list?' + params.toString(), {
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        }
       });
+      
+      const data = await response.json();
+      
+      if (data.success) {
+        setSummaries(data.data);
+        setTotalPages(data.pagination.last_page);
+        setCurrentPage(data.pagination.current_page);
+        setStatistics(data.statistics);
+        if (data.departments) {
+          setDepartments(data.departments);
+        }
+      } else {
+        setError('Failed to load payroll summaries');
+      }
     } catch (err) {
-      return 'Invalid Date';
+      console.error('Error loading summaries:', err);
+      setError('Error loading payroll summaries: ' + (err.message || 'Unknown error'));
+    } finally {
+      setLoading(false);
     }
-  };
-
-  // Format numeric values
-  const formatNumeric = (value, decimals = 2) => {
-    if (value === null || value === undefined || value === '') return '0.00';
-    const num = parseFloat(value);
-    return isNaN(num) ? '0.00' : num.toFixed(decimals);
-  };
-
-  // Format currency
-  const formatCurrency = (value) => {
-    if (value === null || value === undefined || value === '') return '₱0.00';
-    const num = parseFloat(value);
-    return isNaN(num) ? '₱0.00' : `₱${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  };
-
-  // Format minutes to hours for display
-  const formatMinutesToHours = (minutes) => {
-    if (!minutes || minutes === 0) return '0.00';
-    const num = parseFloat(minutes);
-    if (isNaN(num)) return '0.00';
-    const hours = num / 60;
-    return hours.toFixed(2);
   };
 
   // Handle row double-click
@@ -365,679 +507,513 @@ const CompletePayrollSummaries = () => {
     setShowDetailModal(true);
   };
 
-  // Calculate totals for selected summaries
-  const calculateTotals = (summariesData) => {
-    return summariesData.reduce((totals, summary) => ({
-      total_deductions: totals.total_deductions + (parseFloat(summary.advance || 0) + 
-        parseFloat(summary.charge_store || 0) + parseFloat(summary.charge || 0) + 
-        parseFloat(summary.meals || 0) + parseFloat(summary.miscellaneous || 0) + 
-        parseFloat(summary.other_deductions || 0) + parseFloat(summary.mf_loan || 0) + 
-        parseFloat(summary.sss_loan || 0) + parseFloat(summary.hmdf_loan || 0) + 
-        parseFloat(summary.hmdf_prem || 0) + parseFloat(summary.sss_prem || 0) + 
-        parseFloat(summary.philhealth || 0)),
-      total_benefits: totals.total_benefits + (parseFloat(summary.mf_shares || 0) + 
-        parseFloat(summary.allowances || 0)),
-      days_worked: totals.days_worked + parseFloat(summary.days_worked || 0),
-      ot_hours: totals.ot_hours + parseFloat(summary.ot_hours || 0),
-      late_under_minutes: totals.late_under_minutes + parseFloat(summary.late_under_minutes || 0)
-    }), { total_deductions: 0, total_benefits: 0, days_worked: 0, ot_hours: 0, late_under_minutes: 0 });
+  // Handle summary update
+  const handleSummaryUpdate = () => {
+    loadSummaries();
+    setShowDetailModal(false);
   };
 
-  const totals = calculateTotals(summaries);
+  // Format currency
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('en-PH', {
+      style: 'currency',
+      currency: 'PHP',
+      minimumFractionDigits: 2
+    }).format(amount || 0);
+  };
+
+  // Format number
+  const formatNumber = (num, decimals = 2) => {
+    return parseFloat(num || 0).toFixed(decimals);
+  };
+
+  // Format minutes to hours
+  const formatMinutesToHours = (minutes) => {
+    if (!minutes) return '0.00';
+    return (parseFloat(minutes) / 60).toFixed(2);
+  };
+
+  // Load data on component mount and filter changes
+  useEffect(() => {
+    loadSummaries();
+  }, [year, month, periodType, department, status, searchTerm, currentPage]);
 
   return (
-    <div className="min-h-screen bg-gray-50/50 p-4">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 mb-1">
-              💼 Payroll Summaries
-            </h1>
-            <p className="text-sm text-blue-600 mt-1">
-              💡 Complete payroll summary with deductions, benefits, and attendance data
-            </p>
-          </div>
-          
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={() => setExporting(true)}
-              disabled={exporting}
-              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors"
-            >
-              {exporting ? (
-                <>
-                  <RefreshCw className="h-4 w-4 animate-spin" />
-                  <span>Exporting...</span>
-                </>
-              ) : (
-                <>
-                  <Download className="h-4 w-4" />
-                  <span>Export</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* Filters Card */}
-        <div className="bg-white rounded-lg shadow mb-4 p-6">
-          <h3 className="text-lg font-semibold mb-4">🔍 Filters</h3>
-          <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
-            {/* Search Input */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-              <input
-                type="text"
-                placeholder="Search by name or ID..."
-                className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Year
-              </label>
-              <input
-                type="number"
-                min="2020"
-                max="2030"
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={year}
-                onChange={(e) => setYear(parseInt(e.target.value))}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Month
-              </label>
-              <select
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={month}
-                onChange={(e) => setMonth(parseInt(e.target.value))}
-              >
-                {Array.from({ length: 12 }, (_, i) => (
-                  <option key={i + 1} value={i + 1}>
-                    {new Date(2024, i, 1).toLocaleString('default', { month: 'long' })}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Period
-              </label>
-              <select
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={periodType}
-                onChange={(e) => setPeriodType(e.target.value)}
-              >
-                <option value="">All Periods</option>
-                <option value="1st_half">1st Half (1-15)</option>
-                <option value="2nd_half">2nd Half (16-30/31)</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Department
-              </label>
-              <select
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={department}
-                onChange={(e) => setDepartment(e.target.value)}
-              >
-                <option value="">All Departments</option>
-                {departments.map((dept) => (
-                  <option key={dept} value={dept}>
-                    {dept}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Status
-              </label>
-              <select
-                className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-              >
-                <option value="">All Status</option>
-                <option value="posted">Posted</option>
-                <option value="draft">Draft</option>
-                <option value="locked">Locked</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        {/* Summary Statistics */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center">
-              <Users className="h-8 w-8 text-blue-500" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Employees</p>
-                <p className="text-2xl font-bold text-gray-900">{summaries.length}</p>
+    <AuthenticatedLayout user={auth.user}>
+      <Head title="Payroll Summaries" />
+      <div className="flex min-h-screen bg-gray-50/50">
+        <Sidebar />
+        <div className="flex-1 p-4">
+          <div className="max-w-7xl mx-auto">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h1 className="text-2xl font-bold text-gray-900 mb-1">
+                  Comprehensive Payroll Summaries
+                </h1>
+                <p className="text-sm text-blue-600 mt-1">
+                  💡 Tip: Double-click any row to view detailed payroll information
+                </p>
               </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center">
-              <Calendar className="h-8 w-8 text-green-500" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Days Worked</p>
-                <p className="text-2xl font-bold text-gray-900">{formatNumeric(totals.days_worked, 1)}</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center">
-              <Clock className="h-8 w-8 text-orange-500" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total OT Hours</p>
-                <p className="text-2xl font-bold text-gray-900">{formatNumeric(totals.ot_hours)}</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center">
-              <DollarSign className="h-8 w-8 text-red-500" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Deductions</p>
-                <p className="text-2xl font-bold text-gray-900">{formatCurrency(totals.total_deductions)}</p>
-              </div>
-            </div>
-          </div>
-          <div className="bg-white rounded-lg shadow p-6">
-            <div className="flex items-center">
-              <Award className="h-8 w-8 text-purple-500" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-600">Total Benefits</p>
-                <p className="text-2xl font-bold text-gray-900">{formatCurrency(totals.total_benefits)}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Table container */}
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Department</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Period</th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Days</th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">OT Hrs</th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Late/Under</th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">NSD</th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">SLVL</th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Retro</th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Deductions</th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Benefits</th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {summaries.map((summary) => {
-                  const totalDeductions = parseFloat(summary.advance || 0) + 
-                    parseFloat(summary.charge_store || 0) + parseFloat(summary.charge || 0) + 
-                    parseFloat(summary.meals || 0) + parseFloat(summary.miscellaneous || 0) + 
-                    parseFloat(summary.other_deductions || 0) + parseFloat(summary.mf_loan || 0) + 
-                    parseFloat(summary.sss_loan || 0) + parseFloat(summary.hmdf_loan || 0) + 
-                    parseFloat(summary.hmdf_prem || 0) + parseFloat(summary.sss_prem || 0) + 
-                    parseFloat(summary.philhealth || 0);
-                  
-                  const totalBenefits = parseFloat(summary.mf_shares || 0) + 
-                    parseFloat(summary.allowances || 0);
-
-                  return (
-                    <tr 
-                      key={summary.id} 
-                      className="hover:bg-blue-50 cursor-pointer transition-colors"
-                      onDoubleClick={() => handleRowDoubleClick(summary)}
-                      title="Double-click to view detailed information"
-                    >
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <div className="flex-shrink-0 h-10 w-10">
-                            <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
-                              <User className="h-5 w-5 text-blue-600" />
-                            </div>
-                          </div>
-                          <div className="ml-4">
-                            <div className="text-sm font-medium text-gray-900">
-                              {summary.employee_name}
-                            </div>
-                            <div className="text-sm text-gray-500">
-                              {summary.employee_no}
-                            </div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <Building className="h-4 w-4 text-gray-400 mr-2" />
-                          <div>
-                            <div className="text-sm text-gray-900">{summary.department}</div>
-                            <div className="text-xs text-gray-500">{summary.line}</div>
-                            <div className="text-xs text-gray-400">{summary.cost_center}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                        <div>
-                          <div className="font-medium">{summary.year}-{String(summary.month).padStart(2, '0')}</div>
-                          <div className="text-xs">{summary.period_type === '1st_half' ? '1-15' : '16-30/31'}</div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                          {formatNumeric(summary.days_worked, 1)}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
-                          {formatNumeric(summary.ot_hours)}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <div className="flex items-center justify-center space-x-1">
-                          <Clock className="h-3 w-3 text-red-500" />
-                          <span className="text-sm text-red-600 font-medium">
-                            {formatMinutesToHours(summary.late_under_minutes)}h
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-900">
-                        {formatNumeric(summary.nsd_hours)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                          {formatNumeric(summary.slvl_days, 1)}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-900 font-medium">
-                        {formatCurrency(summary.retro)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <div className="text-sm">
-                          <div className="text-red-600 font-medium">{formatCurrency(totalDeductions)}</div>
-                          <div className="text-xs text-gray-500">
-                            A:{formatCurrency(summary.advance)} | 
-                            S:{formatCurrency(summary.charge_store)} | 
-                            M:{formatCurrency(summary.meals)}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <div className="text-sm">
-                          <div className="text-green-600 font-medium">{formatCurrency(totalBenefits)}</div>
-                          <div className="text-xs text-gray-500">
-                            MF:{formatCurrency(summary.mf_shares)} | 
-                            All:{formatCurrency(summary.allowances)}
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
-                          summary.status === 'posted' 
-                            ? 'bg-green-100 text-green-800'
-                            : summary.status === 'locked'
-                            ? 'bg-red-100 text-red-800'
-                            : 'bg-yellow-100 text-yellow-800'
-                        }`}>
-                          {summary.status === 'posted' && <CheckCircle className="h-3 w-3 mr-1" />}
-                          {summary.status === 'locked' && <AlertTriangle className="h-3 w-3 mr-1" />}
-                          {summary.status === 'draft' && <Clock className="h-3 w-3 mr-1" />}
-                          {summary.status.charAt(0).toUpperCase() + summary.status.slice(1)}
-                        </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
-                        <div className="flex justify-center space-x-1">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleRowDoubleClick(summary);
-                            }}
-                            className="text-blue-600 hover:text-blue-900 p-1 rounded hover:bg-blue-50"
-                            title="View Details"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </button>
-                          {summary.status !== 'locked' && (
-                            <>
-                              <button
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-green-600 hover:text-green-900 p-1 rounded hover:bg-green-50"
-                                title="Edit"
-                              >
-                                <Edit className="h-4 w-4" />
-                              </button>
-                              <button
-                                onClick={(e) => e.stopPropagation()}
-                                className="text-red-600 hover:text-red-900 p-1 rounded hover:bg-red-50"
-                                title="Delete"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Detailed Modal */}
-        {showDetailModal && selectedSummary && (
-          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-            <div className="relative bg-white rounded-lg shadow-lg max-w-6xl w-full mx-4 max-h-[95vh] overflow-y-auto">
-              <div className="flex justify-between items-center p-6 border-b sticky top-0 bg-white z-10">
-                <div className="flex items-center space-x-3">
-                  <h2 className="text-xl font-semibold text-gray-800">
-                    📋 Payroll Summary Details
-                  </h2>
-                  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium ${
-                    selectedSummary?.status === 'posted' 
-                      ? 'bg-green-100 text-green-800'
-                      : selectedSummary?.status === 'locked'
-                      ? 'bg-red-100 text-red-800'
-                      : 'bg-yellow-100 text-yellow-800'
-                  }`}>
-                    {selectedSummary?.status?.charAt(0).toUpperCase() + selectedSummary?.status?.slice(1)}
-                  </span>
-                </div>
-                <button
-                  onClick={() => setShowDetailModal(false)}
-                  className="text-gray-500 hover:text-gray-700"
-                  aria-label="Close"
+              
+              <div className="flex items-center space-x-2">
+                <Button
+                  onClick={loadSummaries}
+                  size="sm"
+                  variant="outline"
+                  disabled={loading}
                 >
-                  <X className="h-5 w-5" />
-                </button>
-              </div>
-
-              <div className="p-6 space-y-6">
-                {/* Employee Information */}
-                <div className="bg-blue-50 rounded-lg p-6">
-                  <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
-                    <User className="h-5 w-5 mr-2" />
-                    Employee Information
-                  </h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <div>
-                      <label className="text-sm font-medium text-gray-500">Full Name</label>
-                      <p className="text-gray-900 font-medium text-lg">{selectedSummary.employee_name}</p>
-                      <p className="text-sm text-gray-500">ID: {selectedSummary.employee_no}</p>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-gray-500">Department</label>
-                      <p className="text-gray-900 flex items-center">
-                        <Building className="h-4 w-4 mr-1" />
-                        {selectedSummary.department}
-                      </p>
-                      <p className="text-sm text-gray-500">Line: {selectedSummary.line}</p>
-                    </div>
-                    <div>
-                      <label className="text-sm font-medium text-gray-500">Period</label>
-                      <p className="text-gray-900">{selectedSummary.year}-{String(selectedSummary.month).padStart(2, '0')}</p>
-                      <p className="text-sm text-gray-500">
-                        {selectedSummary.period_type === '1st_half' ? '1st Half (1-15)' : '2nd Half (16-30/31)'}
-                      </p>
-                      <p className="text-xs text-gray-400">Cost Center: {selectedSummary.cost_center}</p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Summary Metrics */}
-                <div className="bg-green-50 rounded-lg p-6">
-                  <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
-                    <Calculator className="h-5 w-5 mr-2" />
-                    Attendance Summary
-                  </h3>
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-green-600">{formatNumeric(selectedSummary.days_worked, 1)}</div>
-                      <div className="text-sm text-green-800">Days Worked</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-blue-600">{formatNumeric(selectedSummary.ot_hours)}</div>
-                      <div className="text-sm text-blue-800">OT Hours</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-orange-600">{formatMinutesToHours(selectedSummary.late_under_minutes)}</div>
-                      <div className="text-sm text-orange-800">Late/Under (Hrs)</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-purple-600">{formatNumeric(selectedSummary.nsd_hours)}</div>
-                      <div className="text-sm text-purple-800">NSD Hours</div>
-                    </div>
-                    <div className="text-center">
-                      <div className="text-3xl font-bold text-red-600">{formatNumeric(selectedSummary.slvl_days, 1)}</div>
-                      <div className="text-sm text-red-800">SLVL Days</div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Financial Information */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Deductions */}
-                  <div className="bg-red-50 rounded-lg p-6">
-                    <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
-                      <DollarSign className="h-5 w-5 mr-2 text-red-600" />
-                      Deductions
-                    </h3>
-                    <div className="space-y-3">
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Advance:</span>
-                        <span className="font-medium text-red-600">{formatCurrency(selectedSummary.advance)}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Charge Store:</span>
-                        <span className="font-medium text-red-600">{formatCurrency(selectedSummary.charge_store)}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Charge:</span>
-                        <span className="font-medium text-red-600">{formatCurrency(selectedSummary.charge)}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Meals:</span>
-                        <span className="font-medium text-red-600">{formatCurrency(selectedSummary.meals)}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">MF Loan:</span>
-                        <span className="font-medium text-red-600">{formatCurrency(selectedSummary.mf_loan)}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">SSS Loan:</span>
-                        <span className="font-medium text-red-600">{formatCurrency(selectedSummary.sss_loan)}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">HMDF Loan:</span>
-                        <span className="font-medium text-red-600">{formatCurrency(selectedSummary.hmdf_loan)}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">HMDF Premium:</span>
-                        <span className="font-medium text-red-600">{formatCurrency(selectedSummary.hmdf_prem)}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">SSS Premium:</span>
-                        <span className="font-medium text-red-600">{formatCurrency(selectedSummary.sss_prem)}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">PhilHealth:</span>
-                        <span className="font-medium text-red-600">{formatCurrency(selectedSummary.philhealth)}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Miscellaneous:</span>
-                        <span className="font-medium text-red-600">{formatCurrency(selectedSummary.miscellaneous)}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Other Deductions:</span>
-                        <span className="font-medium text-red-600">{formatCurrency(selectedSummary.other_deductions)}</span>
-                      </div>
-                      <div className="border-t border-red-200 pt-3">
-                        <div className="flex justify-between items-center text-lg font-bold">
-                          <span className="text-gray-800">Total Deductions:</span>
-                          <span className="text-red-600">
-                            {formatCurrency(
-                              parseFloat(selectedSummary.advance || 0) + 
-                              parseFloat(selectedSummary.charge_store || 0) + 
-                              parseFloat(selectedSummary.charge || 0) + 
-                              parseFloat(selectedSummary.meals || 0) + 
-                              parseFloat(selectedSummary.miscellaneous || 0) + 
-                              parseFloat(selectedSummary.other_deductions || 0) + 
-                              parseFloat(selectedSummary.mf_loan || 0) + 
-                              parseFloat(selectedSummary.sss_loan || 0) + 
-                              parseFloat(selectedSummary.hmdf_loan || 0) + 
-                              parseFloat(selectedSummary.hmdf_prem || 0) + 
-                              parseFloat(selectedSummary.sss_prem || 0) + 
-                              parseFloat(selectedSummary.philhealth || 0)
-                            )}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Benefits */}
-                  <div className="bg-green-50 rounded-lg p-6">
-                    <h3 className="text-lg font-medium text-gray-900 mb-4 flex items-center">
-                      <Award className="h-5 w-5 mr-2 text-green-600" />
-                      Benefits & Allowances
-                    </h3>
-                    <div className="space-y-3">
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">MF Shares:</span>
-                        <span className="font-medium text-green-600">{formatCurrency(selectedSummary.mf_shares)}</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-600">Allowances:</span>
-                        <span className="font-medium text-green-600">{formatCurrency(selectedSummary.allowances)}</span>
-                      </div>
-                      <div className="border-t border-green-200 pt-3">
-                        <div className="flex justify-between items-center text-lg font-bold">
-                          <span className="text-gray-800">Total Benefits:</span>
-                          <span className="text-green-600">
-                            {formatCurrency(
-                              parseFloat(selectedSummary.mf_shares || 0) + 
-                              parseFloat(selectedSummary.allowances || 0)
-                            )}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Additional Details */}
-                    <div className="mt-6 pt-6 border-t border-green-200">
-                      <h4 className="font-medium text-gray-900 mb-3">Additional Information</h4>
-                      <div className="space-y-2 text-sm">
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Off Days:</span>
-                          <span className="font-medium">{formatNumeric(selectedSummary.off_days, 1)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Travel Order Hours:</span>
-                          <span className="font-medium">{formatNumeric(selectedSummary.travel_order_hours)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Holiday Hours:</span>
-                          <span className="font-medium">{formatNumeric(selectedSummary.holiday_hours)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">OT Reg Holiday:</span>
-                          <span className="font-medium">{formatNumeric(selectedSummary.ot_reg_holiday_hours)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">OT Special Holiday:</span>
-                          <span className="font-medium">{formatNumeric(selectedSummary.ot_special_holiday_hours)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Offset Hours:</span>
-                          <span className="font-medium">{formatNumeric(selectedSummary.offset_hours)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600 flex items-center">
-                            <Car className="h-3 w-3 mr-1" />
-                            Trip Count:
-                          </span>
-                          <span className="font-medium">{formatNumeric(selectedSummary.trip_count, 1)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Retro:</span>
-                          <span className="font-medium">{formatCurrency(selectedSummary.retro)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Flags and Status */}
-                <div className="bg-gray-50 rounded-lg p-6">
-                  <h3 className="text-lg font-medium text-gray-900 mb-4">Status Flags</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Has CT (Compensatory Time):</span>
-                      <span className={selectedSummary.has_ct ? 'text-green-600' : 'text-gray-400'}>
-                        {selectedSummary.has_ct ? '✓ Yes' : '✗ No'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Has CS (Compressed Schedule):</span>
-                      <span className={selectedSummary.has_cs ? 'text-green-600' : 'text-gray-400'}>
-                        {selectedSummary.has_cs ? '✓ Yes' : '✗ No'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Has OB (Official Business):</span>
-                      <span className={selectedSummary.has_ob ? 'text-green-600' : 'text-gray-400'}>
-                        {selectedSummary.has_ob ? '✓ Yes' : '✗ No'}
-                      </span>
-                    </div>
-                  </div>
-                  
-                  {selectedSummary.posted_at && (
-                    <div className="mt-6 pt-6 border-t border-gray-200">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="flex justify-between">
-                          <span className="text-gray-600">Posted At:</span>
-                          <span className="font-medium">{formatDate(selectedSummary.posted_at)}</span>
-                        </div>
-                        {selectedSummary.posted_by && (
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Posted By:</span>
-                            <span className="font-medium">{selectedSummary.posted_by.name}</span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
+                  {loading ? (
+                    <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-4 w-4 mr-1" />
                   )}
-                </div>
-              </div>
-
-              <div className="bg-gray-50 px-6 py-4 flex justify-end border-t">
-                <button
-                  onClick={() => setShowDetailModal(false)}
-                  className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg transition-colors"
-                >
-                  Close
-                </button>
+                  Refresh
+                </Button>
               </div>
             </div>
+
+            {error && (
+              <Alert variant="destructive" className="mb-4">
+                <AlertTriangle className="h-4 w-4 mr-2" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
+
+            {success && (
+              <Alert className="mb-4 border-green-200 bg-green-50">
+                <CheckCircle className="h-4 w-4 mr-2 text-green-600" />
+                <AlertDescription className="text-green-800">{success}</AlertDescription>
+              </Alert>
+            )}
+
+            {/* Filters Card */}
+            <Card className="mb-4">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-lg">Filters</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+                  {/* Search Input */}
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                    <input
+                      type="text"
+                      placeholder="Search by name or ID..."
+                      className="w-full pl-10 pr-4 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      value={searchTerm}
+                      onChange={(e) => setSearchTerm(e.target.value)}
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Year</label>
+                    <input
+                      type="number"
+                      min="2020"
+                      max="2030"
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      value={year}
+                      onChange={(e) => setYear(parseInt(e.target.value))}
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Month</label>
+                    <select
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      value={month}
+                      onChange={(e) => setMonth(parseInt(e.target.value))}
+                    >
+                      {Array.from({ length: 12 }, (_, i) => (
+                        <option key={i + 1} value={i + 1}>
+                          {new Date(2024, i, 1).toLocaleString('default', { month: 'long' })}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Period</label>
+                    <select
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      value={periodType}
+                      onChange={(e) => setPeriodType(e.target.value)}
+                    >
+                      <option value="">All Periods</option>
+                      <option value="1st_half">1st Half (1-15)</option>
+                      <option value="2nd_half">2nd Half (16-30/31)</option>
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Department</label>
+                    <select
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      value={department}
+                      onChange={(e) => setDepartment(e.target.value)}
+                    >
+                      <option value="">All Departments</option>
+                      {departments.map((dept) => (
+                        <option key={dept} value={dept}>{dept}</option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+                    <select
+                      className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                      value={status}
+                      onChange={(e) => setStatus(e.target.value)}
+                    >
+                      <option value="">All Status</option>
+                      <option value="draft">Draft</option>
+                      <option value="posted">Posted</option>
+                      <option value="locked">Locked</option>
+                      </select>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Summary Statistics */}
+            {statistics && (
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-4">
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center">
+                      <Users className="h-8 w-8 text-blue-500" />
+                      <div className="ml-4">
+                        <p className="text-sm font-medium text-gray-600">Total Summaries</p>
+                        <p className="text-2xl font-bold text-gray-900">{statistics.total_summaries || 0}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center">
+                      <Calendar className="h-8 w-8 text-green-500" />
+                      <div className="ml-4">
+                        <p className="text-sm font-medium text-gray-600">Total Days</p>
+                        <p className="text-2xl font-bold text-gray-900">{formatNumber(statistics.total_days_worked, 1)}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center">
+                      <Clock className="h-8 w-8 text-orange-500" />
+                      <div className="ml-4">
+                        <p className="text-sm font-medium text-gray-600">Total OT Hours</p>
+                        <p className="text-2xl font-bold text-gray-900">{formatNumber(statistics.total_ot_hours)}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center">
+                      <DollarSign className="h-8 w-8 text-red-500" />
+                      <div className="ml-4">
+                        <p className="text-sm font-medium text-gray-600">Total Deductions</p>
+                        <p className="text-2xl font-bold text-gray-900">{formatCurrency(statistics.total_deductions)}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-4">
+                    <div className="flex items-center">
+                      <Award className="h-8 w-8 text-purple-500" />
+                      <div className="ml-4">
+                        <p className="text-sm font-medium text-gray-600">Total Benefits</p>
+                        <p className="text-2xl font-bold text-gray-900">{formatCurrency(statistics.total_benefits)}</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+            )}
+
+            {/* Table container */}
+            <div className="bg-white rounded-lg shadow">
+              {loading ? (
+                <div className="flex justify-center items-center h-64">
+                  <RefreshCw className="h-8 w-8 animate-spin text-blue-500" />
+                  <span className="ml-2 text-lg">Loading...</span>
+                </div>
+              ) : summaries.length === 0 ? (
+                <div className="text-center py-12">
+                  <FileText className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+                  <h3 className="text-lg font-medium text-gray-600 mb-2">No payroll summaries found</h3>
+                  <p className="text-gray-500">Try adjusting your filters or generate summaries from attendance data.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Department</th>
+                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Period</th>
+                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Days</th>
+                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">OT Hrs</th>
+                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Late/Under</th>
+                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">NSD</th>
+                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">SLVL</th>
+                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Deductions</th>
+                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Benefits</th>
+                        <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {summaries.map((summary) => (
+                        <tr 
+                          key={summary.id} 
+                          className="hover:bg-blue-50 cursor-pointer transition-colors"
+                          onDoubleClick={() => handleRowDoubleClick(summary)}
+                          title="Double-click to view detailed information"
+                        >
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center">
+                              <div className="flex-shrink-0 h-10 w-10">
+                                <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
+                                  <User className="h-5 w-5 text-blue-600" />
+                                </div>
+                              </div>
+                              <div className="ml-4">
+                                <div className="text-sm font-medium text-gray-900">
+                                  {summary.employee_name}
+                                </div>
+                                <div className="text-sm text-gray-500">
+                                  {summary.employee_no}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center">
+                              <Building className="h-4 w-4 text-gray-400 mr-2" />
+                              <div>
+                                <div className="text-sm text-gray-900">{summary.department}</div>
+                                <div className="text-xs text-gray-500">{summary.line}</div>
+                                <div className="text-xs text-gray-400">{summary.cost_center}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            <div>
+                              <div className="font-medium">{summary.full_period}</div>
+                              <div className="text-xs">{summary.period_type === '1st_half' ? '1-15' : '16-30/31'}</div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                              {formatNumber(summary.days_worked, 1)}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                              {formatNumber(summary.ot_hours)}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            <div className="flex items-center justify-center space-x-1">
+                              <Clock className="h-3 w-3 text-red-500" />
+                              <span className="text-sm text-red-600 font-medium">
+                                {formatMinutesToHours(summary.late_under_minutes)}h
+                              </span>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-900">
+                            {formatNumber(summary.nsd_hours)}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                              {formatNumber(summary.slvl_days, 1)}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            <div className="text-sm">
+                              <div className="text-red-600 font-medium">{formatCurrency(summary.total_deductions)}</div>
+                              <div className="text-xs text-gray-500">
+                                A:{formatCurrency(summary.advance)} | 
+                                S:{formatCurrency(summary.charge_store)} | 
+                                M:{formatCurrency(summary.meals)}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            <div className="text-sm">
+                              <div className="text-green-600 font-medium">{formatCurrency(summary.total_benefits)}</div>
+                              <div className="text-xs text-gray-500">
+                                MF:{formatCurrency(summary.mf_shares)} | 
+                                All:{formatCurrency(summary.allowances)}
+                              </div>
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-center">
+                            <span className={`inline-flex items-center px-3 py-1 rounded-full text-xs font-medium ${
+                              summary.status === 'posted' 
+                                ? 'bg-green-100 text-green-800'
+                                : summary.status === 'locked'
+                                ? 'bg-red-100 text-red-800'
+                                : 'bg-yellow-100 text-yellow-800'
+                            }`}>
+                              {summary.status === 'posted' && <CheckCircle className="h-3 w-3 mr-1" />}
+                              {summary.status === 'locked' && <AlertTriangle className="h-3 w-3 mr-1" />}
+                              {summary.status === 'draft' && <Clock className="h-3 w-3 mr-1" />}
+                              {summary.status?.charAt(0).toUpperCase() + summary.status?.slice(1)}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                            <div className="flex justify-end space-x-1">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleRowDoubleClick(summary);
+                                }}
+                                className="text-blue-600 hover:text-blue-900 p-1 rounded hover:bg-blue-50"
+                                title="View Details"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </button>
+                              {summary.status !== 'locked' && (
+                                <>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleRowDoubleClick(summary);
+                                    }}
+                                    className="text-green-600 hover:text-green-900 p-1 rounded hover:bg-green-50"
+                                    title="Edit"
+                                  >
+                                    <Edit className="h-4 w-4" />
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="px-6 py-4 flex items-center justify-between border-t border-gray-200 bg-white">
+                  <div className="flex-1 flex justify-between sm:hidden">
+                    <Button
+                      onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                      disabled={currentPage === 1}
+                      variant="outline"
+                      size="sm"
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                      disabled={currentPage === totalPages}
+                      variant="outline"
+                      size="sm"
+                    >
+                      Next
+                    </Button>
+                  </div>
+                  <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-sm text-gray-700">
+                        Showing page <span className="font-medium">{currentPage}</span> of{' '}
+                        <span className="font-medium">{totalPages}</span>
+                      </p>
+                    </div>
+                    <div>
+                      <nav className="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                        <Button
+                          onClick={() => setCurrentPage(1)}
+                          disabled={currentPage === 1}
+                          variant="outline"
+                          size="sm"
+                          className="rounded-l-md"
+                        >
+                          First
+                        </Button>
+                        <Button
+                          onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                          disabled={currentPage === 1}
+                          variant="outline"
+                          size="sm"
+                        >
+                          Previous
+                        </Button>
+                        
+                        {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                          const pageNum = currentPage <= 3 
+                            ? i + 1 
+                            : (currentPage >= totalPages - 2 
+                              ? totalPages - 4 + i 
+                              : currentPage - 2 + i);
+                          
+                          if (pageNum > 0 && pageNum <= totalPages) {
+                            return (
+                              <Button
+                                key={pageNum}
+                                onClick={() => setCurrentPage(pageNum)}
+                                variant={currentPage === pageNum ? "default" : "outline"}
+                                size="sm"
+                                className={currentPage === pageNum ? "bg-blue-500 text-white" : ""}
+                              >
+                                {pageNum}
+                              </Button>
+                            );
+                          }
+                          return null;
+                        })}
+                        
+                        <Button
+                          onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                          disabled={currentPage === totalPages}
+                          variant="outline"
+                          size="sm"
+                        >
+                          Next
+                        </Button>
+                        <Button
+                          onClick={() => setCurrentPage(totalPages)}
+                          disabled={currentPage === totalPages}
+                          variant="outline"
+                          size="sm"
+                          className="rounded-r-md"
+                        >
+                          Last
+                        </Button>
+                      </nav>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-        )}
+        </div>
       </div>
-    </div>
+
+      {/* Detail Modal */}
+      <PayrollSummaryDetailModal
+        isOpen={showDetailModal}
+        summary={selectedSummary}
+        onClose={() => {
+          setShowDetailModal(false);
+          setSelectedSummary(null);
+        }}
+        onUpdate={handleSummaryUpdate}
+      />
+    </AuthenticatedLayout>
   );
 };
 
-export default CompletePayrollSummaries;
+export default PayrollSummaries;
