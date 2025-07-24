@@ -19,7 +19,8 @@ use App\Http\Controllers\SLVLController;
 use App\Http\Controllers\RetroController;
 use App\Http\Controllers\BenefitController;
 use App\Http\Controllers\DeductionController;
-use App\Http\Controllers\FinalPayrollController; // Added Final Payroll Controller
+use App\Http\Controllers\FinalPayrollController; 
+use App\Http\Controllers\PayrollSummariesController;
 use App\Http\Controllers\Auth\EmployeeRegistrationController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\ProcessedAttendanceController;
@@ -190,6 +191,24 @@ Route::middleware(['auth', 'verified', 'role:superadmin'])->group(function () {
         ->name('department-managers.store');
     Route::delete('/department-managers/{id}', [DepartmentManagerController::class, 'destroy'])
         ->name('department-managers.destroy');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Comprehensive Payroll Summaries Admin Routes
+    |--------------------------------------------------------------------------
+    */
+    
+    // Force unlock locked summaries
+    Route::post('/comprehensive-payroll-summaries/force-unlock', [PayrollSummariesController::class, 'forceUnlock'])
+        ->name('comprehensive-payroll-summaries.force-unlock');
+    
+    // Bulk delete summaries
+    Route::delete('/comprehensive-payroll-summaries/bulk-delete', [PayrollSummariesController::class, 'bulkDelete'])
+        ->name('comprehensive-payroll-summaries.bulk-delete');
+    
+    // Force recalculation
+    Route::post('/comprehensive-payroll-summaries/force-recalculate-all', [PayrollSummariesController::class, 'forceRecalculateAll'])
+        ->name('comprehensive-payroll-summaries.force-recalculate-all');
 
     /*
     |--------------------------------------------------------------------------
@@ -608,6 +627,58 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
 |--------------------------------------------------------------------------
 */
 Route::middleware(['auth', 'verified', 'role:finance,hrd_manager,superadmin'])->group(function () {
+
+    /*
+    |--------------------------------------------------------------------------
+    | Comprehensive Payroll Summaries Routes
+    |--------------------------------------------------------------------------
+    */
+    
+    // Main page route
+    Route::get('/comprehensive-payroll-summaries', [PayrollSummariesController::class, 'index'])
+        ->name('comprehensive-payroll-summaries.index');
+    
+    // Data Management Routes
+    Route::get('/api/comprehensive-payroll-summaries/list', [PayrollSummariesController::class, 'list'])
+        ->name('comprehensive-payroll-summaries.list');
+    
+    Route::post('/comprehensive-payroll-summaries', [PayrollSummariesController::class, 'store'])
+        ->name('comprehensive-payroll-summaries.store');
+    
+    Route::put('/comprehensive-payroll-summaries/{id}', [PayrollSummariesController::class, 'update'])
+        ->name('comprehensive-payroll-summaries.update')
+        ->where('id', '[0-9]+');
+    
+    Route::delete('/comprehensive-payroll-summaries/{id}', [PayrollSummariesController::class, 'destroy'])
+        ->name('comprehensive-payroll-summaries.destroy')
+        ->where('id', '[0-9]+');
+    
+    // Status Management Routes
+    Route::patch('/comprehensive-payroll-summaries/{id}/status', [PayrollSummariesController::class, 'updateStatus'])
+        ->name('comprehensive-payroll-summaries.update-status')
+        ->where('id', '[0-9]+');
+    
+    Route::patch('/comprehensive-payroll-summaries/bulk-status', [PayrollSummariesController::class, 'bulkUpdateStatus'])
+        ->name('comprehensive-payroll-summaries.bulk-update-status');
+    
+    // Bulk Operations Routes
+    Route::post('/comprehensive-payroll-summaries/bulk-generate', [PayrollSummariesController::class, 'bulkGenerate'])
+        ->name('comprehensive-payroll-summaries.bulk-generate');
+    
+    // Export Routes
+    Route::get('/comprehensive-payroll-summaries/export', [PayrollSummariesController::class, 'export'])
+        ->name('comprehensive-payroll-summaries.export');
+    
+    // Utility Routes
+    Route::get('/comprehensive-payroll-summaries/departments', [PayrollSummariesController::class, 'getDepartments'])
+        ->name('comprehensive-payroll-summaries.departments');
+    
+    // Sync Routes
+    Route::post('/comprehensive-payroll-summaries/sync-attendance', [PayrollSummariesController::class, 'syncWithAttendance'])
+        ->name('comprehensive-payroll-summaries.sync-attendance');
+    
+    Route::post('/comprehensive-payroll-summaries/sync-benefits-deductions', [PayrollSummariesController::class, 'syncBenefitsDeductions'])
+        ->name('comprehensive-payroll-summaries.sync-benefits-deductions');
     
     /*
     |--------------------------------------------------------------------------
@@ -688,6 +759,19 @@ Route::middleware(['auth', 'verified', 'role:finance,hrd_manager,superadmin'])->
     // Reports Routes
     Route::post('/final-payrolls/generate-report', [FinalPayrollController::class, 'generateReport'])
         ->name('final-payrolls.generate-report');
+
+    Route::middleware(['auth:sanctum'])->prefix('api/comprehensive-payroll-summaries')->group(function () {
+    
+    // API endpoints for external integrations
+    Route::get('/period/{year}/{month}/{period_type}', [PayrollSummariesController::class, 'apiGetPeriodSummaries'])
+        ->name('api.comprehensive-payroll-summaries.period')
+        ->where(['year' => '[0-9]{4}', 'month' => '[0-9]{1,2}', 'period_type' => '(1st_half|2nd_half)']);
+    
+    Route::get('/employee/{employeeId}/summary/{year}/{month}', [PayrollSummariesController::class, 'apiGetEmployeeSummary'])
+        ->name('api.comprehensive-payroll-summaries.employee')
+        ->where(['employeeId' => '[0-9]+', 'year' => '[0-9]{4}', 'month' => '[0-9]{1,2}']);
+    
+});
 
     /*
     |--------------------------------------------------------------------------
