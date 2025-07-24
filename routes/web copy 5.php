@@ -19,7 +19,6 @@ use App\Http\Controllers\SLVLController;
 use App\Http\Controllers\RetroController;
 use App\Http\Controllers\BenefitController;
 use App\Http\Controllers\DeductionController;
-use App\Http\Controllers\FinalPayrollController; // Added Final Payroll Controller
 use App\Http\Controllers\Auth\EmployeeRegistrationController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\ProcessedAttendanceController;
@@ -160,23 +159,6 @@ Route::middleware(['auth', 'verified'])->group(function () {
             'auth' => ['user' => auth()->user()]
         ]);
     })->name('reports.index');
-
-    /*
-    |--------------------------------------------------------------------------
-    | Employee Self-Service Routes (Payroll)
-    |--------------------------------------------------------------------------
-    */
-    // Employee payroll lookup (for employee self-service)
-    Route::get('/my-payroll', [FinalPayrollController::class, 'myPayroll'])
-        ->name('my-payroll');
-    
-    Route::get('/my-payroll/{id}/payslip', [FinalPayrollController::class, 'generatePayslip'])
-        ->name('my-payroll.payslip')
-        ->where('id', '[0-9]+');
-    
-    // Payroll statistics for dashboard
-    Route::get('/payroll-stats', [FinalPayrollController::class, 'getPayrollStats'])
-        ->name('payroll.stats');
 });
 
 /*
@@ -190,31 +172,6 @@ Route::middleware(['auth', 'verified', 'role:superadmin'])->group(function () {
         ->name('department-managers.store');
     Route::delete('/department-managers/{id}', [DepartmentManagerController::class, 'destroy'])
         ->name('department-managers.destroy');
-
-    /*
-    |--------------------------------------------------------------------------
-    | Final Payroll Administrative Routes (Superadmin only)
-    |--------------------------------------------------------------------------
-    */
-    // Data migration and fixes
-    Route::post('/final-payrolls/migrate-legacy-data', [FinalPayrollController::class, 'migrateLegacyData'])
-        ->name('final-payrolls.migrate-legacy-data');
-    
-    Route::post('/final-payrolls/fix-calculations', [FinalPayrollController::class, 'fixCalculations'])
-        ->name('final-payrolls.fix-calculations');
-    
-    Route::post('/final-payrolls/recalculate-all', [FinalPayrollController::class, 'recalculateAll'])
-        ->name('final-payrolls.recalculate-all');
-    
-    Route::post('/final-payrolls/force-approve', [FinalPayrollController::class, 'forceApprove'])
-        ->name('final-payrolls.force-approve');
-    
-    // Archive and cleanup
-    Route::post('/final-payrolls/archive-old-payrolls', [FinalPayrollController::class, 'archiveOldPayrolls'])
-        ->name('final-payrolls.archive-old-payrolls');
-    
-    Route::delete('/final-payrolls/purge-drafts', [FinalPayrollController::class, 'purgeDrafts'])
-        ->name('final-payrolls.purge-drafts');
 });
 
 /*
@@ -305,6 +262,19 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
     Route::put('/attendance/{id}', [ProcessedAttendanceController::class, 'update'])
         ->name('attendance.update');
     
+    // NEW: Auto-recalculation route
+    Route::post('/attendance/recalculate-all', [ProcessedAttendanceController::class, 'recalculateAll'])
+        ->name('attendance.recalculate-all');
+    
+    // Sync and Delete functionality
+    // Processed Attendance Routes
+    Route::get('/attendance', [ProcessedAttendanceController::class, 'index'])
+        ->name('attendance.index');
+    Route::get('/attendance/list', [ProcessedAttendanceController::class, 'list'])
+        ->name('attendance.list');
+    Route::put('/attendance/{id}', [ProcessedAttendanceController::class, 'update'])
+        ->name('attendance.update');
+    
     // Auto-recalculation route
     Route::post('/attendance/recalculate-all', [ProcessedAttendanceController::class, 'recalculateAll'])
         ->name('attendance.recalculate-all');
@@ -313,8 +283,15 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
         ->name('processattendance.download-template');
     Route::post('/processattendance/import', [ProcessedAttendanceController::class, 'importAttendance'])
         ->name('attendance.import');
+
+    Route::get('/attendance/import', [AttendanceController::class, 'showImportPage'])
+        ->name('attendance.import');
+    Route::post('/attendance/import', [AttendanceController::class, 'import'])
+        ->name('attendance.import.process');
+    Route::get('/attendance/template/download', [AttendanceController::class, 'downloadTemplate'])
+        ->name('attendance.template.download');
     
-    // Set holiday route
+    // Set holiday route - FIXED: Ensure this route is properly defined
     Route::post('/attendance/set-holiday', [ProcessedAttendanceController::class, 'setHoliday'])
         ->name('attendance.set-holiday');
     
@@ -356,7 +333,7 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
     Route::post('/attendance/detect-dtr-problems', [ProcessedAttendanceController::class, 'detectDtrProblems'])
     ->name('attendance.detect-dtr-problems');
     
-    // Attendance details for payroll summaries
+    // IMPORTANT: Add this route for attendance details
     Route::get('/payroll-summaries/{id}/attendance-details', [ProcessedAttendanceController::class, 'getPayrollSummaryAttendanceDetails'])
         ->name('payroll-summaries.attendance-details')
         ->where('id', '[0-9]+');
@@ -436,7 +413,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('/overtimes/explain-rate', [OvertimeController::class, 'explainRateCalculation'])
         ->name('overtimes.explain-rate');
     
-    // Rate update route - Allow updating rate for pending overtimes
+    // NEW: Rate update route - Allow updating rate for pending overtimes
     Route::post('/overtimes/{overtime}/rate', [OvertimeController::class, 'updateRate'])
         ->name('overtimes.updateRate');
     
@@ -581,119 +558,15 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(fu
         Route::post('/cancel-rest-days/force-approve', [CancelRestDayController::class, 'forceApprove'])
             ->name('cancel-rest-days.force-approve');
     });
-
-    /*
-    |--------------------------------------------------------------------------
-    | Final Payroll Management Routes (HRD Manager access)
-    |--------------------------------------------------------------------------
-    */
-    // Advanced Final Payroll Operations
-    Route::post('/final-payrolls/bulk-generate', [FinalPayrollController::class, 'bulkGenerate'])
-        ->name('final-payrolls.bulk-generate');
-    
-    Route::post('/final-payrolls/batch-recalculate', [FinalPayrollController::class, 'batchRecalculate'])
-        ->name('final-payrolls.batch-recalculate');
-    
-    // Payroll Validation Routes
-    Route::post('/final-payrolls/validate-period', [FinalPayrollController::class, 'validatePeriod'])
-        ->name('final-payrolls.validate-period');
-    
-    Route::post('/final-payrolls/check-consistency', [FinalPayrollController::class, 'checkConsistency'])
-        ->name('final-payrolls.check-consistency');
 });
 
 /*
 |--------------------------------------------------------------------------
-| Finance Routes (Including Final Payroll)
+| Finance Routes
 |--------------------------------------------------------------------------
 */
-Route::middleware(['auth', 'verified', 'role:finance,hrd_manager,superadmin'])->group(function () {
+Route::middleware(['auth', 'verified', 'role:finance,superadmin'])->group(function () {
     
-    /*
-    |--------------------------------------------------------------------------
-    | Final Payroll Routes
-    |--------------------------------------------------------------------------
-    */
-    
-    // Final Payroll Main Routes
-    Route::get('/final-payrolls', [FinalPayrollController::class, 'index'])
-        ->name('final-payrolls.index');
-    
-    Route::get('/final-payroll', function () {
-        return Inertia::render('Payroll/FinalPayroll', [
-            'auth' => ['user' => auth()->user()]
-        ]);
-    })->name('final-payroll.page');
-    
-    // Individual Final Payroll Operations
-    Route::get('/final-payrolls/{id}', [FinalPayrollController::class, 'show'])
-        ->name('final-payrolls.show')
-        ->where('id', '[0-9]+');
-    
-    Route::put('/final-payrolls/{id}', [FinalPayrollController::class, 'update'])
-        ->name('final-payrolls.update')
-        ->where('id', '[0-9]+');
-    
-    Route::delete('/final-payrolls/{id}', [FinalPayrollController::class, 'destroy'])
-        ->name('final-payrolls.destroy')
-        ->where('id', '[0-9]+');
-    
-    // Generation Routes
-    Route::post('/final-payrolls/generate-from-summaries', [FinalPayrollController::class, 'generateFromSummaries'])
-        ->name('final-payrolls.generate-from-summaries');
-    
-    Route::post('/final-payrolls/available-summaries', [FinalPayrollController::class, 'getAvailableSummaries'])
-        ->name('final-payrolls.available-summaries');
-    
-    // Status Management Routes
-    Route::post('/final-payrolls/{id}/approve', [FinalPayrollController::class, 'approve'])
-        ->name('final-payrolls.approve')
-        ->where('id', '[0-9]+');
-    
-    Route::post('/final-payrolls/{id}/reject', [FinalPayrollController::class, 'reject'])
-        ->name('final-payrolls.reject')
-        ->where('id', '[0-9]+');
-    
-    Route::post('/final-payrolls/{id}/finalize', [FinalPayrollController::class, 'finalize'])
-        ->name('final-payrolls.finalize')
-        ->where('id', '[0-9]+');
-    
-    Route::post('/final-payrolls/{id}/mark-as-paid', [FinalPayrollController::class, 'markAsPaid'])
-        ->name('final-payrolls.mark-as-paid')
-        ->where('id', '[0-9]+');
-    
-    // Bulk Operations
-    Route::post('/final-payrolls/bulk-approve', [FinalPayrollController::class, 'bulkApprove'])
-        ->name('final-payrolls.bulk-approve');
-    
-    Route::post('/final-payrolls/bulk-finalize', [FinalPayrollController::class, 'bulkFinalize'])
-        ->name('final-payrolls.bulk-finalize');
-    
-    Route::post('/final-payrolls/bulk-mark-as-paid', [FinalPayrollController::class, 'bulkMarkAsPaid'])
-        ->name('final-payrolls.bulk-mark-as-paid');
-    
-    // Calculation and Analysis Routes
-    Route::post('/final-payrolls/{id}/recalculate', [FinalPayrollController::class, 'recalculate'])
-        ->name('final-payrolls.recalculate')
-        ->where('id', '[0-9]+');
-    
-    Route::get('/final-payrolls/{id}/calculation-breakdown', [FinalPayrollController::class, 'getCalculationBreakdown'])
-        ->name('final-payrolls.calculation-breakdown')
-        ->where('id', '[0-9]+');
-    
-    // Export Routes
-    Route::get('/final-payrolls/export', [FinalPayrollController::class, 'export'])
-        ->name('final-payrolls.export');
-    
-    // Reports Routes
-    Route::post('/final-payrolls/generate-report', [FinalPayrollController::class, 'generateReport'])
-        ->name('final-payrolls.generate-report');
-
-    /*
-    |--------------------------------------------------------------------------
-    | Benefits Routes
-    |--------------------------------------------------------------------------
-    */
     Route::get('/benefits', [BenefitController::class, 'index'])->name('benefits.index');
     Route::post('/benefits', [BenefitController::class, 'store'])->name('benefits.store');
     Route::patch('/benefits/{id}', [BenefitController::class, 'update'])->name('benefits.update');
@@ -711,23 +584,18 @@ Route::middleware(['auth', 'verified', 'role:finance,hrd_manager,superadmin'])->
     Route::post('/benefits/import', [BenefitController::class, 'import'])->name('benefits.import');
     Route::get('/benefits/export', [BenefitController::class, 'export'])->name('benefits.export');
     
-    // Delete all not posted benefits
+    // NEW: Delete all not posted benefits
     Route::post('/benefits/delete-all-not-posted', [BenefitController::class, 'deleteAllNotPosted'])->name('benefits.deleteAllNotPosted');
     
     // Employee defaults routes
     Route::get('/employee-defaults', [BenefitController::class, 'showEmployeeDefaultsPage'])->name('employee-defaults.index');
     Route::get('/api/employee-defaults', [BenefitController::class, 'getEmployeeDefaults'])->name('api.employee-defaults');
     
-    // Employee defaults template and import/export
+    // NEW: Employee defaults template and import/export
     Route::get('/benefits/defaults/template/download', [BenefitController::class, 'downloadDefaultsTemplate'])->name('benefits.defaults.template.download');
     Route::post('/benefits/defaults/import', [BenefitController::class, 'importDefaults'])->name('benefits.defaults.import');
     Route::get('/benefits/defaults/export', [BenefitController::class, 'exportDefaults'])->name('benefits.defaults.export');
 
-    /*
-    |--------------------------------------------------------------------------
-    | Deductions Routes
-    |--------------------------------------------------------------------------
-    */
     Route::get('/deductions', [DeductionController::class, 'index'])->name('deductions.index');
     Route::post('/deductions', [DeductionController::class, 'store'])->name('deductions.store');
     Route::patch('/deductions/{id}', [DeductionController::class, 'update'])->name('deductions.update');
@@ -736,7 +604,7 @@ Route::middleware(['auth', 'verified', 'role:finance,hrd_manager,superadmin'])->
     Route::post('/deductions/{id}/set-default', [DeductionController::class, 'setDefault'])->name('deductions.set-default');
     Route::post('/deductions/post-all', [DeductionController::class, 'postAll'])->name('deductions.post-all');
     
-    // Delete all not posted deductions route
+    // NEW: Delete all not posted deductions route
     Route::post('/deductions/delete-all-not-posted', [DeductionController::class, 'deleteAllNotPosted'])->name('deductions.delete-all-not-posted');
     
     Route::post('/deductions/bulk-post', [DeductionController::class, 'bulkPost'])->name('deductions.bulk-post');
@@ -748,35 +616,7 @@ Route::middleware(['auth', 'verified', 'role:finance,hrd_manager,superadmin'])->
     Route::get('/deductions/template/download', [DeductionController::class, 'downloadTemplate'])->name('deductions.template.download');
     Route::post('/deductions/import', [DeductionController::class, 'import'])->name('deductions.import');
     Route::get('/deductions/export', [DeductionController::class, 'export'])->name('deductions.export');
-});
 
-/*
-|--------------------------------------------------------------------------
-| API Routes for Final Payroll Integration
-|--------------------------------------------------------------------------
-*/
-Route::middleware(['auth:sanctum'])->prefix('api/final-payrolls')->group(function () {
-    
-    // API endpoints for external integrations
-    Route::get('/summary/{year}/{month}', [FinalPayrollController::class, 'apiGetPeriodSummary'])
-        ->name('api.final-payrolls.period-summary')
-        ->where(['year' => '[0-9]{4}', 'month' => '[0-9]{1,2}']);
-    
-    Route::get('/employee/{employeeId}/history', [FinalPayrollController::class, 'apiGetEmployeePayrollHistory'])
-        ->name('api.final-payrolls.employee-history')
-        ->where('employeeId', '[0-9]+');
-    
-    Route::get('/government-remittance/{year}/{month}', [FinalPayrollController::class, 'apiGetGovernmentRemittance'])
-        ->name('api.final-payrolls.government-remittance')
-        ->where(['year' => '[0-9]{4}', 'month' => '[0-9]{1,2}']);
-    
-    // Bank file generation
-    Route::post('/generate-bank-file', [FinalPayrollController::class, 'generateBankFile'])
-        ->name('api.final-payrolls.generate-bank-file');
-    
-    // Alphalist generation
-    Route::post('/generate-alphalist', [FinalPayrollController::class, 'generateAlphalist'])
-        ->name('api.final-payrolls.generate-alphalist');
 });
 
 /*
