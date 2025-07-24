@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Deduction;
 use App\Models\Employee;
+use App\Models\PayrollSummary;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -213,7 +214,7 @@ class DeductionController extends Controller
     }
 
     /**
-     * Mark deduction as posted.
+     * ENHANCED: Mark deduction as posted and sync to payroll summary.
      */
     public function postDeduction($id)
     {
@@ -226,16 +227,44 @@ class DeductionController extends Controller
             ]);
         }
         
-        // Post the deduction
-        $deduction->is_posted = true;
-        $deduction->date_posted = Carbon::now();
-        $deduction->save();
+        DB::beginTransaction();
         
-        return response()->json($deduction);
+        try {
+            // Post the deduction
+            $deduction->is_posted = true;
+            $deduction->date_posted = Carbon::now();
+            $deduction->save();
+            
+            // ENHANCED: Sync to payroll summary
+            $this->syncDeductionToPayrollSummary($deduction);
+            
+            DB::commit();
+            
+            Log::info("Deduction posted and synced to payroll summary", [
+                'deduction_id' => $deduction->id,
+                'employee_id' => $deduction->employee_id,
+                'cutoff' => $deduction->cutoff,
+                'date' => $deduction->date
+            ]);
+            
+            return response()->json($deduction);
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            Log::error("Error posting deduction and syncing to payroll summary", [
+                'deduction_id' => $deduction->id,
+                'error' => $e->getMessage()
+            ]);
+            
+            throw ValidationException::withMessages([
+                'general' => ['Failed to post deduction: ' . $e->getMessage()],
+            ]);
+        }
     }
 
     /**
-     * Post all deductions for a specific cutoff period.
+     * ENHANCED: Post all deductions for a specific cutoff period and sync to payroll summaries.
      */
     public function postAll(Request $request)
     {
@@ -249,23 +278,65 @@ class DeductionController extends Controller
             ]);
         }
         
-        // Post all unposted deductions for the specified period
-        $updatedCount = Deduction::whereBetween('date', [$startDate, $endDate])
-            ->where('cutoff', $cutoff)
-            ->where('is_posted', false)
-            ->update([
-                'is_posted' => true, 
-                'date_posted' => Carbon::now()
-            ]);
+        DB::beginTransaction();
         
-        return response()->json([
-            'message' => "{$updatedCount} deductions have been successfully posted.",
-            'updated_count' => $updatedCount
-        ]);
+        try {
+            // Get all unposted deductions for the specified period
+            $deductions = Deduction::whereBetween('date', [$startDate, $endDate])
+                ->where('cutoff', $cutoff)
+                ->where('is_posted', false)
+                ->get();
+            
+            $updatedCount = 0;
+            $syncedCount = 0;
+            
+            foreach ($deductions as $deduction) {
+                // Post the deduction
+                $deduction->is_posted = true;
+                $deduction->date_posted = Carbon::now();
+                $deduction->save();
+                $updatedCount++;
+                
+                // Sync to payroll summary
+                if ($this->syncDeductionToPayrollSummary($deduction)) {
+                    $syncedCount++;
+                }
+            }
+            
+            DB::commit();
+            
+            Log::info("Bulk posted deductions and synced to payroll summaries", [
+                'cutoff' => $cutoff,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'posted_count' => $updatedCount,
+                'synced_count' => $syncedCount
+            ]);
+            
+            return response()->json([
+                'message' => "{$updatedCount} deductions have been successfully posted and {$syncedCount} payroll summaries updated.",
+                'updated_count' => $updatedCount,
+                'synced_count' => $syncedCount
+            ]);
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            Log::error("Error in bulk posting deductions", [
+                'error' => $e->getMessage(),
+                'cutoff' => $cutoff,
+                'start_date' => $startDate,
+                'end_date' => $endDate
+            ]);
+            
+            throw ValidationException::withMessages([
+                'general' => ['Failed to post deductions: ' . $e->getMessage()],
+            ]);
+        }
     }
 
     /**
-     * Post multiple deductions in bulk
+     * ENHANCED: Post multiple deductions in bulk and sync to payroll summaries
      */
     public function bulkPost(Request $request)
     {
@@ -277,11 +348,11 @@ class DeductionController extends Controller
             ]);
         }
         
-        // Begin transaction
         DB::beginTransaction();
         
         try {
             $postedCount = 0;
+            $syncedCount = 0;
             $now = Carbon::now();
             
             foreach ($deductionIds as $id) {
@@ -292,21 +363,74 @@ class DeductionController extends Controller
                     $deduction->date_posted = $now;
                     $deduction->save();
                     $postedCount++;
+                    
+                    // Sync to payroll summary
+                    if ($this->syncDeductionToPayrollSummary($deduction)) {
+                        $syncedCount++;
+                    }
                 }
             }
             
             DB::commit();
             
-            return response()->json([
-                'message' => "{$postedCount} deductions have been successfully posted.",
-                'posted_count' => $postedCount
+            Log::info("Bulk posted selected deductions and synced to payroll summaries", [
+                'deduction_ids' => $deductionIds,
+                'posted_count' => $postedCount,
+                'synced_count' => $syncedCount
             ]);
+            
+            return response()->json([
+                'message' => "{$postedCount} deductions have been successfully posted and {$syncedCount} payroll summaries updated.",
+                'posted_count' => $postedCount,
+                'synced_count' => $syncedCount
+            ]);
+            
         } catch (\Exception $e) {
             DB::rollBack();
+            
+            Log::error("Error in bulk posting selected deductions", [
+                'deduction_ids' => $deductionIds,
+                'error' => $e->getMessage()
+            ]);
             
             throw ValidationException::withMessages([
                 'general' => ['Failed to post deductions: ' . $e->getMessage()],
             ]);
+        }
+    }
+
+    /**
+     * NEW: Sync individual deduction to payroll summary
+     */
+    private function syncDeductionToPayrollSummary(Deduction $deduction)
+    {
+        try {
+            // Create or update payroll summary from posted deduction
+            $summary = PayrollSummary::createOrUpdateFromPostedData(
+                $deduction->employee_id,
+                $deduction->cutoff,
+                $deduction->date,
+                'deductions'
+            );
+            
+            if ($summary) {
+                Log::info("Successfully synced deduction to payroll summary", [
+                    'deduction_id' => $deduction->id,
+                    'payroll_summary_id' => $summary->id,
+                    'employee_id' => $deduction->employee_id
+                ]);
+                return true;
+            }
+            
+            return false;
+            
+        } catch (\Exception $e) {
+            Log::error("Error syncing deduction to payroll summary", [
+                'deduction_id' => $deduction->id,
+                'employee_id' => $deduction->employee_id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
         }
     }
 

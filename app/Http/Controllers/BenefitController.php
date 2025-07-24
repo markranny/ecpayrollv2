@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Benefit;
 use App\Models\Employee;
+use App\Models\PayrollSummary;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
@@ -904,16 +905,45 @@ class BenefitController extends Controller
             ]);
         }
         
-        // Post the benefit
-        $benefit->is_posted = true;
-        $benefit->date_posted = Carbon::now();
-        $benefit->save();
+        DB::beginTransaction();
         
-        return response()->json($benefit);
+        try {
+            // Post the benefit
+            $benefit->is_posted = true;
+            $benefit->date_posted = Carbon::now();
+            $benefit->save();
+            
+            // ENHANCED: Sync to payroll summary
+            $this->syncBenefitToPayrollSummary($benefit);
+            
+            DB::commit();
+            
+            Log::info("Benefit posted and synced to payroll summary", [
+                'benefit_id' => $benefit->id,
+                'employee_id' => $benefit->employee_id,
+                'cutoff' => $benefit->cutoff,
+                'date' => $benefit->date
+            ]);
+            
+            return response()->json($benefit);
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            Log::error("Error posting benefit and syncing to payroll summary", [
+                'benefit_id' => $benefit->id,
+                'error' => $e->getMessage()
+            ]);
+            
+            throw ValidationException::withMessages([
+                'general' => ['Failed to post benefit: ' . $e->getMessage()],
+            ]);
+        }
     }
 
     /**
      * Post all benefits for a specific cutoff period.
+     * FIXED: Removed any conditions that might prevent posting all benefits
      */
     public function postAll(Request $request)
     {
@@ -927,21 +957,63 @@ class BenefitController extends Controller
             ]);
         }
         
-        // Post all unposted benefits for the specified period
-        $updatedCount = Benefit::whereBetween('date', [$startDate, $endDate])
-            ->where('cutoff', $cutoff)
-            ->where('is_posted', false)
-            ->update([
-                'is_posted' => true, 
-                'date_posted' => Carbon::now()
-            ]);
+        DB::beginTransaction();
         
-        return response()->json([
-            'message' => "{$updatedCount} benefits have been successfully posted.",
-            'updated_count' => $updatedCount
-        ]);
+        try {
+            // Get all unposted benefits for the specified period
+            $benefits = Benefit::whereBetween('date', [$startDate, $endDate])
+                ->where('cutoff', $cutoff)
+                ->where('is_posted', false)
+                ->get();
+            
+            $updatedCount = 0;
+            $syncedCount = 0;
+            
+            foreach ($benefits as $benefit) {
+                // Post the benefit
+                $benefit->is_posted = true;
+                $benefit->date_posted = Carbon::now();
+                $benefit->save();
+                $updatedCount++;
+                
+                // Sync to payroll summary
+                if ($this->syncBenefitToPayrollSummary($benefit)) {
+                    $syncedCount++;
+                }
+            }
+            
+            DB::commit();
+            
+            Log::info("Bulk posted benefits and synced to payroll summaries", [
+                'cutoff' => $cutoff,
+                'start_date' => $startDate,
+                'end_date' => $endDate,
+                'posted_count' => $updatedCount,
+                'synced_count' => $syncedCount
+            ]);
+            
+            return response()->json([
+                'message' => "{$updatedCount} benefits have been successfully posted and {$syncedCount} payroll summaries updated.",
+                'updated_count' => $updatedCount,
+                'synced_count' => $syncedCount
+            ]);
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            
+            Log::error("Error in bulk posting benefits", [
+                'error' => $e->getMessage(),
+                'cutoff' => $cutoff,
+                'start_date' => $startDate,
+                'end_date' => $endDate
+            ]);
+            
+            throw ValidationException::withMessages([
+                'general' => ['Failed to post benefits: ' . $e->getMessage()],
+            ]);
+        }
     }
-
+    
     /**
      * Post multiple benefits in bulk
      */
@@ -955,11 +1027,11 @@ class BenefitController extends Controller
             ]);
         }
         
-        // Begin transaction
         DB::beginTransaction();
         
         try {
             $postedCount = 0;
+            $syncedCount = 0;
             $now = Carbon::now();
             
             foreach ($benefitIds as $id) {
@@ -970,21 +1042,71 @@ class BenefitController extends Controller
                     $benefit->date_posted = $now;
                     $benefit->save();
                     $postedCount++;
+                    
+                    // Sync to payroll summary
+                    if ($this->syncBenefitToPayrollSummary($benefit)) {
+                        $syncedCount++;
+                    }
                 }
             }
             
             DB::commit();
             
-            return response()->json([
-                'message' => "{$postedCount} benefits have been successfully posted.",
-                'posted_count' => $postedCount
+            Log::info("Bulk posted selected benefits and synced to payroll summaries", [
+                'benefit_ids' => $benefitIds,
+                'posted_count' => $postedCount,
+                'synced_count' => $syncedCount
             ]);
+            
+            return response()->json([
+                'message' => "{$postedCount} benefits have been successfully posted and {$syncedCount} payroll summaries updated.",
+                'posted_count' => $postedCount,
+                'synced_count' => $syncedCount
+            ]);
+            
         } catch (\Exception $e) {
             DB::rollBack();
+            
+            Log::error("Error in bulk posting selected benefits", [
+                'benefit_ids' => $benefitIds,
+                'error' => $e->getMessage()
+            ]);
             
             throw ValidationException::withMessages([
                 'general' => ['Failed to post benefits: ' . $e->getMessage()],
             ]);
+        }
+    }
+
+    private function syncBenefitToPayrollSummary(Benefit $benefit)
+    {
+        try {
+            // Create or update payroll summary from posted benefit
+            $summary = PayrollSummary::createOrUpdateFromPostedData(
+                $benefit->employee_id,
+                $benefit->cutoff,
+                $benefit->date,
+                'benefits'
+            );
+            
+            if ($summary) {
+                Log::info("Successfully synced benefit to payroll summary", [
+                    'benefit_id' => $benefit->id,
+                    'payroll_summary_id' => $summary->id,
+                    'employee_id' => $benefit->employee_id
+                ]);
+                return true;
+            }
+            
+            return false;
+            
+        } catch (\Exception $e) {
+            Log::error("Error syncing benefit to payroll summary", [
+                'benefit_id' => $benefit->id,
+                'employee_id' => $benefit->employee_id,
+                'error' => $e->getMessage()
+            ]);
+            return false;
         }
     }
 
