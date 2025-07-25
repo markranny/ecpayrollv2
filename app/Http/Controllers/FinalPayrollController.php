@@ -116,103 +116,6 @@ class FinalPayrollController extends Controller
     }
 
     /**
-     * Generate final payrolls from payroll summaries.
-     */
-    public function generateFromSummaries(Request $request)
-    {
-        $request->validate([
-            'year' => 'required|integer|min:2020|max:2030',
-            'month' => 'required|integer|min:1|max:12',
-            'period_type' => 'required|in:1st_half,2nd_half',
-            'department' => 'nullable|string',
-            'employee_ids' => 'nullable|array',
-            'employee_ids.*' => 'integer|exists:employees,id'
-        ]);
-
-        try {
-            DB::beginTransaction();
-
-            $year = $request->year;
-            $month = $request->month;
-            $periodType = $request->period_type;
-            $department = $request->department;
-            $employeeIds = $request->employee_ids;
-
-            // Get payroll summaries to process
-            $query = PayrollSummary::where('year', $year)
-                ->where('month', $month)
-                ->where('period_type', $periodType)
-                ->where('status', 'posted');
-
-            if ($department) {
-                $query->where('department', $department);
-            }
-
-            if ($employeeIds) {
-                $query->whereIn('employee_id', $employeeIds);
-            }
-
-            $summaries = $query->get();
-
-            if ($summaries->isEmpty()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'No posted payroll summaries found for the selected criteria'
-                ]);
-            }
-
-            $generated = 0;
-            $skipped = 0;
-            $errors = [];
-
-            foreach ($summaries as $summary) {
-                try {
-                    // Check if final payroll already exists
-                    $existing = FinalPayroll::where('employee_id', $summary->employee_id)
-                        ->where('year', $year)
-                        ->where('month', $month)
-                        ->where('period_type', $periodType)
-                        ->first();
-
-                    if ($existing) {
-                        $skipped++;
-                        continue;
-                    }
-
-                    // Generate final payroll
-                    FinalPayroll::generateFromPayrollSummary($summary->id, auth()->id());
-                    $generated++;
-
-                } catch (\Exception $e) {
-                    $errors[] = "Error generating payroll for {$summary->employee_name}: " . $e->getMessage();
-                    Log::error("Error generating final payroll for employee {$summary->employee_id}: " . $e->getMessage());
-                }
-            }
-
-            DB::commit();
-
-            return response()->json([
-                'success' => true,
-                'message' => "Generated {$generated} final payrolls, skipped {$skipped} existing records",
-                'data' => [
-                    'generated' => $generated,
-                    'skipped' => $skipped,
-                    'errors' => $errors
-                ]
-            ]);
-
-        } catch (\Exception $e) {
-            DB::rollBack();
-            Log::error('Error generating final payrolls: ' . $e->getMessage());
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to generate final payrolls: ' . $e->getMessage()
-            ], 500);
-        }
-    }
-
-    /**
      * Show a specific final payroll.
      */
     public function show($id)
@@ -1023,4 +926,99 @@ class FinalPayrollController extends Controller
             ]
         ]);
     }
+
+    /**
+ * Enhanced generation from summaries with better error handling
+ */
+public function generateFromSummaries(Request $request)
+{
+    $request->validate([
+        'summary_ids' => 'required|array|min:1',
+        'summary_ids.*' => 'integer|exists:payroll_summaries,id',
+        'year' => 'required|integer|min:2020|max:2030',
+        'month' => 'required|integer|min:1|max:12',
+        'period_type' => 'nullable|in:1st_half,2nd_half',
+        'department' => 'nullable|string',
+        'include_benefits' => 'boolean',
+        'include_deductions' => 'boolean',
+        'force_regenerate' => 'boolean',
+        'auto_approve' => 'boolean'
+    ]);
+
+    try {
+        DB::beginTransaction();
+
+        $summaryIds = $request->input('summary_ids');
+        $includeBenefits = $request->boolean('include_benefits', true);
+        $includeDeductions = $request->boolean('include_deductions', true);
+        $forceRegenerate = $request->boolean('force_regenerate', false);
+        $autoApprove = $request->boolean('auto_approve', false);
+
+        $generated = 0;
+        $skipped = 0;
+        $errors = [];
+
+        foreach ($summaryIds as $summaryId) {
+            try {
+                $summary = PayrollSummary::findOrFail($summaryId);
+
+                // Check if final payroll already exists
+                $existing = FinalPayroll::where('employee_id', $summary->employee_id)
+                    ->where('year', $summary->year)
+                    ->where('month', $summary->month)
+                    ->where('period_type', $summary->period_type)
+                    ->first();
+
+                if ($existing && !$forceRegenerate) {
+                    $skipped++;
+                    continue;
+                }
+
+                // If force regenerate, delete existing if it's still editable
+                if ($existing && $forceRegenerate) {
+                    if ($existing->status === 'draft') {
+                        $existing->delete();
+                    } else {
+                        $errors[] = "Cannot regenerate finalized payroll for {$summary->employee_name}";
+                        continue;
+                    }
+                }
+
+                // Generate final payroll using the static method
+                $finalPayroll = FinalPayroll::generateFromPayrollSummary($summary->id, auth()->id());
+                
+                if ($autoApprove) {
+                    $finalPayroll->markAsApproved(auth()->id(), 'Auto-approved during bulk generation');
+                }
+
+                $generated++;
+
+            } catch (\Exception $e) {
+                $errors[] = "Error generating payroll for {$summary->employee_name}: " . $e->getMessage();
+                Log::error("Error generating final payroll for summary {$summaryId}: " . $e->getMessage());
+            }
+        }
+
+        DB::commit();
+
+        return response()->json([
+            'success' => true,
+            'message' => "Generated {$generated} final payrolls, skipped {$skipped} existing records",
+            'data' => [
+                'generated' => $generated,
+                'skipped' => $skipped,
+                'errors' => $errors
+            ]
+        ]);
+
+    } catch (\Exception $e) {
+        DB::rollBack();
+        Log::error('Error generating final payrolls: ' . $e->getMessage());
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to generate final payrolls: ' . $e->getMessage()
+        ], 500);
+    }
+}
 }

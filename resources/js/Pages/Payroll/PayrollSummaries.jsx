@@ -7,14 +7,406 @@ import {
   Calculator, FileText, AlertTriangle, CheckCircle, Clock, Target, 
   Eye, X, User, Building, DollarSign, TrendingUp, Edit, Check, 
   XCircle, Play, Pause, CreditCard, BarChart3, FileSpreadsheet,
-  PlusCircle, Settings, Award, AlertCircle
+  PlusCircle, Settings, Award, AlertCircle, ChevronRight, Zap
 } from 'lucide-react';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 
-// Payroll Summary Detail Modal
+// Final Payroll Generation Modal
+const FinalPayrollGenerationModal = ({ isOpen, onClose, filters, onGenerate }) => {
+  const [loading, setLoading] = useState(false);
+  const [availableSummaries, setAvailableSummaries] = useState([]);
+  const [selectedSummaries, setSelectedSummaries] = useState([]);
+  const [selectAll, setSelectAll] = useState(false);
+  const [generationOptions, setGenerationOptions] = useState({
+    include_benefits: true,
+    include_deductions: true,
+    force_regenerate: false,
+    auto_approve: false
+  });
+
+  useEffect(() => {
+    if (isOpen) {
+      loadAvailableSummaries();
+    }
+  }, [isOpen, filters]);
+
+  const loadAvailableSummaries = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      params.append('year', filters.year);
+      params.append('month', filters.month);
+      if (filters.periodType) params.append('period_type', filters.periodType);
+      if (filters.department) params.append('department', filters.department);
+      params.append('status', 'posted'); // Only posted summaries
+
+      const response = await fetch('/api/comprehensive-payroll-summaries/available-for-final-payroll?' + params.toString(), {
+        headers: {
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setAvailableSummaries(data.data);
+        setSelectedSummaries([]);
+        setSelectAll(false);
+      } else {
+        alert(data.message || 'Failed to load available summaries');
+      }
+    } catch (err) {
+      console.error('Error loading available summaries:', err);
+      alert('Failed to load available summaries');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSelectAll = () => {
+    if (selectAll) {
+      setSelectedSummaries([]);
+    } else {
+      setSelectedSummaries(availableSummaries.map(s => s.id));
+    }
+    setSelectAll(!selectAll);
+  };
+
+  const handleSelectSummary = (summaryId) => {
+    setSelectedSummaries(prev => {
+      if (prev.includes(summaryId)) {
+        return prev.filter(id => id !== summaryId);
+      } else {
+        return [...prev, summaryId];
+      }
+    });
+  };
+
+  const handleGenerate = async () => {
+    if (selectedSummaries.length === 0) {
+      alert('Please select at least one payroll summary to generate final payroll');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await fetch('/final-payrolls/generate-from-summaries', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
+          'X-Requested-With': 'XMLHttpRequest',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          summary_ids: selectedSummaries,
+          ...generationOptions,
+          year: filters.year,
+          month: filters.month,
+          period_type: filters.periodType,
+          department: filters.department
+        })
+      });
+
+      const data = await response.json();
+      
+      if (data.success) {
+        onGenerate(data);
+        onClose();
+      } else {
+        alert(data.message || 'Failed to generate final payroll');
+      }
+    } catch (err) {
+      console.error('Error generating final payroll:', err);
+      alert('Failed to generate final payroll');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('en-PH', {
+      style: 'currency',
+      currency: 'PHP',
+      minimumFractionDigits: 2
+    }).format(amount || 0);
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+      <div className="relative bg-white rounded-lg shadow-lg max-w-6xl w-full mx-4 max-h-[95vh] overflow-y-auto">
+        <div className="flex justify-between items-center p-6 border-b sticky top-0 bg-white z-10">
+          <div className="flex items-center space-x-3">
+            <Zap className="h-6 w-6 text-blue-600" />
+            <h2 className="text-xl font-semibold text-gray-800">
+              Generate Final Payroll
+            </h2>
+            <span className="text-sm text-gray-500">
+              ({availableSummaries.length} summaries available)
+            </span>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {/* Generation Options */}
+          <div className="bg-blue-50 rounded-lg p-4">
+            <h3 className="text-lg font-medium text-gray-900 mb-3">Generation Options</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <label className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  checked={generationOptions.include_benefits}
+                  onChange={(e) => setGenerationOptions(prev => ({
+                    ...prev,
+                    include_benefits: e.target.checked
+                  }))}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-700">Include Benefits</span>
+              </label>
+              
+              <label className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  checked={generationOptions.include_deductions}
+                  onChange={(e) => setGenerationOptions(prev => ({
+                    ...prev,
+                    include_deductions: e.target.checked
+                  }))}
+                  className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-700">Include Deductions</span>
+              </label>
+              
+              <label className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  checked={generationOptions.force_regenerate}
+                  onChange={(e) => setGenerationOptions(prev => ({
+                    ...prev,
+                    force_regenerate: e.target.checked
+                  }))}
+                  className="rounded border-gray-300 text-red-600 focus:ring-red-500"
+                />
+                <span className="text-sm text-gray-700">Force Regenerate (overwrite existing)</span>
+              </label>
+              
+              <label className="flex items-center space-x-3">
+                <input
+                  type="checkbox"
+                  checked={generationOptions.auto_approve}
+                  onChange={(e) => setGenerationOptions(prev => ({
+                    ...prev,
+                    auto_approve: e.target.checked
+                  }))}
+                  className="rounded border-gray-300 text-green-600 focus:ring-green-500"
+                />
+                <span className="text-sm text-gray-700">Auto-approve generated payrolls</span>
+              </label>
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="flex justify-center items-center h-64">
+              <RefreshCw className="h-8 w-8 animate-spin text-blue-500" />
+              <span className="ml-2 text-lg">Loading available summaries...</span>
+            </div>
+          ) : availableSummaries.length === 0 ? (
+            <div className="text-center py-12">
+              <FileText className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+              <h3 className="text-lg font-medium text-gray-600 mb-2">No summaries available</h3>
+              <p className="text-gray-500">
+                All posted payroll summaries for this period already have final payrolls generated.
+                <br />
+                Enable "Force Regenerate" to recreate existing final payrolls.
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Selection Header */}
+              <div className="flex justify-between items-center p-4 bg-gray-50 rounded-lg">
+                <label className="flex items-center space-x-3">
+                  <input
+                    type="checkbox"
+                    checked={selectAll}
+                    onChange={handleSelectAll}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <span className="text-sm font-medium text-gray-700">
+                    Select All ({availableSummaries.length} summaries)
+                  </span>
+                </label>
+                <span className="text-sm text-gray-600">
+                  {selectedSummaries.length} selected
+                </span>
+              </div>
+
+              {/* Available Summaries List */}
+              <div className="max-h-96 overflow-y-auto border rounded-lg">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Select</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Employee</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Department</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Days</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">OT Hours</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Deductions</th>
+                      <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Benefits</th>
+                      <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {availableSummaries.map((summary) => (
+                      <tr 
+                        key={summary.id}
+                        className={`hover:bg-blue-50 ${selectedSummaries.includes(summary.id) ? 'bg-blue-50' : ''}`}
+                      >
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            checked={selectedSummaries.includes(summary.id)}
+                            onChange={() => handleSelectSummary(summary.id)}
+                            className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <div>
+                            <div className="text-sm font-medium text-gray-900">
+                              {summary.employee_name}
+                            </div>
+                            <div className="text-sm text-gray-500">
+                              {summary.employee_no}
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap text-sm text-gray-500">
+                          <div>
+                            <div>{summary.department}</div>
+                            <div className="text-xs text-gray-400">{summary.line}</div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap text-center">
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            {parseFloat(summary.days_worked || 0).toFixed(1)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap text-center">
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                            {parseFloat(summary.ot_hours || 0).toFixed(2)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap text-center text-sm text-red-600 font-medium">
+                          {formatCurrency(summary.total_deductions)}
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap text-center text-sm text-green-600 font-medium">
+                          {formatCurrency(summary.total_benefits)}
+                        </td>
+                        <td className="px-4 py-4 whitespace-nowrap">
+                          <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            <CheckCircle className="h-3 w-3 mr-1" />
+                            {summary.status?.charAt(0).toUpperCase() + summary.status?.slice(1)}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Summary Statistics */}
+              {selectedSummaries.length > 0 && (
+                <div className="bg-green-50 rounded-lg p-4">
+                  <h4 className="font-medium text-gray-900 mb-2">Generation Summary</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-blue-600">{selectedSummaries.length}</div>
+                      <div className="text-gray-600">Employees</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-green-600">
+                        {availableSummaries
+                          .filter(s => selectedSummaries.includes(s.id))
+                          .reduce((sum, s) => sum + parseFloat(s.days_worked || 0), 0)
+                          .toFixed(1)}
+                      </div>
+                      <div className="text-gray-600">Total Days</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-red-600">
+                        {formatCurrency(
+                          availableSummaries
+                            .filter(s => selectedSummaries.includes(s.id))
+                            .reduce((sum, s) => sum + parseFloat(s.total_deductions || 0), 0)
+                        )}
+                      </div>
+                      <div className="text-gray-600">Total Deductions</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-2xl font-bold text-green-600">
+                        {formatCurrency(
+                          availableSummaries
+                            .filter(s => selectedSummaries.includes(s.id))
+                            .reduce((sum, s) => sum + parseFloat(s.total_benefits || 0), 0)
+                        )}
+                      </div>
+                      <div className="text-gray-600">Total Benefits</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Footer Actions */}
+        <div className="bg-gray-50 px-6 py-4 flex justify-between items-center border-t">
+          <div className="flex items-center text-sm text-gray-600">
+            <AlertCircle className="h-4 w-4 mr-2" />
+            This will generate final payroll records for the selected summaries
+          </div>
+          <div className="flex space-x-3">
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleGenerate}
+              disabled={loading || selectedSummaries.length === 0}
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              {loading ? (
+                <>
+                  <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                <>
+                  <Zap className="h-4 w-4 mr-2" />
+                  Generate Final Payroll ({selectedSummaries.length})
+                </>
+              )}
+            </Button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Payroll Summary Detail Modal (existing code remains the same)
 const PayrollSummaryDetailModal = ({ isOpen, summary, onClose, onUpdate }) => {
+  // ... existing implementation stays the same
   const [loading, setLoading] = useState(false);
   const [editing, setEditing] = useState(false);
   const [formData, setFormData] = useState({});
@@ -456,6 +848,9 @@ const PayrollSummaries = ({ auth }) => {
   const [selectedSummary, setSelectedSummary] = useState(null);
   const [showDetailModal, setShowDetailModal] = useState(false);
 
+  // Final Payroll Generation modal state
+  const [showFinalPayrollModal, setShowFinalPayrollModal] = useState(false);
+
   // Load payroll summaries
   const loadSummaries = async () => {
     setLoading(true);
@@ -513,6 +908,20 @@ const PayrollSummaries = ({ auth }) => {
     setShowDetailModal(false);
   };
 
+  // Handle final payroll generation
+  const handleFinalPayrollGeneration = (result) => {
+    setSuccess(`Successfully generated ${result.generated} final payroll records. ${result.skipped} records were skipped.`);
+    setTimeout(() => setSuccess(''), 5000);
+    
+    // Optionally redirect to final payroll page
+    if (result.generated > 0) {
+      const confirmRedirect = confirm('Final payroll generation completed. Would you like to view the final payroll page?');
+      if (confirmRedirect) {
+        window.location.href = '/final-payroll';
+      }
+    }
+  };
+
   // Format currency
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-PH', {
@@ -556,6 +965,14 @@ const PayrollSummaries = ({ auth }) => {
               </div>
               
               <div className="flex items-center space-x-2">
+                <Button
+                  onClick={() => setShowFinalPayrollModal(true)}
+                  size="sm"
+                  className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white shadow-lg"
+                >
+                  <Zap className="h-4 w-4 mr-1" />
+                  FINAL PAYROLL
+                </Button>
                 <Button
                   onClick={loadSummaries}
                   size="sm"
@@ -670,7 +1087,7 @@ const PayrollSummaries = ({ auth }) => {
                       <option value="draft">Draft</option>
                       <option value="posted">Posted</option>
                       <option value="locked">Locked</option>
-                      </select>
+                    </select>
                   </div>
                 </div>
               </CardContent>
@@ -895,6 +1312,11 @@ const PayrollSummaries = ({ auth }) => {
                                   </button>
                                 </>
                               )}
+                              {summary.status === 'posted' && (
+                                <span className="inline-flex items-center px-1 py-0.5 rounded text-xs bg-blue-100 text-blue-800" title="Ready for Final Payroll">
+                                  <ChevronRight className="h-3 w-3" />
+                                </span>
+                              )}
                             </div>
                           </td>
                         </tr>
@@ -1011,6 +1433,14 @@ const PayrollSummaries = ({ auth }) => {
           setSelectedSummary(null);
         }}
         onUpdate={handleSummaryUpdate}
+      />
+
+      {/* Final Payroll Generation Modal */}
+      <FinalPayrollGenerationModal
+        isOpen={showFinalPayrollModal}
+        onClose={() => setShowFinalPayrollModal(false)}
+        filters={{ year, month, periodType, department }}
+        onGenerate={handleFinalPayrollGeneration}
       />
     </AuthenticatedLayout>
   );

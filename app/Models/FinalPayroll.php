@@ -400,10 +400,237 @@ class FinalPayroll extends Model
     }
 
     /**
-     * Calculate all payroll components.
-     */
-    public function calculatePayroll()
-    {
+ * Enhanced generation from payroll summary with better error handling and flexibility
+ */
+public static function generateFromPayrollSummary($payrollSummaryId, $userId = null, $options = [])
+{
+    try {
+        $summary = PayrollSummary::with(['employee'])->findOrFail($payrollSummaryId);
+        $employee = $summary->employee;
+        
+        // Check if final payroll already exists
+        $existing = self::where('employee_id', $summary->employee_id)
+            ->where('year', $summary->year)
+            ->where('month', $summary->month)
+            ->where('period_type', $summary->period_type)
+            ->first();
+            
+        if ($existing && !($options['force_regenerate'] ?? false)) {
+            throw new \Exception('Final payroll already exists for this employee and period.');
+        }
+        
+        // If force regenerate and existing payroll is not editable, throw error
+        if ($existing && ($options['force_regenerate'] ?? false)) {
+            if ($existing->status !== 'draft') {
+                throw new \Exception('Cannot regenerate finalized payroll.');
+            }
+            $existing->delete();
+        }
+        
+        // Get corresponding benefit and deduction records
+        $benefit = null;
+        $deduction = null;
+        
+        if ($options['include_benefits'] ?? true) {
+            $benefit = Benefit::where('employee_id', $summary->employee_id)
+                ->where('cutoff', $summary->period_type === '1st_half' ? '1st' : '2nd')
+                ->whereYear('date', $summary->year)
+                ->whereMonth('date', $summary->month)
+                ->where('is_posted', true)
+                ->latest('date_posted')
+                ->first();
+        }
+        
+        if ($options['include_deductions'] ?? true) {
+            $deduction = Deduction::where('employee_id', $summary->employee_id)
+                ->where('cutoff', $summary->period_type === '1st_half' ? '1st' : '2nd')
+                ->whereYear('date', $summary->year)
+                ->whereMonth('date', $summary->month)
+                ->where('is_posted', true)
+                ->latest('date_posted')
+                ->first();
+        }
+        
+        // Create final payroll with enhanced data mapping
+        $finalPayrollData = [
+            'employee_id' => $summary->employee_id,
+            'employee_no' => $summary->employee_no,
+            'employee_name' => $summary->employee_name,
+            'cost_center' => $summary->cost_center,
+            'department' => $summary->department,
+            'line' => $summary->line,
+            'job_title' => $employee->Jobtitle,
+            'rank_file' => $employee->RankFile,
+            'period_start' => $summary->period_start,
+            'period_end' => $summary->period_end,
+            'period_type' => $summary->period_type,
+            'year' => $summary->year,
+            'month' => $summary->month,
+            'pay_type' => $employee->pay_type ?: 'daily',
+            'basic_rate' => $employee->payrate ?: 0,
+            'pay_allowance' => $employee->pay_allowance ?: 0,
+            'is_taxable' => $employee->Taxable ?? true,
+            
+            // From payroll summary - attendance data
+            'days_worked' => $summary->days_worked ?? 0,
+            'hours_worked' => ($summary->days_worked ?? 0) * 8, // Assuming 8 hours per day
+            'late_under_minutes' => $summary->late_under_minutes ?? 0,
+            'late_under_hours' => ($summary->late_under_minutes ?? 0) / 60,
+            'ot_regular_hours' => $summary->ot_hours ?? 0,
+            'nsd_hours' => $summary->nsd_hours ?? 0,
+            'holiday_hours' => $summary->holiday_hours ?? 0,
+            'ot_regular_holiday_hours' => $summary->ot_reg_holiday_hours ?? 0,
+            'ot_special_holiday_hours' => $summary->ot_special_holiday_hours ?? 0,
+            'travel_order_hours' => $summary->travel_order_hours ?? 0,
+            'slvl_days' => $summary->slvl_days ?? 0,
+            'retro_amount' => $summary->retro ?? 0,
+            'offset_hours' => $summary->offset_hours ?? 0,
+            'trip_count' => $summary->trip_count ?? 0,
+            'has_ct' => $summary->has_ct ?? false,
+            'has_cs' => $summary->has_cs ?? false,
+            'has_ob' => $summary->has_ob ?? false,
+            
+            // From benefits (if included and available)
+            'mf_shares' => $benefit ? ($benefit->mf_shares ?? 0) : 0,
+            'allowances' => $benefit ? ($benefit->allowances ?? 0) : 0,
+            
+            // From deductions (if included and available)
+            'mf_loan' => $benefit ? ($benefit->mf_loan ?? 0) : 0,
+            'sss_loan' => $benefit ? ($benefit->sss_loan ?? 0) : 0,
+            'hdmf_loan' => $benefit ? ($benefit->hmdf_loan ?? 0) : 0,
+            'advance_deduction' => $deduction ? ($deduction->advance ?? 0) : 0,
+            'charge_store' => $deduction ? ($deduction->charge_store ?? 0) : 0,
+            'charge_deduction' => $deduction ? ($deduction->charge ?? 0) : 0,
+            'meals_deduction' => $deduction ? ($deduction->meals ?? 0) : 0,
+            'miscellaneous_deduction' => $deduction ? ($deduction->miscellaneous ?? 0) : 0,
+            'other_deductions' => $deduction ? ($deduction->other_deductions ?? 0) : 0,
+            
+            // References
+            'payroll_summary_id' => $summary->id,
+            'benefit_id' => $benefit?->id,
+            'deduction_id' => $deduction?->id,
+            'created_by' => $userId ?? auth()->id(),
+            'status' => 'draft',
+            'approval_status' => ($options['auto_approve'] ?? false) ? 'approved' : 'pending',
+            'has_adjustments' => false
+        ];
+        
+        $finalPayroll = self::create($finalPayrollData);
+        
+        // Calculate all payroll components
+        $finalPayroll->calculatePayroll();
+        
+        // Auto-approve if requested and user has permission
+        if ($options['auto_approve'] ?? false) {
+            $finalPayroll->markAsApproved($userId ?? auth()->id(), 'Auto-approved during generation');
+        }
+        
+        // Log the generation
+        \Log::info('Final payroll generated from summary', [
+            'final_payroll_id' => $finalPayroll->id,
+            'payroll_summary_id' => $summary->id,
+            'employee_id' => $summary->employee_id,
+            'employee_name' => $summary->employee_name,
+            'period' => $summary->year . '-' . $summary->month . '-' . $summary->period_type,
+            'net_pay' => $finalPayroll->net_pay,
+            'generated_by' => $userId ?? auth()->id()
+        ]);
+        
+        return $finalPayroll;
+        
+    } catch (\Exception $e) {
+        \Log::error('Error generating final payroll from summary: ' . $e->getMessage(), [
+            'payroll_summary_id' => $payrollSummaryId,
+            'user_id' => $userId,
+            'options' => $options,
+            'trace' => $e->getTraceAsString()
+        ]);
+        throw $e;
+    }
+}
+
+/**
+ * Enhanced bulk generation method
+ */
+public static function bulkGenerateFromSummaries(array $summaryIds, $userId = null, $options = [])
+{
+    $results = [
+        'generated' => 0,
+        'skipped' => 0,
+        'errors' => []
+    ];
+    
+    DB::beginTransaction();
+    
+    try {
+        foreach ($summaryIds as $summaryId) {
+            try {
+                $finalPayroll = self::generateFromPayrollSummary($summaryId, $userId, $options);
+                $results['generated']++;
+            } catch (\Exception $e) {
+                if (str_contains($e->getMessage(), 'already exists')) {
+                    $results['skipped']++;
+                } else {
+                    $results['errors'][] = "Summary ID {$summaryId}: " . $e->getMessage();
+                }
+            }
+        }
+        
+        DB::commit();
+        
+        \Log::info('Bulk final payroll generation completed', [
+            'results' => $results,
+            'total_processed' => count($summaryIds),
+            'user_id' => $userId
+        ]);
+        
+        return $results;
+        
+    } catch (\Exception $e) {
+        DB::rollBack();
+        \Log::error('Bulk final payroll generation failed: ' . $e->getMessage());
+        throw $e;
+    }
+}
+
+/**
+ * Check if payroll summary has corresponding final payroll
+ */
+public static function existsForSummary($summaryId)
+{
+    $summary = PayrollSummary::findOrFail($summaryId);
+    
+    return self::where('employee_id', $summary->employee_id)
+        ->where('year', $summary->year)
+        ->where('month', $summary->month)
+        ->where('period_type', $summary->period_type)
+        ->exists();
+}
+
+/**
+ * Get final payroll by summary
+ */
+public static function getBySummary($summaryId)
+{
+    $summary = PayrollSummary::findOrFail($summaryId);
+    
+    return self::where('employee_id', $summary->employee_id)
+        ->where('year', $summary->year)
+        ->where('month', $summary->month)
+        ->where('period_type', $summary->period_type)
+        ->with(['employee', 'creator', 'approver', 'finalizer', 'paidBy'])
+        ->first();
+}
+
+/**
+ * Enhanced calculation method with better breakdown tracking
+ */
+public function calculatePayroll()
+{
+    try {
+        // Store original values for comparison
+        $originalNetPay = $this->net_pay;
+        
         // Calculate basic pay based on pay type
         $this->calculateBasicPay();
         
@@ -422,9 +649,97 @@ class FinalPayroll extends Model
         // Calculate totals
         $this->calculateTotals();
         
+        // Generate calculation breakdown
+        $this->generateCalculationBreakdown();
+        
+        // Mark as having adjustments if values changed significantly
+        if ($originalNetPay > 0 && abs($this->net_pay - $originalNetPay) > 0.01) {
+            $this->has_adjustments = true;
+        }
+        
         // Save calculations
         $this->save();
+        
+        \Log::info('Payroll calculation completed', [
+            'final_payroll_id' => $this->id,
+            'employee_name' => $this->employee_name,
+            'net_pay' => $this->net_pay,
+            'gross_earnings' => $this->gross_earnings,
+            'total_deductions' => $this->total_deductions
+        ]);
+        
+    } catch (\Exception $e) {
+        \Log::error('Error calculating payroll: ' . $e->getMessage(), [
+            'final_payroll_id' => $this->id,
+            'employee_id' => $this->employee_id
+        ]);
+        throw $e;
     }
+}
+
+/**
+ * Enhanced validation before generation
+ */
+public static function validateSummaryForGeneration($summaryId)
+{
+    $summary = PayrollSummary::with(['employee'])->findOrFail($summaryId);
+    
+    $errors = [];
+    
+    // Check if summary is posted
+    if ($summary->status !== 'posted') {
+        $errors[] = 'Payroll summary must be posted before generating final payroll';
+    }
+    
+    // Check if employee exists and is active
+    if (!$summary->employee || $summary->employee->JobStatus !== 'Active') {
+        $errors[] = 'Employee must be active to generate final payroll';
+    }
+    
+    // Check if employee has basic rate
+    if (!$summary->employee->payrate || $summary->employee->payrate <= 0) {
+        $errors[] = 'Employee must have a valid basic rate';
+    }
+    
+    // Check for negative critical values
+    if ($summary->days_worked < 0) {
+        $errors[] = 'Days worked cannot be negative';
+    }
+    
+    return [
+        'valid' => empty($errors),
+        'errors' => $errors,
+        'summary' => $summary
+    ];
+}
+
+/**
+ * Get generation statistics for a period
+ */
+public static function getGenerationStats($year, $month, $periodType = null)
+{
+    $summariesQuery = PayrollSummary::where('year', $year)
+        ->where('month', $month)
+        ->where('status', 'posted');
+        
+    $finalPayrollsQuery = self::where('year', $year)
+        ->where('month', $month);
+        
+    if ($periodType) {
+        $summariesQuery->where('period_type', $periodType);
+        $finalPayrollsQuery->where('period_type', $periodType);
+    }
+    
+    $totalSummaries = $summariesQuery->count();
+    $generatedPayrolls = $finalPayrollsQuery->count();
+    
+    return [
+        'total_summaries' => $totalSummaries,
+        'generated_payrolls' => $generatedPayrolls,
+        'pending_generation' => $totalSummaries - $generatedPayrolls,
+        'generation_percentage' => $totalSummaries > 0 ? round(($generatedPayrolls / $totalSummaries) * 100, 2) : 0
+    ];
+}
 
     /**
      * Calculate basic pay.
@@ -615,106 +930,7 @@ class FinalPayroll extends Model
         // Ensure net pay is not negative
         $this->net_pay = max(0, $this->net_pay);
     }
-
-    /**
-     * Generate payroll from payroll summary.
-     */
-    public static function generateFromPayrollSummary($payrollSummaryId, $userId = null)
-    {
-        $summary = PayrollSummary::findOrFail($payrollSummaryId);
-        $employee = $summary->employee;
-        
-        // Check if final payroll already exists
-        $existing = self::where('employee_id', $summary->employee_id)
-            ->where('year', $summary->year)
-            ->where('month', $summary->month)
-            ->where('period_type', $summary->period_type)
-            ->first();
-            
-        if ($existing) {
-            throw new \Exception('Final payroll already exists for this employee and period.');
-        }
-        
-        // Get corresponding benefit and deduction records
-        $benefit = Benefit::where('employee_id', $summary->employee_id)
-            ->where('cutoff', $summary->period_type === '1st_half' ? '1st' : '2nd')
-            ->whereYear('date', $summary->year)
-            ->whereMonth('date', $summary->month)
-            ->first();
-            
-        $deduction = Deduction::where('employee_id', $summary->employee_id)
-            ->where('cutoff', $summary->period_type === '1st_half' ? '1st' : '2nd')
-            ->whereYear('date', $summary->year)
-            ->whereMonth('date', $summary->month)
-            ->first();
-        
-        // Create final payroll
-        $finalPayroll = new self([
-            'employee_id' => $summary->employee_id,
-            'employee_no' => $summary->employee_no,
-            'employee_name' => $summary->employee_name,
-            'cost_center' => $summary->cost_center,
-            'department' => $summary->department,
-            'line' => $summary->line,
-            'job_title' => $employee->Jobtitle,
-            'rank_file' => $employee->RankFile,
-            'period_start' => $summary->period_start,
-            'period_end' => $summary->period_end,
-            'period_type' => $summary->period_type,
-            'year' => $summary->year,
-            'month' => $summary->month,
-            'pay_type' => $employee->pay_type ?: 'daily',
-            'basic_rate' => $employee->payrate ?: 0,
-            'pay_allowance' => $employee->pay_allowance ?: 0,
-            'is_taxable' => $employee->Taxable,
-            
-            // From payroll summary
-            'days_worked' => $summary->days_worked,
-            'late_under_minutes' => $summary->late_under_minutes,
-            'late_under_hours' => $summary->late_under_minutes / 60,
-            'ot_regular_hours' => $summary->ot_hours,
-            'nsd_hours' => $summary->nsd_hours,
-            'holiday_hours' => $summary->holiday_hours,
-            'ot_regular_holiday_hours' => $summary->ot_reg_holiday_hours,
-            'ot_special_holiday_hours' => $summary->ot_special_holiday_hours,
-            'travel_order_hours' => $summary->travel_order_hours,
-            'slvl_days' => $summary->slvl_days,
-            'retro_amount' => $summary->retro,
-            'offset_hours' => $summary->offset_hours,
-            'trip_count' => $summary->trip_count,
-            'has_ct' => $summary->has_ct,
-            'has_cs' => $summary->has_cs,
-            'has_ob' => $summary->has_ob,
-            
-            // From benefits
-            'mf_shares' => $benefit->mf_shares ?? 0,
-            'allowances' => $benefit->allowances ?? 0,
-            
-            // From deductions
-            'mf_loan' => $deduction->advance ?? 0,
-            'advance_deduction' => $deduction->advance ?? 0,
-            'charge_store' => $deduction->charge_store ?? 0,
-            'charge_deduction' => $deduction->charge ?? 0,
-            'meals_deduction' => $deduction->meals ?? 0,
-            'miscellaneous_deduction' => $deduction->miscellaneous ?? 0,
-            'other_deductions' => $deduction->other_deductions ?? 0,
-            
-            'payroll_summary_id' => $summary->id,
-            'benefit_id' => $benefit->id ?? null,
-            'deduction_id' => $deduction->id ?? null,
-            'created_by' => $userId ?? auth()->id(),
-            'status' => 'draft',
-            'approval_status' => 'pending'
-        ]);
-        
-        $finalPayroll->save();
-        
-        // Calculate all payroll components
-        $finalPayroll->calculatePayroll();
-        
-        return $finalPayroll;
-    }
-
+    
     /**
      * Get payroll statistics for a period.
      */

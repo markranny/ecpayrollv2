@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\PayrollSummary;
+use App\Models\FinalPayroll;
 use App\Models\ProcessedAttendance;
 use App\Models\Employee;
 use App\Models\Department;
@@ -28,255 +29,622 @@ class PayrollSummariesController extends Controller
     }
 
     /**
- * Update the list method to include calculated totals
- */
-public function list(Request $request)
-{
-    try {
-        $validator = Validator::make($request->all(), [
-            'year' => 'nullable|integer|min:2020|max:2030',
-            'month' => 'nullable|integer|min:1|max:12',
-            'period_type' => 'nullable|in:1st_half,2nd_half',
-            'department' => 'nullable|string|max:255',
-            'status' => 'nullable|in:draft,posted,locked',
-            'search' => 'nullable|string|max:255',
-            'page' => 'nullable|integer|min:1',
-            'per_page' => 'nullable|integer|min:1|max:100'
-        ]);
+     * Get available payroll summaries for final payroll generation
+     */
+    public function getAvailableForFinalPayroll(Request $request)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'year' => 'required|integer|min:2020|max:2030',
+                'month' => 'required|integer|min:1|max:12',
+                'period_type' => 'nullable|in:1st_half,2nd_half',
+                'department' => 'nullable|string|max:255',
+                'force_regenerate' => 'boolean'
+            ]);
 
-        if ($validator->fails()) {
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $year = $request->input('year');
+            $month = $request->input('month');
+            $periodType = $request->input('period_type');
+            $department = $request->input('department');
+            $forceRegenerate = $request->boolean('force_regenerate', false);
+
+            // Base query for posted payroll summaries
+            $query = PayrollSummary::query()
+                ->where('year', $year)
+                ->where('month', $month)
+                ->where('status', 'posted'); // Only posted summaries
+
+            // Apply filters
+            if ($periodType) {
+                $query->where('period_type', $periodType);
+            }
+
+            if ($department) {
+                $query->where('department', $department);
+            }
+
+            // If not force regenerate, exclude summaries that already have final payrolls
+            if (!$forceRegenerate) {
+                $query->whereNotExists(function ($subQuery) use ($year, $month, $periodType) {
+                    $subQuery->select(DB::raw(1))
+                        ->from('final_payrolls')
+                        ->whereColumn('final_payrolls.employee_id', 'payroll_summaries.employee_id')
+                        ->where('final_payrolls.year', $year)
+                        ->where('final_payrolls.month', $month);
+                    
+                    if ($periodType) {
+                        $subQuery->where('final_payrolls.period_type', $periodType);
+                    }
+                });
+            }
+
+            $summaries = $query->orderBy('department')
+                ->orderBy('employee_name')
+                ->get();
+
+            // Calculate totals for each summary
+            $summaries = $summaries->map(function ($summary) {
+                $totalDeductions = ($summary->advance ?? 0) + 
+                    ($summary->charge_store ?? 0) + 
+                    ($summary->charge ?? 0) + 
+                    ($summary->meals ?? 0) + 
+                    ($summary->miscellaneous ?? 0) + 
+                    ($summary->other_deductions ?? 0) + 
+                    ($summary->mf_loan ?? 0) + 
+                    ($summary->sss_loan ?? 0) + 
+                    ($summary->hmdf_loan ?? 0) + 
+                    ($summary->hmdf_prem ?? 0) + 
+                    ($summary->sss_prem ?? 0) + 
+                    ($summary->philhealth ?? 0);
+
+                $totalBenefits = ($summary->mf_shares ?? 0) + ($summary->allowances ?? 0);
+
+                $summary->total_deductions = $totalDeductions;
+                $summary->total_benefits = $totalBenefits;
+                $summary->full_period = $this->getFullPeriodLabel($summary->year, $summary->month, $summary->period_type);
+
+                return $summary;
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $summaries,
+                'count' => $summaries->count(),
+                'message' => $summaries->count() > 0 
+                    ? "Found {$summaries->count()} available summaries for final payroll generation"
+                    : 'No available summaries found for final payroll generation'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error getting available summaries for final payroll: ' . $e->getMessage(), [
+                'request_data' => $request->all(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Validation failed',
-                'errors' => $validator->errors()
-            ], 422);
+                'message' => 'Failed to get available summaries: ' . $e->getMessage()
+            ], 500);
         }
+    }
 
-        $year = $request->input('year', now()->year);
-        $month = $request->input('month', now()->month);
-        $periodType = $request->input('period_type');
-        $department = $request->input('department');
-        $status = $request->input('status');
-        $search = $request->input('search');
-        $page = $request->input('page', 1);
-        $perPage = $request->input('per_page', 25);
+    /**
+     * Generate final payrolls from selected payroll summaries
+     */
+    public function generateFinalPayrollsFromSummaries(Request $request)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'summary_ids' => 'required|array|min:1',
+                'summary_ids.*' => 'integer|exists:payroll_summaries,id',
+                'year' => 'required|integer|min:2020|max:2030',
+                'month' => 'required|integer|min:1|max:12',
+                'period_type' => 'nullable|in:1st_half,2nd_half',
+                'department' => 'nullable|string',
+                'include_benefits' => 'boolean',
+                'include_deductions' => 'boolean',
+                'force_regenerate' => 'boolean',
+                'auto_approve' => 'boolean'
+            ]);
 
-        // Build the query
-        $query = PayrollSummary::query()
-            ->with(['employee:id,idno,Fname,Lname,Department,Line,CostCenter', 'postedBy:id,name'])
-            ->where('year', $year)
-            ->where('month', $month);
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
 
-        // Apply filters
-        if ($periodType) {
-            $query->where('period_type', $periodType);
+            $summaryIds = $request->input('summary_ids');
+            $includeBenefits = $request->boolean('include_benefits', true);
+            $includeDeductions = $request->boolean('include_deductions', true);
+            $forceRegenerate = $request->boolean('force_regenerate', false);
+            $autoApprove = $request->boolean('auto_approve', false);
+
+            DB::beginTransaction();
+
+            try {
+                $generated = 0;
+                $skipped = 0;
+                $errors = [];
+
+                foreach ($summaryIds as $summaryId) {
+                    try {
+                        $summary = PayrollSummary::findOrFail($summaryId);
+
+                        // Check if final payroll already exists
+                        $existingFinalPayroll = FinalPayroll::where('employee_id', $summary->employee_id)
+                            ->where('year', $summary->year)
+                            ->where('month', $summary->month)
+                            ->where('period_type', $summary->period_type)
+                            ->first();
+
+                        if ($existingFinalPayroll && !$forceRegenerate) {
+                            $skipped++;
+                            continue;
+                        }
+
+                        // If force regenerate and exists, delete the existing one first
+                        if ($existingFinalPayroll && $forceRegenerate) {
+                            // Only allow deletion if it's still in draft status
+                            if ($existingFinalPayroll->status === 'draft') {
+                                $existingFinalPayroll->delete();
+                            } else {
+                                $errors[] = "Cannot regenerate finalized payroll for {$summary->employee_name}";
+                                continue;
+                            }
+                        }
+
+                        // Generate final payroll from summary
+                        $finalPayroll = $this->createFinalPayrollFromSummary(
+                            $summary, 
+                            $includeBenefits, 
+                            $includeDeductions,
+                            $autoApprove
+                        );
+
+                        if ($finalPayroll) {
+                            $generated++;
+                        }
+
+                    } catch (\Exception $e) {
+                        $errors[] = "Error generating payroll for summary ID {$summaryId}: " . $e->getMessage();
+                        Log::error("Error generating final payroll for summary {$summaryId}: " . $e->getMessage());
+                    }
+                }
+
+                DB::commit();
+
+                $message = "Successfully generated {$generated} final payroll records";
+                if ($skipped > 0) {
+                    $message .= ", skipped {$skipped} existing records";
+                }
+                if (!empty($errors)) {
+                    $message .= ", " . count($errors) . " errors occurred";
+                }
+
+                Log::info('Final payroll generation completed', [
+                    'generated_count' => $generated,
+                    'skipped_count' => $skipped,
+                    'error_count' => count($errors),
+                    'initiated_by' => auth()->id()
+                ]);
+
+                return response()->json([
+                    'success' => true,
+                    'message' => $message,
+                    'data' => [
+                        'generated' => $generated,
+                        'skipped' => $skipped,
+                        'errors' => array_slice($errors, 0, 10) // Limit errors shown
+                    ]
+                ]);
+
+            } catch (\Exception $e) {
+                DB::rollBack();
+                throw $e;
+            }
+
+        } catch (\Exception $e) {
+            Log::error('Error in final payroll generation: ' . $e->getMessage(), [
+                'request_data' => $request->all(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Final payroll generation failed: ' . $e->getMessage()
+            ], 500);
         }
+    }
 
-        if ($department) {
-            $query->where('department', $department);
-        }
+    /**
+     * Create final payroll from payroll summary
+     */
+    private function createFinalPayrollFromSummary(
+        PayrollSummary $summary, 
+        bool $includeBenefits = true, 
+        bool $includeDeductions = true,
+        bool $autoApprove = false
+    ) {
+        try {
+            // Get employee information
+            $employee = Employee::findOrFail($summary->employee_id);
 
-        if ($status) {
-            $query->where('status', $status);
-        }
+            // Get corresponding benefit record if needed
+            $benefit = null;
+            if ($includeBenefits) {
+                $cutoff = $summary->period_type === '1st_half' ? '1st' : '2nd';
+                $benefit = Benefit::where('employee_id', $summary->employee_id)
+                    ->where('cutoff', $cutoff)
+                    ->whereYear('date', $summary->year)
+                    ->whereMonth('date', $summary->month)
+                    ->where('is_posted', true)
+                    ->latest('date_posted')
+                    ->first();
+            }
 
-        // Apply search filter
-        if ($search) {
-            $query->where(function ($q) use ($search) {
-                $q->where('employee_name', 'LIKE', "%{$search}%")
-                  ->orWhere('employee_no', 'LIKE', "%{$search}%")
-                  ->orWhere('department', 'LIKE', "%{$search}%")
-                  ->orWhere('line', 'LIKE', "%{$search}%")
-                  ->orWhere('cost_center', 'LIKE', "%{$search}%");
-            });
-        }
+            // Get corresponding deduction record if needed
+            $deduction = null;
+            if ($includeDeductions) {
+                $cutoff = $summary->period_type === '1st_half' ? '1st' : '2nd';
+                $deduction = Deduction::where('employee_id', $summary->employee_id)
+                    ->where('cutoff', $cutoff)
+                    ->whereYear('date', $summary->year)
+                    ->whereMonth('date', $summary->month)
+                    ->where('is_posted', true)
+                    ->latest('date_posted')
+                    ->first();
+            }
 
-        // Get total count for statistics
-        $totalQuery = clone $query;
-        $totalCount = $totalQuery->count();
-
-        // Apply pagination
-        $summaries = $query->orderBy('employee_name', 'asc')
-            ->paginate($perPage, ['*'], 'page', $page);
-
-        // Calculate comprehensive statistics
-        $statisticsQuery = PayrollSummary::query()
-            ->where('year', $year)
-            ->where('month', $month);
-            
-        if ($periodType) {
-            $statisticsQuery->where('period_type', $periodType);
-        }
-        if ($department) {
-            $statisticsQuery->where('department', $department);
-        }
-        if ($status) {
-            $statisticsQuery->where('status', $status);
-        }
-        if ($search) {
-            $statisticsQuery->where(function ($q) use ($search) {
-                $q->where('employee_name', 'LIKE', "%{$search}%")
-                  ->orWhere('employee_no', 'LIKE', "%{$search}%")
-                  ->orWhere('department', 'LIKE', "%{$search}%")
-                  ->orWhere('line', 'LIKE', "%{$search}%")
-                  ->orWhere('cost_center', 'LIKE', "%{$search}%");
-            });
-        }
-
-        $statistics = $statisticsQuery->selectRaw('
-            COUNT(*) as total_summaries,
-            SUM(days_worked) as total_days_worked,
-            SUM(ot_hours) as total_ot_hours,
-            SUM(late_under_minutes) as total_late_under_minutes,
-            SUM(nsd_hours) as total_nsd_hours,
-            SUM(slvl_days) as total_slvl_days,
-            SUM(retro) as total_retro,
-            SUM(travel_order_hours) as total_travel_order_hours,
-            SUM(holiday_hours) as total_holiday_hours,
-            SUM(trip_count) as total_trip_count,
-            SUM(advance + charge_store + charge + meals + miscellaneous + other_deductions + mf_loan + sss_loan + hmdf_loan + hmdf_prem + sss_prem + philhealth) as total_deductions,
-            SUM(mf_shares + allowances) as total_benefits,
-            AVG(days_worked) as avg_days_worked,
-            AVG(ot_hours) as avg_ot_hours
-        ')->first();
-
-        // Get departments for filter
-        $departments = PayrollSummary::where('year', $year)
-            ->where('month', $month)
-            ->whereNotNull('department')
-            ->distinct()
-            ->pluck('department')
-            ->sort()
-            ->values();
-
-        // Transform summaries data with calculated totals
-        $transformedSummaries = $summaries->getCollection()->map(function ($summary) {
-            // Calculate total deductions
-            $totalDeductions = ($summary->advance ?? 0) + 
-                ($summary->charge_store ?? 0) + 
-                ($summary->charge ?? 0) + 
-                ($summary->meals ?? 0) + 
-                ($summary->miscellaneous ?? 0) + 
-                ($summary->other_deductions ?? 0) + 
-                ($summary->mf_loan ?? 0) + 
-                ($summary->sss_loan ?? 0) + 
-                ($summary->hmdf_loan ?? 0) + 
-                ($summary->hmdf_prem ?? 0) + 
-                ($summary->sss_prem ?? 0) + 
-                ($summary->philhealth ?? 0);
-
-            // Calculate total benefits
-            $totalBenefits = ($summary->mf_shares ?? 0) + ($summary->allowances ?? 0);
-
-            return [
-                'id' => $summary->id,
+            // Create final payroll record
+            $finalPayrollData = [
                 'employee_id' => $summary->employee_id,
                 'employee_no' => $summary->employee_no,
                 'employee_name' => $summary->employee_name,
                 'cost_center' => $summary->cost_center,
                 'department' => $summary->department,
                 'line' => $summary->line,
+                'job_title' => $employee->Jobtitle,
+                'rank_file' => $employee->RankFile,
                 'period_start' => $summary->period_start,
                 'period_end' => $summary->period_end,
                 'period_type' => $summary->period_type,
                 'year' => $summary->year,
                 'month' => $summary->month,
-                'days_worked' => (float) $summary->days_worked,
-                'ot_hours' => (float) $summary->ot_hours,
-                'off_days' => (float) $summary->off_days,
-                'late_under_minutes' => (float) $summary->late_under_minutes,
-                'nsd_hours' => (float) $summary->nsd_hours,
-                'slvl_days' => (float) $summary->slvl_days,
-                'retro' => (float) $summary->retro,
-                'travel_order_hours' => (float) $summary->travel_order_hours,
-                'holiday_hours' => (float) $summary->holiday_hours,
-                'ot_reg_holiday_hours' => (float) $summary->ot_reg_holiday_hours,
-                'ot_special_holiday_hours' => (float) $summary->ot_special_holiday_hours,
-                'offset_hours' => (float) $summary->offset_hours,
-                'trip_count' => (float) $summary->trip_count,
-                'has_ct' => (bool) $summary->has_ct,
-                'has_cs' => (bool) $summary->has_cs,
-                'has_ob' => (bool) $summary->has_ob,
-                // Deduction fields
-                'advance' => (float) $summary->advance,
-                'charge_store' => (float) $summary->charge_store,
-                'charge' => (float) $summary->charge,
-                'meals' => (float) $summary->meals,
-                'miscellaneous' => (float) $summary->miscellaneous,
-                'other_deductions' => (float) $summary->other_deductions,
-                // Benefit fields
-                'mf_shares' => (float) $summary->mf_shares,
-                'mf_loan' => (float) $summary->mf_loan,
-                'sss_loan' => (float) $summary->sss_loan,
-                'hmdf_loan' => (float) $summary->hmdf_loan,
-                'hmdf_prem' => (float) $summary->hmdf_prem,
-                'sss_prem' => (float) $summary->sss_prem,
-                'philhealth' => (float) $summary->philhealth,
-                'allowances' => (float) $summary->allowances,
-                // Status and metadata
-                'status' => $summary->status,
-                'posted_by' => $summary->postedBy,
-                'posted_at' => $summary->posted_at,
-                'notes' => $summary->notes,
-                'created_at' => $summary->created_at,
-                'updated_at' => $summary->updated_at,
-                // Calculated fields
-                'full_period' => $this->getFullPeriodLabel($summary->year, $summary->month, $summary->period_type),
-                'total_deductions' => $totalDeductions,
-                'total_benefits' => $totalBenefits,
+                'pay_type' => $employee->pay_type ?: 'daily',
+                'basic_rate' => $employee->payrate ?: 0,
+                'pay_allowance' => $employee->pay_allowance ?: 0,
+                'is_taxable' => $employee->Taxable ?? true,
+
+                // From payroll summary - attendance data
+                'days_worked' => $summary->days_worked,
+                'late_under_minutes' => $summary->late_under_minutes,
+                'late_under_hours' => $summary->late_under_minutes / 60,
+                'ot_regular_hours' => $summary->ot_hours,
+                'nsd_hours' => $summary->nsd_hours,
+                'holiday_hours' => $summary->holiday_hours,
+                'ot_regular_holiday_hours' => $summary->ot_reg_holiday_hours ?? 0,
+                'ot_special_holiday_hours' => $summary->ot_special_holiday_hours ?? 0,
+                'travel_order_hours' => $summary->travel_order_hours,
+                'slvl_days' => $summary->slvl_days,
+                'retro_amount' => $summary->retro,
+                'offset_hours' => $summary->offset_hours,
+                'trip_count' => $summary->trip_count,
+                'has_ct' => $summary->has_ct,
+                'has_cs' => $summary->has_cs,
+                'has_ob' => $summary->has_ob,
+
+                // From benefits (if included and available)
+                'mf_shares' => $benefit ? ($benefit->mf_shares ?? 0) : 0,
+                'allowances' => $benefit ? ($benefit->allowances ?? 0) : 0,
+
+                // From deductions (if included and available)
+                'advance_deduction' => $deduction ? ($deduction->advance ?? 0) : 0,
+                'charge_store' => $deduction ? ($deduction->charge_store ?? 0) : 0,
+                'charge_deduction' => $deduction ? ($deduction->charge ?? 0) : 0,
+                'meals_deduction' => $deduction ? ($deduction->meals ?? 0) : 0,
+                'miscellaneous_deduction' => $deduction ? ($deduction->miscellaneous ?? 0) : 0,
+                'other_deductions' => $deduction ? ($deduction->other_deductions ?? 0) : 0,
+                'mf_loan' => $deduction ? ($deduction->mf_loan ?? 0) : 0,
+
+                // References
+                'payroll_summary_id' => $summary->id,
+                'benefit_id' => $benefit ? $benefit->id : null,
+                'deduction_id' => $deduction ? $deduction->id : null,
+                'created_by' => auth()->id(),
+                'status' => 'draft',
+                'approval_status' => $autoApprove ? 'approved' : 'pending'
             ];
-        });
 
-        return response()->json([
-            'success' => true,
-            'data' => $transformedSummaries,
-            'pagination' => [
-                'current_page' => $summaries->currentPage(),
-                'last_page' => $summaries->lastPage(),
-                'per_page' => $summaries->perPage(),
-                'total' => $summaries->total(),
-                'from' => $summaries->firstItem(),
-                'to' => $summaries->lastItem(),
-            ],
-            'statistics' => [
-                'total_summaries' => $statistics->total_summaries ?: 0,
-                'total_days_worked' => (float) ($statistics->total_days_worked ?: 0),
-                'total_ot_hours' => (float) ($statistics->total_ot_hours ?: 0),
-                'total_late_under_minutes' => (float) ($statistics->total_late_under_minutes ?: 0),
-                'total_nsd_hours' => (float) ($statistics->total_nsd_hours ?: 0),
-                'total_slvl_days' => (float) ($statistics->total_slvl_days ?: 0),
-                'total_retro' => (float) ($statistics->total_retro ?: 0),
-                'total_travel_order_hours' => (float) ($statistics->total_travel_order_hours ?: 0),
-                'total_holiday_hours' => (float) ($statistics->total_holiday_hours ?: 0),
-                'total_trip_count' => (float) ($statistics->total_trip_count ?: 0),
-                'total_deductions' => (float) ($statistics->total_deductions ?: 0),
-                'total_benefits' => (float) ($statistics->total_benefits ?: 0),
-                'avg_days_worked' => (float) ($statistics->avg_days_worked ?: 0),
-                'avg_ot_hours' => (float) ($statistics->avg_ot_hours ?: 0),
-            ],
-            'departments' => $departments,
-            'filters' => [
-                'year' => $year,
-                'month' => $month,
-                'period_type' => $periodType,
-                'department' => $department,
-                'status' => $status,
-                'search' => $search,
-            ]
-        ]);
+            // Create the final payroll
+            $finalPayroll = FinalPayroll::create($finalPayrollData);
 
-    } catch (\Exception $e) {
-        Log::error('Error getting payroll summaries: ' . $e->getMessage(), [
-            'filters' => $request->all(),
-            'trace' => $e->getTraceAsString()
-        ]);
+            // Calculate all payroll components
+            $finalPayroll->calculatePayroll();
 
-        return response()->json([
-            'success' => false,
-            'message' => 'Failed to load payroll summaries: ' . $e->getMessage()
-        ], 500);
+            // If auto-approve is enabled and user has permission
+            if ($autoApprove) {
+                $finalPayroll->markAsApproved(auth()->id(), 'Auto-approved during generation');
+            }
+
+            return $finalPayroll;
+
+        } catch (\Exception $e) {
+            Log::error("Error creating final payroll from summary {$summary->id}: " . $e->getMessage());
+            throw $e;
+        }
     }
-}
+
+    /**
+     * Helper method to get full period label
+     */
+    private function getFullPeriodLabel($year, $month, $periodType)
+    {
+        $monthName = Carbon::create($year, $month, 1)->format('F Y');
+        $periodLabel = $periodType === '1st_half' ? '(1-15)' : '(16-30/31)';
+        
+        return "{$monthName} {$periodLabel}";
+    }
+
+    /**
+ * Update the list method to include calculated totals
+ */
+public function list(Request $request)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'year' => 'nullable|integer|min:2020|max:2030',
+                'month' => 'nullable|integer|min:1|max:12',
+                'period_type' => 'nullable|in:1st_half,2nd_half',
+                'department' => 'nullable|string|max:255',
+                'status' => 'nullable|in:draft,posted,locked',
+                'search' => 'nullable|string|max:255',
+                'page' => 'nullable|integer|min:1',
+                'per_page' => 'nullable|integer|min:1|max:100'
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $year = $request->input('year', now()->year);
+            $month = $request->input('month', now()->month);
+            $periodType = $request->input('period_type');
+            $department = $request->input('department');
+            $status = $request->input('status');
+            $search = $request->input('search');
+            $page = $request->input('page', 1);
+            $perPage = $request->input('per_page', 25);
+
+            // Build the query
+            $query = PayrollSummary::query()
+                ->with(['employee:id,idno,Fname,Lname,Department,Line,CostCenter', 'postedBy:id,name'])
+                ->where('year', $year)
+                ->where('month', $month);
+
+            // Apply filters
+            if ($periodType) {
+                $query->where('period_type', $periodType);
+            }
+
+            if ($department) {
+                $query->where('department', $department);
+            }
+
+            if ($status) {
+                $query->where('status', $status);
+            }
+
+            // Apply search filter
+            if ($search) {
+                $query->where(function ($q) use ($search) {
+                    $q->where('employee_name', 'LIKE', "%{$search}%")
+                      ->orWhere('employee_no', 'LIKE', "%{$search}%")
+                      ->orWhere('department', 'LIKE', "%{$search}%")
+                      ->orWhere('line', 'LIKE', "%{$search}%")
+                      ->orWhere('cost_center', 'LIKE', "%{$search}%");
+                });
+            }
+
+            // Get total count for statistics
+            $totalQuery = clone $query;
+            $totalCount = $totalQuery->count();
+
+            // Apply pagination
+            $summaries = $query->orderBy('employee_name', 'asc')
+                ->paginate($perPage, ['*'], 'page', $page);
+
+            // Calculate comprehensive statistics
+            $statisticsQuery = PayrollSummary::query()
+                ->where('year', $year)
+                ->where('month', $month);
+                
+            if ($periodType) {
+                $statisticsQuery->where('period_type', $periodType);
+            }
+            if ($department) {
+                $statisticsQuery->where('department', $department);
+            }
+            if ($status) {
+                $statisticsQuery->where('status', $status);
+            }
+            if ($search) {
+                $statisticsQuery->where(function ($q) use ($search) {
+                    $q->where('employee_name', 'LIKE', "%{$search}%")
+                      ->orWhere('employee_no', 'LIKE', "%{$search}%")
+                      ->orWhere('department', 'LIKE', "%{$search}%")
+                      ->orWhere('line', 'LIKE', "%{$search}%")
+                      ->orWhere('cost_center', 'LIKE', "%{$search}%");
+                });
+            }
+
+            $statistics = $statisticsQuery->selectRaw('
+                COUNT(*) as total_summaries,
+                SUM(days_worked) as total_days_worked,
+                SUM(ot_hours) as total_ot_hours,
+                SUM(late_under_minutes) as total_late_under_minutes,
+                SUM(nsd_hours) as total_nsd_hours,
+                SUM(slvl_days) as total_slvl_days,
+                SUM(retro) as total_retro,
+                SUM(travel_order_hours) as total_travel_order_hours,
+                SUM(holiday_hours) as total_holiday_hours,
+                SUM(trip_count) as total_trip_count,
+                SUM(advance + charge_store + charge + meals + miscellaneous + other_deductions + mf_loan + sss_loan + hmdf_loan + hmdf_prem + sss_prem + philhealth) as total_deductions,
+                SUM(mf_shares + allowances) as total_benefits,
+                AVG(days_worked) as avg_days_worked,
+                AVG(ot_hours) as avg_ot_hours
+            ')->first();
+
+            // Get departments for filter
+            $departments = PayrollSummary::where('year', $year)
+                ->where('month', $month)
+                ->whereNotNull('department')
+                ->distinct()
+                ->pluck('department')
+                ->sort()
+                ->values();
+
+            // Transform summaries data with calculated totals
+            $transformedSummaries = $summaries->getCollection()->map(function ($summary) {
+                // Calculate total deductions
+                $totalDeductions = ($summary->advance ?? 0) + 
+                    ($summary->charge_store ?? 0) + 
+                    ($summary->charge ?? 0) + 
+                    ($summary->meals ?? 0) + 
+                    ($summary->miscellaneous ?? 0) + 
+                    ($summary->other_deductions ?? 0) + 
+                    ($summary->mf_loan ?? 0) + 
+                    ($summary->sss_loan ?? 0) + 
+                    ($summary->hmdf_loan ?? 0) + 
+                    ($summary->hmdf_prem ?? 0) + 
+                    ($summary->sss_prem ?? 0) + 
+                    ($summary->philhealth ?? 0);
+
+                // Calculate total benefits
+                $totalBenefits = ($summary->mf_shares ?? 0) + ($summary->allowances ?? 0);
+
+                return [
+                    'id' => $summary->id,
+                    'employee_id' => $summary->employee_id,
+                    'employee_no' => $summary->employee_no,
+                    'employee_name' => $summary->employee_name,
+                    'cost_center' => $summary->cost_center,
+                    'department' => $summary->department,
+                    'line' => $summary->line,
+                    'period_start' => $summary->period_start,
+                    'period_end' => $summary->period_end,
+                    'period_type' => $summary->period_type,
+                    'year' => $summary->year,
+                    'month' => $summary->month,
+                    'days_worked' => (float) $summary->days_worked,
+                    'ot_hours' => (float) $summary->ot_hours,
+                    'off_days' => (float) $summary->off_days,
+                    'late_under_minutes' => (float) $summary->late_under_minutes,
+                    'nsd_hours' => (float) $summary->nsd_hours,
+                    'slvl_days' => (float) $summary->slvl_days,
+                    'retro' => (float) $summary->retro,
+                    'travel_order_hours' => (float) $summary->travel_order_hours,
+                    'holiday_hours' => (float) $summary->holiday_hours,
+                    'ot_reg_holiday_hours' => (float) $summary->ot_reg_holiday_hours,
+                    'ot_special_holiday_hours' => (float) $summary->ot_special_holiday_hours,
+                    'offset_hours' => (float) $summary->offset_hours,
+                    'trip_count' => (float) $summary->trip_count,
+                    'has_ct' => (bool) $summary->has_ct,
+                    'has_cs' => (bool) $summary->has_cs,
+                    'has_ob' => (bool) $summary->has_ob,
+                    // Deduction fields
+                    'advance' => (float) $summary->advance,
+                    'charge_store' => (float) $summary->charge_store,
+                    'charge' => (float) $summary->charge,
+                    'meals' => (float) $summary->meals,
+                    'miscellaneous' => (float) $summary->miscellaneous,
+                    'other_deductions' => (float) $summary->other_deductions,
+                    'mf_loan' => (float) $summary->mf_loan,
+                    'sss_loan' => (float) $summary->sss_loan,
+                    'hmdf_loan' => (float) $summary->hmdf_loan,
+                    'hmdf_prem' => (float) $summary->hmdf_prem,
+                    'sss_prem' => (float) $summary->sss_prem,
+                    'philhealth' => (float) $summary->philhealth,
+                    // Benefit fields
+                    'mf_shares' => (float) $summary->mf_shares,
+                    'allowances' => (float) $summary->allowances,
+                    // Status and metadata
+                    'status' => $summary->status,
+                    'posted_by' => $summary->postedBy,
+                    'posted_at' => $summary->posted_at,
+                    'notes' => $summary->notes,
+                    'created_at' => $summary->created_at,
+                    'updated_at' => $summary->updated_at,
+                    // Calculated fields
+                    'full_period' => $this->getFullPeriodLabel($summary->year, $summary->month, $summary->period_type),
+                    'total_deductions' => $totalDeductions,
+                    'total_benefits' => $totalBenefits,
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'data' => $transformedSummaries,
+                'pagination' => [
+                    'current_page' => $summaries->currentPage(),
+                    'last_page' => $summaries->lastPage(),
+                    'per_page' => $summaries->perPage(),
+                    'total' => $summaries->total(),
+                    'from' => $summaries->firstItem(),
+                    'to' => $summaries->lastItem(),
+                ],
+                'statistics' => [
+                    'total_summaries' => $statistics->total_summaries ?: 0,
+                    'total_days_worked' => (float) ($statistics->total_days_worked ?: 0),
+                    'total_ot_hours' => (float) ($statistics->total_ot_hours ?: 0),
+                    'total_late_under_minutes' => (float) ($statistics->total_late_under_minutes ?: 0),
+                    'total_nsd_hours' => (float) ($statistics->total_nsd_hours ?: 0),
+                    'total_slvl_days' => (float) ($statistics->total_slvl_days ?: 0),
+                    'total_retro' => (float) ($statistics->total_retro ?: 0),
+                    'total_travel_order_hours' => (float) ($statistics->total_travel_order_hours ?: 0),
+                    'total_holiday_hours' => (float) ($statistics->total_holiday_hours ?: 0),
+                    'total_trip_count' => (float) ($statistics->total_trip_count ?: 0),
+                    'total_deductions' => (float) ($statistics->total_deductions ?: 0),
+                    'total_benefits' => (float) ($statistics->total_benefits ?: 0),
+                    'avg_days_worked' => (float) ($statistics->avg_days_worked ?: 0),
+                    'avg_ot_hours' => (float) ($statistics->avg_ot_hours ?: 0),
+                ],
+                'departments' => $departments,
+                'filters' => [
+                    'year' => $year,
+                    'month' => $month,
+                    'period_type' => $periodType,
+                    'department' => $department,
+                    'status' => $status,
+                    'search' => $search,
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Error getting payroll summaries: ' . $e->getMessage(), [
+                'filters' => $request->all(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to load payroll summaries: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 
 /**
  * Add missing deduction and benefit columns to payroll_summaries table
@@ -1141,17 +1509,6 @@ public function addMissingColumns()
             return $decimals > 0 ? '0' : '0';
         }
         return number_format($value, $decimals, '.', '');
-    }
-
-    /**
-     * Helper method to get full period label
-     */
-    private function getFullPeriodLabel($year, $month, $periodType)
-    {
-        $monthName = Carbon::create($year, $month, 1)->format('F Y');
-        $periodLabel = $periodType === '1st_half' ? '(1-15)' : '(16-30/31)';
-        
-        return "{$monthName} {$periodLabel}";
     }
 
     /**

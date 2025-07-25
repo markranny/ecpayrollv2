@@ -767,30 +767,29 @@ class BenefitController extends Controller
      * Store a newly created or update existing benefit in storage.
      */
     public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'employee_id' => 'required|exists:employees,id',
-            'mf_shares' => 'nullable|numeric|min:0',
-            'mf_loan' => 'nullable|numeric|min:0',
-            'sss_loan' => 'nullable|numeric|min:0',
-            'hmdf_loan' => 'nullable|numeric|min:0',
-            'hmdf_prem' => 'nullable|numeric|min:0',
-            'sss_prem' => 'nullable|numeric|min:0',
-            'philhealth' => 'nullable|numeric|min:0',
-            'allowances' => 'nullable|numeric|min:0',
-            'cutoff' => 'required|in:1st,2nd',
-            'date' => 'required|date',
-            'is_default' => 'nullable|boolean',
-        ]);
-        
-        // Check if the benefit is already posted
-        if ($request->has('id')) {
-            $existingBenefit = Benefit::find($request->input('id'));
-            if ($existingBenefit && $existingBenefit->is_posted) {
-                throw ValidationException::withMessages([
-                    'general' => ['This benefit has been posted and cannot be updated.'],
-                ]);
-            }
+{
+    $validated = $request->validate([
+        'employee_id' => 'required|exists:employees,id',
+        'mf_shares' => 'nullable|numeric|min:0',
+        'mf_loan' => 'nullable|numeric|min:0',
+        'sss_loan' => 'nullable|numeric|min:0',
+        'hmdf_loan' => 'nullable|numeric|min:0',
+        'hmdf_prem' => 'nullable|numeric|min:0',
+        'sss_prem' => 'nullable|numeric|min:0',
+        'philhealth' => 'nullable|numeric|min:0',
+        'allowances' => 'nullable|numeric|min:0',
+        'cutoff' => 'required|in:1st,2nd',
+        'date' => 'required|date',
+        'is_default' => 'nullable|boolean',
+    ]);
+    
+    // Check if updating an existing benefit
+    if ($request->has('id')) {
+        $existingBenefit = Benefit::find($request->input('id'));
+        if ($existingBenefit && $existingBenefit->is_posted) {
+            throw ValidationException::withMessages([
+                'general' => ['This benefit has been posted and cannot be updated.'],
+            ]);
         }
         
         // Set default values for null numeric fields
@@ -799,17 +798,54 @@ class BenefitController extends Controller
             $validated[$field] = $validated[$field] ?? 0;
         }
         
-        // Create or update the benefit
-        if ($request->has('id')) {
-            $benefit = Benefit::findOrFail($request->input('id'));
-            $benefit->update($validated);
-        } else {
-            $benefit = Benefit::create($validated);
-        }
+        // Update existing benefit
+        $benefit = Benefit::findOrFail($request->input('id'));
+        $benefit->update($validated);
         
-        // Return the updated benefit
         return response()->json($benefit);
     }
+    
+    // Creating new benefit - check if it's 1st cutoff and should use defaults
+    if ($validated['cutoff'] === '1st') {
+        // Check if defaults exist for this employee
+        $defaultBenefit = Benefit::where('employee_id', $validated['employee_id'])
+            ->where('is_default', true)
+            ->latest()
+            ->first();
+            
+        if ($defaultBenefit) {
+            // Use copyFromDefault method if no values were provided, otherwise merge with provided values
+            $defaultValues = [
+                'mf_shares' => $defaultBenefit->mf_shares,
+                'mf_loan' => $defaultBenefit->mf_loan,
+                'sss_loan' => $defaultBenefit->sss_loan,
+                'hmdf_loan' => $defaultBenefit->hmdf_loan,
+                'hmdf_prem' => $defaultBenefit->hmdf_prem,
+                'sss_prem' => $defaultBenefit->sss_prem,
+                'philhealth' => $defaultBenefit->philhealth,
+                'allowances' => $defaultBenefit->allowances,
+            ];
+            
+            // Merge defaults with provided values (provided values take precedence)
+            foreach ($defaultValues as $field => $defaultValue) {
+                if (!isset($validated[$field]) || $validated[$field] === null) {
+                    $validated[$field] = $defaultValue;
+                }
+            }
+        }
+    }
+    
+    // Set remaining null values to 0
+    foreach (['mf_shares', 'mf_loan', 'sss_loan', 
+             'hmdf_loan', 'hmdf_prem', 'sss_prem', 'philhealth', 'allowances'] as $field) {
+        $validated[$field] = $validated[$field] ?? 0;
+    }
+    
+    // Create new benefit
+    $benefit = Benefit::create($validated);
+    
+    return response()->json($benefit);
+}
 
     /**
      * Update the specified benefit in storage.

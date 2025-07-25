@@ -761,6 +761,18 @@ Route::middleware(['auth', 'verified', 'role:finance,hrd_manager,superadmin'])->
         ->name('final-payrolls.generate-report');
 
     Route::middleware(['auth:sanctum'])->prefix('api/comprehensive-payroll-summaries')->group(function () {
+
+    // Enhanced API endpoints for final payroll integration
+    Route::get('/available-for-final-payroll', [PayrollSummariesController::class, 'getAvailableForFinalPayroll'])
+        ->name('api.comprehensive-payroll-summaries.available-for-final-payroll');
+    
+    Route::post('/generate-final-payrolls', [PayrollSummariesController::class, 'generateFinalPayrollsFromSummaries'])
+        ->name('api.comprehensive-payroll-summaries.generate-final-payrolls');
+    
+    // Get summaries that can be regenerated
+    Route::get('/regeneratable/{year}/{month}', [PayrollSummariesController::class, 'getRegeneratableSummaries'])
+        ->name('api.comprehensive-payroll-summaries.regeneratable')
+        ->where(['year' => '[0-9]{4}', 'month' => '[0-9]{1,2}']);
     
     // API endpoints for external integrations
     Route::get('/period/{year}/{month}/{period_type}', [PayrollSummariesController::class, 'apiGetPeriodSummaries'])
@@ -770,6 +782,14 @@ Route::middleware(['auth', 'verified', 'role:finance,hrd_manager,superadmin'])->
     Route::get('/employee/{employeeId}/summary/{year}/{month}', [PayrollSummariesController::class, 'apiGetEmployeeSummary'])
         ->name('api.comprehensive-payroll-summaries.employee')
         ->where(['employeeId' => '[0-9]+', 'year' => '[0-9]{4}', 'month' => '[0-9]{1,2}']);
+
+    // Get available summaries for final payroll generation
+    Route::get('/api/comprehensive-payroll-summaries/available-for-final-payroll', [PayrollSummariesController::class, 'getAvailableForFinalPayroll'])
+        ->name('comprehensive-payroll-summaries.available-for-final-payroll');
+
+    // Generate final payrolls from summaries (connects to FinalPayrollController)
+    Route::post('/comprehensive-payroll-summaries/generate-final-payrolls', [PayrollSummariesController::class, 'generateFinalPayrollsFromSummaries'])
+        ->name('comprehensive-payroll-summaries.generate-final-payrolls');
     
 });
 

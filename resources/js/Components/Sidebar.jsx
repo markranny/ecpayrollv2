@@ -323,6 +323,7 @@ const Sidebar = ({ showSidebar = true }) => {
             label: 'Payroll',
             allowedRoles: ['superadmin', 'finance'],
             items: [
+                { label: 'Final Payroll', path: '/final-payrolls' },
                 { label: 'Payroll Summary', path: '/comprehensive-payroll-summaries' },
                 { label: 'Benefits', path: '/benefits' },
                 { label: 'Deductions', path: '/deductions' },
