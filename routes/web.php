@@ -24,6 +24,7 @@ use App\Http\Controllers\PayrollSummariesController;
 use App\Http\Controllers\Auth\EmployeeRegistrationController;
 use App\Http\Controllers\Auth\AuthenticatedSessionController;
 use App\Http\Controllers\ProcessedAttendanceController;
+use App\Http\Controllers\EmployeeScheduleController;
 use App\Http\Controllers\PromotionController;
 use App\Http\Controllers\AwardController;
 use App\Http\Controllers\TransferController;
@@ -270,6 +271,74 @@ Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])
 |--------------------------------------------------------------------------
 */
 Route::middleware(['auth', 'verified', 'role:hrd_manager,superadmin'])->group(function () {
+
+    // Main Employee Scheduling Page
+    Route::get('/employee-scheduling', [EmployeeScheduleController::class, 'index'])
+        ->name('employee-schedules.index');
+    
+    // API Routes for Employee Schedules
+    Route::get('/employee-schedules/list', [EmployeeScheduleController::class, 'list'])
+        ->name('employee-schedules.list');
+    
+    Route::post('/employee-schedules', [EmployeeScheduleController::class, 'store'])
+        ->name('employee-schedules.store');
+    
+    Route::put('/employee-schedules/{id}', [EmployeeScheduleController::class, 'update'])
+        ->name('employee-schedules.update')
+        ->where('id', '[0-9]+');
+    
+    Route::delete('/employee-schedules/{id}', [EmployeeScheduleController::class, 'destroy'])
+        ->name('employee-schedules.destroy')
+        ->where('id', '[0-9]+');
+    
+    // Import/Export Routes
+    Route::post('/employee-schedules/import', [EmployeeScheduleController::class, 'import'])
+        ->name('employee-schedules.import');
+    
+    Route::get('/employee-schedules/export', [EmployeeScheduleController::class, 'export'])
+        ->name('employee-schedules.export');
+    
+    Route::get('/employee-schedules/template/download', [EmployeeScheduleController::class, 'downloadTemplate'])
+        ->name('employee-schedules.template.download');
+    
+    // Utility Routes
+    Route::get('/employee-schedules/departments', [EmployeeScheduleController::class, 'getDepartments'])
+        ->name('employee-schedules.departments');
+    
+    // Calendar Data Routes
+    Route::get('/employee-schedules/calendar-events', [EmployeeScheduleController::class, 'getCalendarEvents'])
+        ->name('employee-schedules.calendar-events');
+    
+    // Statistics Route
+    Route::get('/employee-schedules/statistics', [EmployeeScheduleController::class, 'getStatistics'])
+        ->name('employee-schedules.statistics');
+
+    Route::middleware(['auth:sanctum'])->prefix('api/employee-schedules')->group(function () {
+    
+    // Get employee's current schedule
+    Route::get('/employee/{employeeId}/current', [EmployeeScheduleController::class, 'getEmployeeCurrentSchedule'])
+        ->name('api.employee-schedules.employee.current')
+        ->where('employeeId', '[0-9]+');
+    
+    // Get employee's schedule history
+    Route::get('/employee/{employeeId}/history', [EmployeeScheduleController::class, 'getEmployeeScheduleHistory'])
+        ->name('api.employee-schedules.employee.history')
+        ->where('employeeId', '[0-9]+');
+    
+    // Get schedules for a specific date range
+    Route::get('/date-range/{startDate}/{endDate}', [EmployeeScheduleController::class, 'getSchedulesInDateRange'])
+        ->name('api.employee-schedules.date-range')
+        ->where(['startDate' => '[0-9]{4}-[0-9]{2}-[0-9]{2}', 'endDate' => '[0-9]{4}-[0-9]{2}-[0-9]{2}']);
+    
+    // Get department schedules
+    Route::get('/department/{department}', [EmployeeScheduleController::class, 'getDepartmentSchedules'])
+        ->name('api.employee-schedules.department');
+    
+    // Get shift conflicts
+    Route::post('/check-conflicts', [EmployeeScheduleController::class, 'checkScheduleConflicts'])
+        ->name('api.employee-schedules.check-conflicts');
+});
+
     // Biometric Devices
     Route::get('/biometric-devices', [BiometricController::class, 'index'])
         ->name('biometric-devices.index');

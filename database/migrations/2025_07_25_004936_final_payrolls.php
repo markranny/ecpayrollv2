@@ -184,10 +184,8 @@ return new class extends Migration
                     $table->boolean('has_adjustments')->default(false)->comment('Has manual adjustments');
                 }
                 
-                // Add additional indexes if they don't exist
-                if (!$this->indexExists('final_payrolls', 'idx_final_payroll_summary_ref')) {
-                    $table->index(['payroll_summary_id'], 'idx_final_payroll_summary_ref');
-                }
+                // Note: Index creation in table modification is handled automatically by Laravel
+                // when using the index() method in the constraints above
             });
         }
     }
@@ -198,16 +196,5 @@ return new class extends Migration
     public function down(): void
     {
         Schema::dropIfExists('final_payrolls');
-    }
-    
-    /**
-     * Check if an index exists on a table
-     */
-    private function indexExists($table, $indexName)
-    {
-        $indexes = Schema::getConnection()->getDoctrineSchemaManager()
-            ->listTableIndexes($table);
-        
-        return array_key_exists($indexName, $indexes);
     }
 };

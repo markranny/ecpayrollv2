@@ -315,7 +315,8 @@ const Sidebar = ({ showSidebar = true }) => {
                 { label: 'Process Attendance', path: '/attendance' },
                 { label: 'Manual Entry', path: '/timesheet/manual-entry' },
                 { label: 'Biometrics', path: '/biometric-devices' },
-                { label: 'Import Attendance', path: '/attendance/import' }
+                { label: 'Import Attendance', path: '/attendance/import' },
+                { label: 'Employee Schedule', path: '/employee-scheduling' }
             ]
         },
         {
