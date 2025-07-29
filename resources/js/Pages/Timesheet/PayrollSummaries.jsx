@@ -1483,7 +1483,7 @@ const PayrollSummaries = ({ auth }) => {
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Retro</th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Posted</th>
-                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        {/* <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th> */}
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-gray-200">
@@ -1561,7 +1561,7 @@ const PayrollSummaries = ({ auth }) => {
                               )}
                             </div>
                           </td>
-                          <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                          {/* <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                             <div className="flex justify-end space-x-1">
                               <Button
                                 variant="ghost"
@@ -1590,7 +1590,7 @@ const PayrollSummaries = ({ auth }) => {
                                 </Button>
                               )}
                             </div>
-                          </td>
+                          </td> */}
                         </tr>
                       ))}
                     </tbody>

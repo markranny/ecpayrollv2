@@ -510,8 +510,8 @@ public static function generateFromPayrollSummary($payrollSummaryId, $userId = n
             'benefit_id' => $benefit?->id,
             'deduction_id' => $deduction?->id,
             'created_by' => $userId ?? auth()->id(),
-            'status' => 'draft',
-            'approval_status' => ($options['auto_approve'] ?? false) ? 'approved' : 'pending',
+            'status' => 'draft', // Always start as draft
+            'approval_status' => 'pending', // Always start as pending
             'has_adjustments' => false
         ];
         
@@ -521,9 +521,9 @@ public static function generateFromPayrollSummary($payrollSummaryId, $userId = n
         $finalPayroll->calculatePayroll();
         
         // Auto-approve if requested and user has permission
-        if ($options['auto_approve'] ?? false) {
+        /* if ($options['auto_approve'] ?? false) {
             $finalPayroll->markAsApproved($userId ?? auth()->id(), 'Auto-approved during generation');
-        }
+        } */
         
         // Log the generation
         \Log::info('Final payroll generated from summary', [

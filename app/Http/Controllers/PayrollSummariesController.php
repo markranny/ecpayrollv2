@@ -491,22 +491,53 @@ public function list(Request $request)
                 });
             }
 
-            $statistics = $statisticsQuery->selectRaw('
-                COUNT(*) as total_summaries,
-                SUM(days_worked) as total_days_worked,
-                SUM(ot_hours) as total_ot_hours,
-                SUM(late_under_minutes) as total_late_under_minutes,
-                SUM(nsd_hours) as total_nsd_hours,
-                SUM(slvl_days) as total_slvl_days,
-                SUM(retro) as total_retro,
-                SUM(travel_order_hours) as total_travel_order_hours,
-                SUM(holiday_hours) as total_holiday_hours,
-                SUM(trip_count) as total_trip_count,
-                SUM(advance + charge_store + charge + meals + miscellaneous + other_deductions + mf_loan + sss_loan + hmdf_loan + hmdf_prem + sss_prem + philhealth) as total_deductions,
-                SUM(mf_shares + allowances) as total_benefits,
-                AVG(days_worked) as avg_days_worked,
-                AVG(ot_hours) as avg_ot_hours
-            ')->first();
+            $statisticsQuery = PayrollSummary::query()
+            ->where('year', $year)
+            ->where('month', $month);
+            
+        if ($periodType) {
+            $statisticsQuery->where('period_type', $periodType);
+        }
+        if ($department) {
+            $statisticsQuery->where('department', $department);
+        }
+        if ($status) {
+            $statisticsQuery->where('status', $status);
+        }
+        if ($search) {
+            $statisticsQuery->where(function ($q) use ($search) {
+                $q->where('employee_name', 'LIKE', "%{$search}%")
+                  ->orWhere('employee_no', 'LIKE', "%{$search}%")
+                  ->orWhere('department', 'LIKE', "%{$search}%")
+                  ->orWhere('line', 'LIKE', "%{$search}%")
+                  ->orWhere('cost_center', 'LIKE', "%{$search}%");
+            });
+        }
+
+        $statistics = $statisticsQuery->selectRaw('
+            COUNT(*) as total_summaries,
+            SUM(days_worked) as total_days_worked,
+            SUM(ot_hours) as total_ot_hours,
+            SUM(late_under_minutes) as total_late_under_minutes,
+            SUM(nsd_hours) as total_nsd_hours,
+            SUM(slvl_days) as total_slvl_days,
+            SUM(retro) as total_retro,
+            SUM(travel_order_hours) as total_travel_order_hours,
+            SUM(holiday_hours) as total_holiday_hours,
+            SUM(trip_count) as total_trip_count,
+            
+            -- FIXED: Calculate deductions properly with COALESCE for NULL safety
+            SUM(COALESCE(advance, 0) + COALESCE(charge_store, 0) + COALESCE(charge, 0) + 
+                COALESCE(meals, 0) + COALESCE(miscellaneous, 0) + COALESCE(other_deductions, 0) + 
+                COALESCE(mf_loan, 0) + COALESCE(sss_loan, 0) + COALESCE(hmdf_loan, 0) + 
+                COALESCE(hmdf_prem, 0) + COALESCE(sss_prem, 0) + COALESCE(philhealth, 0)) as total_deductions,
+            
+            -- FIXED: Calculate benefits properly with COALESCE for NULL safety
+            SUM(COALESCE(mf_shares, 0) + COALESCE(allowances, 0)) as total_benefits,
+            
+            AVG(days_worked) as avg_days_worked,
+            AVG(ot_hours) as avg_ot_hours
+        ')->first();
 
             // Get departments for filter
             $departments = PayrollSummary::where('year', $year)
@@ -596,55 +627,55 @@ public function list(Request $request)
             });
 
             return response()->json([
-                'success' => true,
-                'data' => $transformedSummaries,
-                'pagination' => [
-                    'current_page' => $summaries->currentPage(),
-                    'last_page' => $summaries->lastPage(),
-                    'per_page' => $summaries->perPage(),
-                    'total' => $summaries->total(),
-                    'from' => $summaries->firstItem(),
-                    'to' => $summaries->lastItem(),
-                ],
-                'statistics' => [
-                    'total_summaries' => $statistics->total_summaries ?: 0,
-                    'total_days_worked' => (float) ($statistics->total_days_worked ?: 0),
-                    'total_ot_hours' => (float) ($statistics->total_ot_hours ?: 0),
-                    'total_late_under_minutes' => (float) ($statistics->total_late_under_minutes ?: 0),
-                    'total_nsd_hours' => (float) ($statistics->total_nsd_hours ?: 0),
-                    'total_slvl_days' => (float) ($statistics->total_slvl_days ?: 0),
-                    'total_retro' => (float) ($statistics->total_retro ?: 0),
-                    'total_travel_order_hours' => (float) ($statistics->total_travel_order_hours ?: 0),
-                    'total_holiday_hours' => (float) ($statistics->total_holiday_hours ?: 0),
-                    'total_trip_count' => (float) ($statistics->total_trip_count ?: 0),
-                    'total_deductions' => (float) ($statistics->total_deductions ?: 0),
-                    'total_benefits' => (float) ($statistics->total_benefits ?: 0),
-                    'avg_days_worked' => (float) ($statistics->avg_days_worked ?: 0),
-                    'avg_ot_hours' => (float) ($statistics->avg_ot_hours ?: 0),
-                ],
-                'departments' => $departments,
-                'filters' => [
-                    'year' => $year,
-                    'month' => $month,
-                    'period_type' => $periodType,
-                    'department' => $department,
-                    'status' => $status,
-                    'search' => $search,
-                ]
-            ]);
+            'success' => true,
+            'data' => $transformedSummaries,
+            'pagination' => [
+                'current_page' => $summaries->currentPage(),
+                'last_page' => $summaries->lastPage(),
+                'per_page' => $summaries->perPage(),
+                'total' => $summaries->total(),
+                'from' => $summaries->firstItem(),
+                'to' => $summaries->lastItem(),
+            ],
+            'statistics' => [
+                'total_summaries' => $statistics->total_summaries ?: 0,
+                'total_days_worked' => (float) ($statistics->total_days_worked ?: 0),
+                'total_ot_hours' => (float) ($statistics->total_ot_hours ?: 0),
+                'total_late_under_minutes' => (float) ($statistics->total_late_under_minutes ?: 0),
+                'total_nsd_hours' => (float) ($statistics->total_nsd_hours ?: 0),
+                'total_slvl_days' => (float) ($statistics->total_slvl_days ?: 0),
+                'total_retro' => (float) ($statistics->total_retro ?: 0),
+                'total_travel_order_hours' => (float) ($statistics->total_travel_order_hours ?: 0),
+                'total_holiday_hours' => (float) ($statistics->total_holiday_hours ?: 0),
+                'total_trip_count' => (float) ($statistics->total_trip_count ?: 0),
+                'total_deductions' => (float) ($statistics->total_deductions ?: 0), // FIXED
+                'total_benefits' => (float) ($statistics->total_benefits ?: 0), // FIXED
+                'avg_days_worked' => (float) ($statistics->avg_days_worked ?: 0),
+                'avg_ot_hours' => (float) ($statistics->avg_ot_hours ?: 0),
+            ],
+            'departments' => $departments,
+            'filters' => [
+                'year' => $year,
+                'month' => $month,
+                'period_type' => $periodType,
+                'department' => $department,
+                'status' => $status,
+                'search' => $search,
+            ]
+        ]);
 
-        } catch (\Exception $e) {
-            Log::error('Error getting payroll summaries: ' . $e->getMessage(), [
-                'filters' => $request->all(),
-                'trace' => $e->getTraceAsString()
-            ]);
+    } catch (\Exception $e) {
+        Log::error('Error getting payroll summaries: ' . $e->getMessage(), [
+            'filters' => $request->all(),
+            'trace' => $e->getTraceAsString()
+        ]);
 
-            return response()->json([
-                'success' => false,
-                'message' => 'Failed to load payroll summaries: ' . $e->getMessage()
-            ], 500);
-        }
+        return response()->json([
+            'success' => false,
+            'message' => 'Failed to load payroll summaries: ' . $e->getMessage()
+        ], 500);
     }
+}
 
 /**
  * Add missing deduction and benefit columns to payroll_summaries table

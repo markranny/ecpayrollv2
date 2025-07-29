@@ -16,104 +16,119 @@ use Inertia\Inertia;
 
 class FinalPayrollController extends Controller
 {
+    public function getFullPeriodAttribute()
+{
+    $monthName = Carbon::create($this->year, $this->month, 1)->format('F Y');
+    $periodLabel = $this->period_type === '1st_half' ? '(1-15)' : '(16-30/31)';
+    
+    return "{$monthName} {$periodLabel}";
+}
+
     /**
      * Display a listing of final payrolls.
      */
     public function index(Request $request)
-    {
-        try {
-            $year = $request->input('year', now()->year);
-            $month = $request->input('month', now()->month);
-            $periodType = $request->input('period_type');
-            $department = $request->input('department');
-            $status = $request->input('status');
-            $approvalStatus = $request->input('approval_status');
-            $search = $request->input('search');
-            $perPage = $request->input('per_page', 25);
+{
+    try {
+        $year = $request->input('year', now()->year);
+        $month = $request->input('month', now()->month);
+        $periodType = $request->input('period_type');
+        $department = $request->input('department');
+        $status = $request->input('status');
+        $approvalStatus = $request->input('approval_status');
+        $search = $request->input('search');
+        $perPage = $request->input('per_page', 25);
 
-            $query = FinalPayroll::with(['employee', 'creator', 'approver', 'finalizer'])
-                ->forPeriod($year, $month, $periodType);
+        $query = FinalPayroll::with(['employee', 'creator', 'approver', 'finalizer'])
+            ->forPeriod($year, $month, $periodType);
 
-            // Apply filters
-            if ($department) {
-                $query->forDepartment($department);
-            }
-
-            if ($status) {
-                $query->where('status', $status);
-            }
-
-            if ($approvalStatus) {
-                $query->where('approval_status', $approvalStatus);
-            }
-
-            if ($search) {
-                $query->where(function ($q) use ($search) {
-                    $q->where('employee_name', 'like', "%{$search}%")
-                        ->orWhere('employee_no', 'like', "%{$search}%");
-                });
-            }
-
-            // Get paginated results
-            $finalPayrolls = $query->orderBy('department')
-                ->orderBy('employee_name')
-                ->paginate($perPage);
-
-            // Get statistics
-            $statistics = FinalPayroll::getPeriodStatistics($year, $month, $periodType, $department);
-
-            // Get departments for filter
-            $departments = FinalPayroll::forPeriod($year, $month)
-                ->distinct()
-                ->pluck('department')
-                ->filter()
-                ->sort()
-                ->values();
-
-            if ($request->wantsJson()) {
-                return response()->json([
-                    'success' => true,
-                    'data' => $finalPayrolls->items(),
-                    'pagination' => [
-                        'current_page' => $finalPayrolls->currentPage(),
-                        'last_page' => $finalPayrolls->lastPage(),
-                        'per_page' => $finalPayrolls->perPage(),
-                        'total' => $finalPayrolls->total(),
-                    ],
-                    'statistics' => $statistics,
-                    'departments' => $departments
-                ]);
-            }
-
-            return Inertia::render('Payroll/FinalPayroll', [
-                'auth' => ['user' => auth()->user()],
-                'finalPayrolls' => $finalPayrolls,
-                'statistics' => $statistics,
-                'departments' => $departments,
-                'filters' => [
-                    'year' => $year,
-                    'month' => $month,
-                    'period_type' => $periodType,
-                    'department' => $department,
-                    'status' => $status,
-                    'approval_status' => $approvalStatus,
-                    'search' => $search
-                ]
-            ]);
-
-        } catch (\Exception $e) {
-            Log::error('Error loading final payrolls: ' . $e->getMessage());
-            
-            if ($request->wantsJson()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Failed to load final payrolls'
-                ], 500);
-            }
-
-            return back()->withErrors(['error' => 'Failed to load final payrolls']);
+        // Apply filters
+        if ($department) {
+            $query->forDepartment($department);
         }
+
+        if ($status) {
+            $query->where('status', $status);
+        }
+
+        if ($approvalStatus) {
+            $query->where('approval_status', $approvalStatus);
+        }
+
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('employee_name', 'like', "%{$search}%")
+                    ->orWhere('employee_no', 'like', "%{$search}%");
+            });
+        }
+
+        // Get statistics BEFORE paginating
+        $statistics = FinalPayroll::getPeriodStatistics($year, $month, $periodType, $department);
+
+        // Get departments for filter
+        $departments = FinalPayroll::forPeriod($year, $month)
+            ->distinct()
+            ->pluck('department')
+            ->filter()
+            ->sort()
+            ->values();
+
+        // Get paginated results
+        $finalPayrolls = $query->orderBy('department')
+            ->orderBy('employee_name')
+            ->paginate($perPage);
+
+        $transformedPayrolls = $finalPayrolls->getCollection()->map(function ($payroll) {
+            $payroll->full_period = $payroll->getFullPeriodAttribute();
+            return $payroll;
+        });
+
+        $finalPayrolls->setCollection($transformedPayrolls);
+
+        if ($request->wantsJson()) {
+            return response()->json([
+                'success' => true,
+                'data' => $finalPayrolls->items(),
+                'pagination' => [
+                    'current_page' => $finalPayrolls->currentPage(),
+                    'last_page' => $finalPayrolls->lastPage(),
+                    'per_page' => $finalPayrolls->perPage(),
+                    'total' => $finalPayrolls->total(),
+                ],
+                'statistics' => $statistics,
+                'departments' => $departments
+            ]);
+        }
+
+        return Inertia::render('Payroll/FinalPayroll', [
+            'auth' => ['user' => auth()->user()],
+            'finalPayrolls' => $finalPayrolls,
+            'statistics' => $statistics,
+            'departments' => $departments,
+            'filters' => [
+                'year' => $year,
+                'month' => $month,
+                'period_type' => $periodType,
+                'department' => $department,
+                'status' => $status,
+                'approval_status' => $approvalStatus,
+                'search' => $search
+            ]
+        ]);
+
+    } catch (\Exception $e) {
+        Log::error('Error loading final payrolls: ' . $e->getMessage());
+        
+        if ($request->wantsJson()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to load final payrolls'
+            ], 500);
+        }
+
+        return back()->withErrors(['error' => 'Failed to load final payrolls']);
     }
+}
 
     /**
      * Show a specific final payroll.

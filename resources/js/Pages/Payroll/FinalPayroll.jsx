@@ -58,44 +58,6 @@ const FinalPayrollDetailModal = ({ isOpen, payroll, onClose, onUpdate }) => {
     }
   };
 
-  const handleSave = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(`/final-payrolls/${payroll.id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content'),
-          'X-Requested-With': 'XMLHttpRequest',
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify(formData)
-      });
-
-      const data = await response.json();
-      
-      if (data.success) {
-        setEditing(false);
-        onUpdate();
-        await loadCalculationBreakdown();
-      } else {
-        alert(data.message || 'Failed to update payroll');
-      }
-    } catch (err) {
-      console.error('Error updating payroll:', err);
-      alert('Failed to update payroll');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleInputChange = (field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  };
-
   const formatCurrency = (amount) => {
     return new Intl.NumberFormat('en-PH', {
       style: 'currency',
@@ -112,7 +74,8 @@ const FinalPayrollDetailModal = ({ isOpen, payroll, onClose, onUpdate }) => {
 
   return (
     <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
-      <div className="relative bg-white rounded-lg shadow-lg max-w-6xl w-full mx-4 max-h-[95vh] overflow-y-auto">
+      <div className="relative bg-white rounded-lg shadow-lg max-w-5xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+        {/* Header */}
         <div className="flex justify-between items-center p-6 border-b sticky top-0 bg-white z-10">
           <div className="flex items-center space-x-3">
             <h2 className="text-xl font-semibold text-gray-800">
@@ -137,52 +100,13 @@ const FinalPayrollDetailModal = ({ isOpen, payroll, onClose, onUpdate }) => {
               {payroll?.approval_status?.charAt(0).toUpperCase() + payroll?.approval_status?.slice(1)}
             </span>
           </div>
-          <div className="flex items-center space-x-2">
-            {payroll?.is_editable && !editing && (
-              <Button
-                onClick={() => setEditing(true)}
-                size="sm"
-                className="bg-blue-600 hover:bg-blue-700 text-white"
-              >
-                <Edit className="h-4 w-4 mr-1" />
-                Edit
-              </Button>
-            )}
-            
-            {editing && (
-              <>
-                <Button
-                  onClick={handleSave}
-                  disabled={loading}
-                  size="sm"
-                  className="bg-green-600 hover:bg-green-700 text-white"
-                >
-                  {loading ? (
-                    <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
-                  ) : (
-                    <Check className="h-4 w-4 mr-1" />
-                  )}
-                  Save
-                </Button>
-                <Button
-                  onClick={() => setEditing(false)}
-                  size="sm"
-                  variant="outline"
-                >
-                  <X className="h-4 w-4 mr-1" />
-                  Cancel
-                </Button>
-              </>
-            )}
-            
-            <button
-              onClick={onClose}
-              className="text-gray-500 hover:text-gray-700"
-              aria-label="Close"
-            >
-              <X className="h-5 w-5" />
-            </button>
-          </div>
+          <button
+            onClick={onClose}
+            className="text-gray-500 hover:text-gray-700"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" />
+          </button>
         </div>
 
         <div className="p-6 space-y-6">
@@ -205,351 +129,165 @@ const FinalPayrollDetailModal = ({ isOpen, payroll, onClose, onUpdate }) => {
               </div>
               <div>
                 <label className="text-sm font-medium text-gray-500">Period</label>
-                <p className="text-gray-900">{payroll?.full_period}</p>
+                <p className="text-gray-900">
+                  {/* FIXED: Proper period display */}
+                  {payroll?.full_period || `${new Date(0, payroll?.month - 1).toLocaleString('default', { month: 'long' })} ${payroll?.year} (${payroll?.period_type === '1st_half' ? '1-15' : '16-30/31'})`}
+                </p>
                 <p className="text-sm text-gray-500">Cost Center: {payroll?.cost_center || 'N/A'}</p>
               </div>
             </div>
           </div>
 
-          {/* Basic Information */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="bg-green-50 rounded-lg p-4 text-center">
+              <div className="text-2xl font-bold text-green-600">{formatCurrency(payroll?.gross_earnings)}</div>
+              <div className="text-sm text-green-800">Gross Earnings</div>
+            </div>
+            <div className="bg-red-50 rounded-lg p-4 text-center">
+              <div className="text-2xl font-bold text-red-600">{formatCurrency(payroll?.total_deductions)}</div>
+              <div className="text-sm text-red-800">Total Deductions</div>
+            </div>
+            <div className="bg-blue-50 rounded-lg p-4 text-center">
+              <div className="text-2xl font-bold text-blue-600">{formatCurrency(payroll?.net_pay)}</div>
+              <div className="text-sm text-blue-800">Net Pay</div>
+            </div>
+            <div className="bg-purple-50 rounded-lg p-4 text-center">
+              <div className="text-2xl font-bold text-purple-600">{formatNumber(payroll?.days_worked, 1)}</div>
+              <div className="text-sm text-purple-800">Days Worked</div>
+            </div>
+          </div>
+
+          {/* FIXED: Calculation breakdown with proper JSON formatting */}
+          {calculationBreakdown && (
             <div className="bg-gray-50 rounded-lg p-4">
-              <h4 className="font-medium text-gray-900 mb-3">Basic Information</h4>
-              <div className="space-y-3">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Pay Type:</span>
-                  <span className="font-medium">{payroll?.pay_type || 'Daily'}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Basic Rate:</span>
-                  {editing ? (
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={formData.basic_rate}
-                      onChange={(e) => handleInputChange('basic_rate', e.target.value)}
-                      className="w-24 px-2 py-1 border rounded text-right"
-                    />
-                  ) : (
-                    <span className="font-medium">{formatCurrency(payroll?.basic_rate)}</span>
-                  )}
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Days Worked:</span>
-                  <span className="font-medium">{formatNumber(payroll?.days_worked, 1)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Hours Worked:</span>
-                  <span className="font-medium">{formatNumber(payroll?.hours_worked)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Is Taxable:</span>
-                  <span className="font-medium">{payroll?.is_taxable ? 'Yes' : 'No'}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="bg-gray-50 rounded-lg p-4">
-              <h4 className="font-medium text-gray-900 mb-3">Attendance Summary</h4>
-              <div className="space-y-3">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Late/Under (Hours):</span>
-                  <span className="font-medium text-red-600">{formatNumber(payroll?.late_under_hours)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">SLVL Days:</span>
-                  <span className="font-medium">{formatNumber(payroll?.slvl_days, 1)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Absence Days:</span>
-                  <span className="font-medium text-red-600">{formatNumber(payroll?.absence_days, 1)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Trip Count:</span>
-                  <span className="font-medium">{formatNumber(payroll?.trip_count, 1)}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Earnings Breakdown */}
-          <div className="bg-green-50 rounded-lg p-4">
-            <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
-              <DollarSign className="h-5 w-5 mr-2" />
-              Earnings Breakdown
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <h4 className="font-medium text-gray-800 mb-2">Basic & Allowances</h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span>Basic Pay:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.basic_pay)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Pay Allowance:</span>
-                    {editing ? (
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={formData.pay_allowance}
-                        onChange={(e) => handleInputChange('pay_allowance', e.target.value)}
-                        className="w-20 px-1 py-0.5 border rounded text-right text-xs"
-                      />
-                    ) : (
-                      <span className="font-medium">{formatCurrency(payroll?.pay_allowance)}</span>
-                    )}
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Other Allowances:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.allowances)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Other Earnings:</span>
-                    {editing ? (
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={formData.other_earnings}
-                        onChange={(e) => handleInputChange('other_earnings', e.target.value)}
-                        className="w-20 px-1 py-0.5 border rounded text-right text-xs"
-                      />
-                    ) : (
-                      <span className="font-medium">{formatCurrency(payroll?.other_earnings)}</span>
-                    )}
-                  </div>
-                </div>
-              </div>
+              <h4 className="font-medium text-gray-900 mb-3 flex items-center">
+                <Calculator className="h-4 w-4 mr-2" />
+                Calculation Breakdown
+              </h4>
               
-              <div>
-                <h4 className="font-medium text-gray-800 mb-2">Overtime & Premium</h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span>Regular OT:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.ot_regular_amount)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Rest Day OT:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.ot_rest_day_amount)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Holiday OT:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.ot_regular_holiday_amount + payroll?.ot_special_holiday_amount)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>NSD Premium:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.nsd_amount)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Holiday Premium:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.holiday_amount)}</span>
-                  </div>
-                </div>
-              </div>
-              
-              <div>
-                <h4 className="font-medium text-gray-800 mb-2">Additional Earnings</h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span>SLVL Amount:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.slvl_amount)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Travel Order:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.travel_order_amount)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Offset Amount:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.offset_amount)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Trip Allowance:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.trip_amount)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Retro Amount:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.retro_amount)}</span>
+              <div className="space-y-4">
+                {/* Basic Calculation */}
+                <div className="bg-white p-3 rounded border">
+                  <h5 className="font-medium text-gray-800 mb-2">Basic Calculation</h5>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-600">Pay Type:</span>
+                      <span className="ml-2 font-medium">{calculationBreakdown.basic_calculation?.pay_type || 'daily'}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">Basic Rate:</span>
+                      <span className="ml-2 font-medium">{formatCurrency(calculationBreakdown.basic_calculation?.basic_rate)}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">Days/Hours:</span>
+                      <span className="ml-2 font-medium">{formatNumber(calculationBreakdown.basic_calculation?.days_worked || calculationBreakdown.basic_calculation?.hours_worked, 2)}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">Basic Pay:</span>
+                      <span className="ml-2 font-medium text-green-600">{formatCurrency(calculationBreakdown.basic_calculation?.basic_pay)}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </div>
-            
-            <div className="mt-4 pt-3 border-t border-green-200">
-              <div className="flex justify-between items-center">
-                <span className="text-lg font-semibold text-gray-800">Gross Earnings:</span>
-                <span className="text-xl font-bold text-green-600">{formatCurrency(payroll?.gross_earnings)}</span>
-              </div>
-            </div>
-          </div>
 
-          {/* Deductions Breakdown */}
-          <div className="bg-red-50 rounded-lg p-4">
-            <h3 className="text-lg font-medium text-gray-900 mb-3 flex items-center">
-              <AlertCircle className="h-5 w-5 mr-2" />
-              Deductions Breakdown
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <h4 className="font-medium text-gray-800 mb-2">Government Deductions</h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span>SSS Contribution:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.sss_contribution)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>PhilHealth:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.philhealth_contribution)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>HDMF/Pag-IBIG:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.hdmf_contribution)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Withholding Tax:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.withholding_tax)}</span>
-                  </div>
-                  <div className="flex justify-between font-medium border-t pt-1">
-                    <span>Gov't Total:</span>
-                    <span>{formatCurrency(payroll?.total_government_deductions)}</span>
-                  </div>
-                </div>
-              </div>
-              
-              <div>
-                <h4 className="font-medium text-gray-800 mb-2">Company Deductions</h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span>MF Shares:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.mf_shares)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>MF Loan:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.mf_loan)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>SSS Loan:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.sss_loan)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>HDMF Loan:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.hdmf_loan)}</span>
-                  </div>
-                  <div className="flex justify-between font-medium border-t pt-1">
-                    <span>Company Total:</span>
-                    <span>{formatCurrency(payroll?.total_company_deductions)}</span>
-                  </div>
-                </div>
-              </div>
-              
-              <div>
-                <h4 className="font-medium text-gray-800 mb-2">Other Deductions</h4>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span>Cash Advance:</span>
-                    {editing ? (
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={formData.advance_deduction}
-                        onChange={(e) => handleInputChange('advance_deduction', e.target.value)}
-                        className="w-20 px-1 py-0.5 border rounded text-right text-xs"
-                      />
-                    ) : (
-                      <span className="font-medium">{formatCurrency(payroll?.advance_deduction)}</span>
+                {/* Overtime Calculation */}
+                <div className="bg-white p-3 rounded border">
+                  <h5 className="font-medium text-gray-800 mb-2">Overtime Calculation</h5>
+                  <div className="space-y-2 text-sm">
+                    {calculationBreakdown.overtime_calculation?.regular_ot && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Regular OT ({formatNumber(calculationBreakdown.overtime_calculation.regular_ot.hours)} hrs @ {calculationBreakdown.overtime_calculation.regular_ot.rate?.toFixed(2)}):</span>
+                        <span className="font-medium">{formatCurrency(calculationBreakdown.overtime_calculation.regular_ot.amount)}</span>
+                      </div>
                     )}
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Store Charge:</span>
-                    {editing ? (
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={formData.charge_store}
-                        onChange={(e) => handleInputChange('charge_store', e.target.value)}
-                        className="w-20 px-1 py-0.5 border rounded text-right text-xs"
-                      />
-                    ) : (
-                      <span className="font-medium">{formatCurrency(payroll?.charge_store)}</span>
-                    )}
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Meals:</span>
-                    {editing ? (
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={formData.meals_deduction}
-                        onChange={(e) => handleInputChange('meals_deduction', e.target.value)}
-                        className="w-20 px-1 py-0.5 border rounded text-right text-xs"
-                      />
-                    ) : (
-                      <span className="font-medium">{formatCurrency(payroll?.meals_deduction)}</span>
-                    )}
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Late/Under:</span>
-                    <span className="font-medium">{formatCurrency(payroll?.late_under_deduction)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Miscellaneous:</span>
-                    {editing ? (
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={formData.miscellaneous_deduction}
-                        onChange={(e) => handleInputChange('miscellaneous_deduction', e.target.value)}
-                        className="w-20 px-1 py-0.5 border rounded text-right text-xs"
-                      />
-                    ) : (
-                      <span className="font-medium">{formatCurrency(payroll?.miscellaneous_deduction)}</span>
+                    {calculationBreakdown.overtime_calculation?.rest_day_ot && (
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Rest Day OT ({formatNumber(calculationBreakdown.overtime_calculation.rest_day_ot.hours)} hrs @ {calculationBreakdown.overtime_calculation.rest_day_ot.rate?.toFixed(2)}):</span>
+                        <span className="font-medium">{formatCurrency(calculationBreakdown.overtime_calculation.rest_day_ot.amount)}</span>
+                      </div>
                     )}
                   </div>
                 </div>
-              </div>
-            </div>
-            
-            <div className="mt-4 pt-3 border-t border-red-200">
-              <div className="flex justify-between items-center">
-                <span className="text-lg font-semibold text-gray-800">Total Deductions:</span>
-                <span className="text-xl font-bold text-red-600">{formatCurrency(payroll?.total_deductions)}</span>
-              </div>
-            </div>
-          </div>
 
-          {/* Net Pay Summary */}
-          <div className="bg-blue-50 rounded-lg p-6">
-            <div className="text-center">
-              <h3 className="text-2xl font-bold text-gray-800 mb-2">Net Pay</h3>
-              <div className="text-4xl font-bold text-blue-600 mb-4">
-                {formatCurrency(payroll?.net_pay)}
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                <div className="text-center">
-                  <div className="text-gray-600">Gross Earnings</div>
-                  <div className="font-semibold text-green-600">{formatCurrency(payroll?.gross_earnings)}</div>
+                {/* Deductions Calculation */}
+                <div className="bg-white p-3 rounded border">
+                  <h5 className="font-medium text-gray-800 mb-2">Deductions</h5>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    {calculationBreakdown.deductions_calculation?.government && (
+                      <div>
+                        <h6 className="font-medium text-gray-700 mb-1">Government</h6>
+                        <div className="space-y-1">
+                          <div className="flex justify-between">
+                            <span>SSS:</span>
+                            <span>{formatCurrency(calculationBreakdown.deductions_calculation.government.sss)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>PhilHealth:</span>
+                            <span>{formatCurrency(calculationBreakdown.deductions_calculation.government.philhealth)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>HDMF:</span>
+                            <span>{formatCurrency(calculationBreakdown.deductions_calculation.government.hdmf)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>W/Tax:</span>
+                            <span>{formatCurrency(calculationBreakdown.deductions_calculation.government.withholding_tax)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    
+                    {calculationBreakdown.deductions_calculation?.other && (
+                      <div>
+                        <h6 className="font-medium text-gray-700 mb-1">Other Deductions</h6>
+                        <div className="space-y-1">
+                          <div className="flex justify-between">
+                            <span>Advance:</span>
+                            <span>{formatCurrency(calculationBreakdown.deductions_calculation.other.advance)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Store:</span>
+                            <span>{formatCurrency(calculationBreakdown.deductions_calculation.other.charge_store)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Meals:</span>
+                            <span>{formatCurrency(calculationBreakdown.deductions_calculation.other.meals)}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span>Late/Under:</span>
+                            <span>{formatCurrency(calculationBreakdown.deductions_calculation.other.late_under)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="text-center">
-                  <div className="text-gray-600">Total Deductions</div>
-                  <div className="font-semibold text-red-600">({formatCurrency(payroll?.total_deductions)})</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-gray-600">Taxable Income</div>
-                  <div className="font-semibold text-gray-800">{formatCurrency(payroll?.taxable_income)}</div>
-                </div>
-              </div>
-            </div>
-          </div>
 
-          {/* Calculation Notes */}
-          {editing && (
-            <div className="bg-gray-50 rounded-lg p-4">
-              <h4 className="font-medium text-gray-900 mb-3">Calculation Notes</h4>
-              <textarea
-                value={formData.calculation_notes}
-                onChange={(e) => handleInputChange('calculation_notes', e.target.value)}
-                placeholder="Add any notes about manual adjustments or special calculations..."
-                className="w-full h-20 px-3 py-2 border rounded-lg resize-none"
-              />
+                {/* Summary */}
+                {calculationBreakdown.summary && (
+                  <div className="bg-blue-50 p-3 rounded border">
+                    <h5 className="font-medium text-gray-800 mb-2">Summary</h5>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Gross Earnings:</span>
+                        <span className="font-bold text-green-600">{formatCurrency(calculationBreakdown.summary.gross_earnings)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Total Deductions:</span>
+                        <span className="font-bold text-red-600">{formatCurrency(calculationBreakdown.summary.total_deductions)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600">Taxable Income:</span>
+                        <span className="font-medium">{formatCurrency(calculationBreakdown.summary.taxable_income)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-600 text-lg font-semibold">Net Pay:</span>
+                        <span className="font-bold text-blue-600 text-lg">{formatCurrency(calculationBreakdown.summary.net_pay)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -593,27 +331,6 @@ const FinalPayrollDetailModal = ({ isOpen, payroll, onClose, onUpdate }) => {
               </div>
             </div>
           </div>
-
-          {/* Calculation Breakdown */}
-          {calculationBreakdown && (
-            <div className="bg-gray-50 rounded-lg p-4">
-              <h4 className="font-medium text-gray-900 mb-3">Detailed Calculation Breakdown</h4>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                <div>
-                  <h5 className="font-medium mb-2">Basic Calculation</h5>
-                  <pre className="bg-white p-2 rounded text-xs overflow-x-auto">
-                    {JSON.stringify(calculationBreakdown.basic_calculation, null, 2)}
-                  </pre>
-                </div>
-                <div>
-                  <h5 className="font-medium mb-2">Overtime Calculation</h5>
-                  <pre className="bg-white p-2 rounded text-xs overflow-x-auto">
-                    {JSON.stringify(calculationBreakdown.overtime_calculation, null, 2)}
-                  </pre>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
 
         <div className="bg-gray-50 px-6 py-4 flex justify-end border-t">
