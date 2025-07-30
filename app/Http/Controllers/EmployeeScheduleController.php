@@ -12,6 +12,7 @@ use Inertia\Inertia;
 use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use Illuminate\Support\Facades\Auth;
 use Carbon\Carbon;
 
 class EmployeeScheduleController extends Controller
@@ -28,7 +29,9 @@ class EmployeeScheduleController extends Controller
 
         return Inertia::render('Scheduling/EmployeeScheduling', [
             'employees' => $employees,
-            'auth' => ['user' => auth()->user()]
+            'auth' => [
+                'user' => Auth::user()
+            ]
         ]);
     }
 

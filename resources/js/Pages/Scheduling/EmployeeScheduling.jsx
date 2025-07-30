@@ -681,7 +681,7 @@ const EmployeeScheduling = () => {
     // Fetch departments
     const fetchDepartments = async () => {
         try {
-            const response = await axios.get('/departments');
+            const response = await axios.get('/employee-schedules/departments');
             setDepartments(response.data || []);
         } catch (error) {
             console.error('Error fetching departments:', error);
@@ -1058,8 +1058,8 @@ const EmployeeScheduling = () => {
                                         >
                                             <option value="">All Departments</option>
                                             {departments.map((dept, index) => (
-                                                <option key={index} value={dept.name || dept}>
-                                                    {dept.name || dept}
+                                                <option key={index} value={dept}>
+                                                    {dept}
                                                 </option>
                                             ))}
                                         </select>

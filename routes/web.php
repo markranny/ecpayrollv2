@@ -1152,7 +1152,7 @@ Route::middleware(['auth', 'verified', 'role:superadmin,hrd_manager'])->group(fu
     Route::post('/meetings/{id}/mark-cancelled', [MeetingsController::class, 'markCancelled'])->name('meetings.mark-cancelled');
     Route::post('/meetings/{id}/mark-scheduled', [MeetingsController::class, 'markScheduled'])->name('meetings.mark-scheduled');
     Route::get('/meetings/export', [MeetingsController::class, 'export'])->name('meetings.export');
-    Route::get('/api/employees', [EmployeeController::class, 'getEmployeesForSelect'])->name('api.employees');
+    Route::get('/api/employees', [EmployeeScheduleController::class, 'getEmployeesForSelect'])->name('api.employees');
 
     // Events Routes
     Route::get('/events', [EventsController::class, 'index'])->name('events.index');
